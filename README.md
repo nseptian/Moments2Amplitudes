@@ -12,7 +12,7 @@ This repository contains code and tools to develop and test algorithms for extra
 
 ```
 .
-├── WeightPhSp.py                # Main script for phase-space weighting and amplitude extraction
+├── WeightPhSp.py                # Main script for phase-space weighting
 ├── jupyter_notebook/            # Jupyter notebooks for analysis and plotting
 ├── brufit/                      # brufit scripts
 ├── samples/                     # Sample data files
