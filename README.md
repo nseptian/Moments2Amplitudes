@@ -1,6 +1,6 @@
 # Moments2Amplitudes
 
-This repository contains code and tools to develop and test algorithms for extracting Partial Wave Amplitudes from Moments of Angular Distributions in two-pseudoscalar mesons produced in polarized photon-proton collisions.
+This repository contains code and tools to develop and test algorithms for extracting Partial Wave Amplitudes from Moments of Angular Distributions in two-pseudoscalar mesons produced in polarized photon-proton collisions following tutorial from [brufit](https://github.com/dglazier/brufit/tree/R6.34Test/tutorials/PhotoAmps/TwoSpin0AmpsFromMoments)
 
 ## Requirements
 
