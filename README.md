@@ -15,7 +15,6 @@ This repository contains code and tools to develop and test algorithms for extra
 ├── WeightPhSp.py                # Main script for phase-space weighting and amplitude extraction
 ├── jupyter_notebook/            # Jupyter notebooks for analysis and plotting
 ├── brufit/                      # brufit scripts
-├── plots/                       # Output plots
 ├── samples/                     # Sample data files
 └── set_env.sh                   # Environment setup script
 ```
