@@ -1,6 +1,6 @@
 # Moments2Amplitudes
 
-This repository contains code and tools to develop and test algorithms for extracting Partial Wave Amplitudes from Moments of Angular Distributions in two-pseudoscalar mesons produced in polarized photon-proton collisions.
+This repository contains code and tools to develop and test algorithms for extracting Partial Wave Amplitudes from Moments of Angular Distributions in two-pseudoscalar mesons produced in polarized photon-proton collisions following tutorial from [brufit](https://github.com/dglazier/brufit/tree/R6.34Test/tutorials/PhotoAmps/TwoSpin0AmpsFromMoments)
 
 ## Requirements
 
@@ -12,7 +12,7 @@ This repository contains code and tools to develop and test algorithms for extra
 
 ```
 .
-├── WeightPhSp.py                # Main script for phase-space weighting and amplitude extraction
+├── WeightPhSp.py                # Main script for phase-space weighting
 ├── jupyter_notebook/            # Jupyter notebooks for analysis and plotting
 ├── brufit/                      # brufit scripts
 ├── samples/                     # Sample data files
