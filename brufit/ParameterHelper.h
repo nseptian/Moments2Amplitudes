@@ -14,7 +14,7 @@ namespace m2pw{
 
   using HS::FIT::Setup;
   
-  class  ParameterHelper{
+  class ParameterHelper{
 
   public:
 
@@ -32,6 +32,95 @@ namespace m2pw{
 	   }
       }//formulas
       
+    }
+
+    // Copy constructor
+    ParameterHelper(const ParameterHelper& other)
+        : _nameToIndex(other._nameToIndex),
+          _constToIndex(other._constToIndex),
+          _names(other._names),
+          _minVals(other._minVals),
+          _maxVals(other._maxVals),
+          _stepSize(other._stepSize),
+          _isMagnitude(other._isMagnitude),
+          _sumMags(other._sumMags),
+          _constNames(other._constNames),
+          _currentVals(other._currentVals),
+          _cachedVals(other._cachedVals),
+          _constVals(other._constVals),
+          _nextIndex(other._nextIndex),
+          _nextConstIndex(other._nextConstIndex),
+          _tree(nullptr) // TTree is not trivially copyable
+    {
+    }
+
+    // Copy assignment
+    ParameterHelper& operator=(const ParameterHelper& other) {
+        if (this != &other) {
+            _nameToIndex = other._nameToIndex;
+            _constToIndex = other._constToIndex;
+            _names = other._names;
+            _minVals = other._minVals;
+            _maxVals = other._maxVals;
+            _stepSize = other._stepSize;
+            _isMagnitude = other._isMagnitude;
+            _sumMags = other._sumMags;
+            _constNames = other._constNames;
+            _currentVals = other._currentVals;
+            _cachedVals = other._cachedVals;
+            _constVals = other._constVals;
+            _nextIndex = other._nextIndex;
+            _nextConstIndex = other._nextConstIndex;
+            _tree = nullptr; // Not copying TTree pointer
+            _file.reset();   // Not copying file
+        }
+        return *this;
+    }
+
+    // Move constructor
+    ParameterHelper(ParameterHelper&& other) noexcept
+        : _nameToIndex(std::move(other._nameToIndex)),
+          _constToIndex(std::move(other._constToIndex)),
+          _names(std::move(other._names)),
+          _minVals(std::move(other._minVals)),
+          _maxVals(std::move(other._maxVals)),
+          _stepSize(std::move(other._stepSize)),
+          _isMagnitude(std::move(other._isMagnitude)),
+          _sumMags(other._sumMags),
+          _constNames(std::move(other._constNames)),
+          _currentVals(std::move(other._currentVals)),
+          _cachedVals(std::move(other._cachedVals)),
+          _constVals(std::move(other._constVals)),
+          _nextIndex(other._nextIndex),
+          _nextConstIndex(other._nextConstIndex),
+          _file(std::move(other._file)),
+          _tree(other._tree)
+    {
+        other._tree = nullptr;
+    }
+
+    // Move assignment
+    ParameterHelper& operator=(ParameterHelper&& other) noexcept {
+        if (this != &other) {
+            _nameToIndex = std::move(other._nameToIndex);
+            _constToIndex = std::move(other._constToIndex);
+            _names = std::move(other._names);
+            _minVals = std::move(other._minVals);
+            _maxVals = std::move(other._maxVals);
+            _stepSize = std::move(other._stepSize);
+            _isMagnitude = std::move(other._isMagnitude);
+            _sumMags = other._sumMags;
+            _constNames = std::move(other._constNames);
+            _currentVals = std::move(other._currentVals);
+            _cachedVals = std::move(other._cachedVals);
+            _constVals = std::move(other._constVals);
+            _nextIndex = other._nextIndex;
+            _nextConstIndex = other._nextConstIndex;
+            _file = std::move(other._file);
+            _tree = other._tree;
+            other._tree = nullptr;
+        }
+        return *this;
     }
     
   public :
