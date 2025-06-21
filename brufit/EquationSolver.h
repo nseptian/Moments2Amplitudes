@@ -66,9 +66,11 @@ namespace m2pw{
       cout<<"EquationSolver : "<<endl;
       _pars.Print(opt);
       for(const auto& eqn:_eqns){
+        cout << "=========================Moments Equations=========================" << endl;
 	eqn.Print(opt);
       }
       for(const auto& eqn:_others){
+        cout << "=========================Other Equations=========================" << endl;
 	eqn.Print(opt);
       }
       cout<<"\t Current Value = "<<_val<<endl;

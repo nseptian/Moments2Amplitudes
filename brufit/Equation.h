@@ -53,6 +53,8 @@ namespace m2pw{
     }
     void Print(const TString opt="") const;
     void SetEquationValue(Double_t val);
+    void SetEquationValue(Double_t val, Double_t error);
+    RooFormulaVar* GetRooFormulaVar() { return &_rooFormulaVar; }
 
   protected:
     void SetName(const TString& name){_name=name;}

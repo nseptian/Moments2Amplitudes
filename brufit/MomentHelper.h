@@ -46,8 +46,8 @@ class MomentHelper{
               MCMC_tree->GetEntry(i);
               mean += val;
               sigma += val*val;
-              unnormalized_mean += Yld_Moments*val /2.0;
-              unnormalized_sigma += (Yld_Moments*val/2.0)*(Yld_Moments*val/2.0);
+              unnormalized_mean += Yld_Moments*val;
+              unnormalized_sigma += (Yld_Moments*val)*(Yld_Moments*val);
             }
             sigma = TMath::Sqrt(sigma/MCMC_tree->GetEntries());
             _moments_err[var_name] = sigma;
@@ -67,8 +67,8 @@ class MomentHelper{
 
             for (size_t i = 0; i < MCMC_tree->GetEntries(); ++i) {
               MCMC_tree->GetEntry(i);
-              mean += val;
-              sigma += val*val;
+              mean += 2*val;
+              sigma += 4*val*val;
             }
             sigma = TMath::Sqrt(sigma/MCMC_tree->GetEntries());
             _unnormalized_moments_err["H_0_0_0"] = sigma;
@@ -102,7 +102,17 @@ class MomentHelper{
     return _moments[name];
   }
 
-  void PrintVals(const TString& prefix=""){
+  Double_t GetUnnormalizedVal(const TString& name){
+    if(_unnormalized_moments.find(name)==_unnormalized_moments.end()) return 0.0;
+    return _unnormalized_moments[name];
+  }
+
+  Double_t GetUnnormalizedError(const TString& name){
+    if(_unnormalized_moments_err.find(name)==_unnormalized_moments_err.end()) return 0.0;
+    return _unnormalized_moments_err[name];
+  }
+
+  void PrintVals(const TString& prefix="") {
     for(const auto& mom:_moments){
       if(mom.first.BeginsWith(prefix)){
         std::cout<<mom.first<<" = "<<mom.second<<" +- "<<_moments_err[mom.first]<<std::endl;

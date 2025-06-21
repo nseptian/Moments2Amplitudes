@@ -101,9 +101,10 @@ namespace m2pw{
     std::vector<TString > deps;
     RooAbsArg *par=nullptr;
     while( (par=form->getParameter(ipar++)) != nullptr ){
+      // cout << "ParameterHelper::Dependencies() : " << par->GetName() << " is a dependency." << endl;
       auto index = Index(par->GetName());
       if(index==static_cast<Int_t>(ParType::EDependancy)){
-	deps.push_back(par->GetName()); 
+        deps.push_back(par->GetName()); 
       }
     }
     return deps;

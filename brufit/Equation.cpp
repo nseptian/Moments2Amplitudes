@@ -11,10 +11,11 @@ namespace m2pw{
     // _rooFormulaVar{var->GetName(),var->expression(),var->dependents()}
     _rooFormulaVar{*var}
   {
-    SetName(var->GetName());
-    SetOrigFormula(var->GetTitle());
-    SetEquationValue(var->getVal()+gRandom->Gaus(0,noise));
-    cout<<"\""<<GetName()<<"\""<<", "<<_eqnValue<<endl;
+    // cout << "Equation::Equation() : " << var->GetName() << ", " << var->GetTitle() << ", " << var->getVal() << endl;
+    SetName(var->GetName()); //Moments name
+    SetOrigFormula(var->GetTitle()); //Moments = PW amplitude billinear
+    SetEquationValue(var->getVal()+gRandom->Gaus(0,noise)); //Normalize Moments value
+    // cout<<"\""<<GetName()<<"\""<<", "<<_eqnValue<<endl;
     
     //get indices so that _indices[i] gives local
     //position of parameter in this formula
@@ -44,17 +45,39 @@ namespace m2pw{
     //now make the formula to be minimised
     _formula=TFormula(GetName()+"_Eqn",equation);
   }
+
+  void Equation::SetEquationValue(Double_t val, Double_t error){
+     
+    _eqnValue=0.0;
+
+    //and now construct equation formula
+    TString equation(_rooFormulaVar.expression());
+    //In case of a moment
+    //subtract val off from the formula, to get something =0
+    if(IsConstraint(GetName())){
+      _eqnValue=val;
+      equation.Append(Form(" - %0.16f",_eqnValue));
+     }
+    //else leave alone as dependent
+    equation = TString::Format("((%s)/%0.16f)", equation.Data(), error);
+    // cout << equation << endl;
+    //now make the formula to be minimised
+    _formula=TFormula(GetName()+"_Eqn",equation);
+  }
   
   ////////////////////////////////////////////////////
   ///calculate current value of cosntraint equation
   double Equation::DoEval (const double* x) const {
-
+    
     if(NeedsRecalc()==kFALSE) return _cachedVal;
-  
     OrganiseVariables(x);
-    
+
+    // cout << "Equation::DoEval() : " << GetName() << ", val = " << *x << " NeedsRecalc :" << NeedsRecalc() << endl;
+    for (UInt_t i=0;i<_localNdim;i++){
+      // cout << "  _localX[" << i << "] = " << _localX[i] << endl;
+    }
+    // _formula.Print();
     _cachedVal = _formula.EvalPar( _localX.data());
-    
     SetNoRecalc();
     
     return  _cachedVal; 
@@ -111,7 +134,7 @@ namespace m2pw{
     std::cout<<"\t\t Constrained Value = "<< _cachedVal<<endl;
     std::cout<<"\t\t Equation Value = "<< _eqnValue<<endl;
     std::cout<<"\t\t _L = "<< _L <<" "<<_LWeight<<endl;
-    //_formula.Print();
+    // _formula.Print();
     if(opt!= "v") return;
     
     UInt_t isynch=0;

@@ -13,10 +13,17 @@ namespace m2pw{
     //been given constraints, other formulas left as are.
     auto& formulas=setup.ParameterFormulas();
 
+    cout << endl << "EquationSolver::EquationSolver() : " << formulas.size() << " equations found." << endl;
+    for (const auto& form:formulas) {
+      cout << form->GetName() << " : " << form->GetTitle() << endl;
+    }
+    cout << endl;
+
+    // Check if we are ignoring some equations
     const auto validEqn = [&noUse](const TString& name) {
       for(const auto& match:noUse){
-	if(name.Contains(match))
-	  return kFALSE;
+	      if(name.Contains(match))
+	    return kFALSE;
       }
       return kTRUE;
     };

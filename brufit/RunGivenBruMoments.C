@@ -34,8 +34,9 @@ void RunGivenBruMoments(){
   MomentHelper moments;
   // moments.Set("/d/home/septian/EtaPi0Analysis/MomentMCStudy/fitMoments_GlueXAcceptanceSigBkg_MCMCN4000BI1000S08/ResultsBruMcmcCovariance.root");
 
-  moments.Set("/d/grid17/septian/Moments2Amplitudes/brufit/fitMoments_GlueXAcceptanceSignal_SDwaves_R6.34/ResultsHSMinuit2.root");
-  
+  // moments.Set("/d/grid17/septian/Moments2Amplitudes/brufit/fitMoments_GlueXAcceptanceSignal_SDwaves_R6.34/ResultsHSMinuit2.root",1,0);
+  moments.Set("/d/home/septian/EtaPi0Analysis/run_Phase1/fitMoment_GlueXI_t010100_m080200_MCMCN6000BI1000S08WCOV/Mpi0eta1.420000_/ResultsBruMcmcCovariance.root",1,1);
+  moments.PrintVals();
   //setup the solver, arguments :
   //  setup = BruFit setup
   //  resolution = smear moments by resolution
@@ -46,25 +47,29 @@ void RunGivenBruMoments(){
   solver.SetEquationValues(moments);
   solver.Print("v");
 
+  solver.GetPars().Randomise();
+  solver.Solve();
+
   //create output tree
-  solver.MakeResultTree("resultsGivenBruMomentsNoH3_data_SDWaves_10000Sample_NoPWaves.root");
+  // solver.MakeResultTree("resultsGivenBruMomentsNoH3_data_SDWaves_10000Sample_NoPWaves.root");
+  // solver.MakeResultTree("resultsGivenBruMomentsNoH3_data_MCMC_test_10000Sample.root");
   
-  gBenchmark->Start("solver");
+  // gBenchmark->Start("solver");
 
-  //loop and perform 10,000 minimisations with random starting amplitudes
-  for(int i = 0; i<10000;i++){
-    if(i%100==0) cout<<i<<" "<<endl;
-    solver.GetPars().Randomise();
-    solver.Solve();
-    solver.FillTree();
-  }
+  // //loop and perform 10,000 minimisations with random starting amplitudes
+  // for(int i = 0; i<10000;i++){
+  //   if(i%100==0) cout<<i<<" "<<endl;
+  //   solver.GetPars().Randomise();
+  //   solver.Solve();
+  //   solver.FillTree();
+  // }
 
-  gBenchmark->Stop("solver");
-  gBenchmark->Print("solver");
+  // gBenchmark->Stop("solver");
+  // gBenchmark->Print("solver");
 
-  //Save results tree
-  solver.GetPars().CloseTree();
+  // //Save results tree
+  // solver.GetPars().CloseTree();
 
-  solver.PrintResult();
+  // solver.PrintResult();
   
 }
