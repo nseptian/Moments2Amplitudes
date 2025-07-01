@@ -29,8 +29,11 @@ class MassDependentMoments {
                 it->second.PrintVals();
             }
         }
+        
+        size_t GetNMassBins() {
+            return _moments.size();
+        }
 
     private:
         map<Double_t, MomentHelper> _moments;
-
 };

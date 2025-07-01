@@ -44,7 +44,7 @@ namespace m2pw {
                 // cout << endl << "Mass bin: " << mass_bin << endl;
                 for (int j = 0; j < pars.Nvars(); ++j) {
                     TString par_name = pars.GetParName(j);
-                    auto parts = par_name.Tokenize("_");
+                    std::unique_ptr<TObjArray> parts(par_name.Tokenize("_"));
                     TString refl_str = ((TObjString*)parts->At(0))->GetString();
                     TString l_str = ((TObjString*)parts->At(1))->GetString();
                     TString m_str = ((TObjString*)parts->At(2))->GetString();
@@ -75,7 +75,8 @@ namespace m2pw {
                             par_name = pars.GetParName(j);
                         }
                         else {
-                            phase = massIndepPars.at(mass_bin_str).at(par_name)[1];
+                            phase = massIndepPars.at(mass_bin_str).at(par_name)[0];
+                            // cout << "MassDependentEquationSolver::DoEval() : refl_str = " << refl_str << " mass_bin = " << mass_bin_str << ", par_name = " << par_name << ", phase = " << phase << endl;
                         }
                         // cout << "MassDependentEquationSolver::DoEval() : refl_str = " << refl_str << " par_name = " << par_name << ", phase = " << phase << endl;
                         pars.SetCurrentVal(par_name, phase);
@@ -88,6 +89,7 @@ namespace m2pw {
                     total_chi2 += eqn.DoEvalSq(pars.CurrentVals());
                 }
             }
+            _chi2 = total_chi2;
             return total_chi2;
         }
 
@@ -115,6 +117,13 @@ namespace m2pw {
                 }
                 tree->Fill();
             }
+
+            double chi2 = 0.0;
+            // write chi2 to root file, not in ttree
+            TTree *chi2_tree = new TTree("chi2", "chi2");
+            chi2_tree->Branch("chi2", &chi2);
+            chi2 = 
+            chi2_tree->Fill();
 
             f->Write();
             cout << "Result tree saved to " << fileName << endl;

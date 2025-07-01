@@ -56,7 +56,7 @@ void MinimizeChi2(m2pw::MassDependentEquationSolver& solver, int seed = 0) {
 
     int total_npars = 0;
 
-    const TString AmpName[2] = {"Magnitude", "Phase"};
+    // const TString AmpName[2] = {"Magnitude", "Phase"};
     const TString BWName[3] = {"k", "M", "width"};
 
     map<TString, double> pars_list;
@@ -68,16 +68,17 @@ void MinimizeChi2(m2pw::MassDependentEquationSolver& solver, int seed = 0) {
             // total_npars+=2;
             if (parName.Contains("2")) continue;
 
-            TString name = Form("MI_%1.6f_%s_%s", massBin, parName.Data(), AmpName[0].Data());
+            // TString name = Form("MI_%1.6f_%s_%s", massBin, parName.Data(), AmpName[0].Data());
+            TString name = Form("MI_%1.6f_%s", massBin, parName.Data());
             pars_list[name] = TRandom3(seed).Uniform(-100,100);
             NameToIndex[name] = total_npars;
             total_npars++;
             parIndexNames.push_back(name);
-            name = Form("MI_%1.6f_%s_%s", massBin, parName.Data(), AmpName[1].Data());
-            parIndexNames.push_back(name);
-            pars_list[name] = TRandom3(seed).Uniform(-TMath::Pi(), TMath::Pi());
-            NameToIndex[name] = total_npars;
-            total_npars++;
+            // name = Form("MI_%1.6f_%s_%s", massBin, parName.Data(), AmpName[1].Data());
+            // parIndexNames.push_back(name);
+            // pars_list[name] = TRandom3(seed).Uniform(-TMath::Pi(), TMath::Pi());
+            // NameToIndex[name] = total_npars;
+            // total_npars++;
         }
     }
     for (const TString& parName : parNames) {
@@ -88,7 +89,7 @@ void MinimizeChi2(m2pw::MassDependentEquationSolver& solver, int seed = 0) {
         TString name = Form("MD_%s_%s", parName.Data(), BWName[0].Data());
         
 
-        pars_list[name] = TRandom3(seed).Uniform(1,20);
+        pars_list[name] = TRandom3(seed).Uniform(-10,10);
         NameToIndex[name] = total_npars;
         total_npars++;
         parIndexNames.push_back(name);
@@ -112,10 +113,17 @@ void MinimizeChi2(m2pw::MassDependentEquationSolver& solver, int seed = 0) {
     }
 
     cout << "Total number of parameters: " << total_npars << endl;
+    cout << "Parameter names:" << endl;
+    for (const auto& name : parIndexNames) {
+        cout << name << endl;
+    }
 
-    ROOT::Math::Functor f([&solver,parIndexNames](const double* mass_dep_pars){
-        map<TString, vector<double>> massDepPars;
-        map<TString, map<TString, vector<double>>> massIndepPars;
+    map<TString, vector<double>> massDepPars;
+    map<TString, map<TString, vector<double>>> massIndepPars;
+
+    ROOT::Math::Functor f([&solver,&parIndexNames,&massDepPars,&massIndepPars](const double* mass_dep_pars){
+        massDepPars.clear();
+        massIndepPars.clear();
 
         // TODO: map *mass_dep_pars to massDepPars and massIndepPars
         // cout << "Mapping mass_dep_pars to massDepPars and massIndepPars..." << endl;
@@ -129,11 +137,12 @@ void MinimizeChi2(m2pw::MassDependentEquationSolver& solver, int seed = 0) {
                 int firstUnderscore = parName.Index("_", 3); // after "MI"
                 int secondUnderscore = parName.Index("_", firstUnderscore + 1);
                 int thirdUnderscore = parName.Index("_", secondUnderscore + 1);
-                int fourthUnderscore = parName.Index("_", thirdUnderscore + 1);
+
+                // cout << firstUnderscore << ", " << secondUnderscore << ", " << thirdUnderscore << ", " << fourthUnderscore << endl;
                         
                 // Parameter name is between firstUnderscore+1 and thirdUnderscore-1
                 // cout << firstUnderscore << ", " << secondUnderscore << ", " << thirdUnderscore << ", " << fourthUnderscore << endl;
-                TString parKey = parName(firstUnderscore + 1, fourthUnderscore-1-firstUnderscore);
+                TString parKey = parName(firstUnderscore + 1, thirdUnderscore + 2 - firstUnderscore);
                         
                 TString massBinStr = parName(3, firstUnderscore - 7);
                 // double massBin = massBinStr.Atof();
@@ -209,6 +218,8 @@ void MinimizeChi2(m2pw::MassDependentEquationSolver& solver, int seed = 0) {
     // for (int i = 0; i < npars; ++i) {
     //     std::cout << "Parameter " << i << ": " << best_fit[i] << std::endl;
     // }
+    solver.PrintEquations("v", 1.14);
+    solver.PrintParCurrentVals(1.14);
     return;
 }
 
@@ -239,9 +250,9 @@ void TestMassDependentMoments(int seed = 0){
     MassDependentMoments massDepMoments;
 
     
-    const Double_t firstMassBinCenter = 1.14; // in GeV
+    const Double_t firstMassBinCenter = 0.82; // in GeV
     const Double_t massBinWidth = 0.04;
-    const Int_t nMassBins = 8;
+    const Int_t nMassBins = 20;
     const TString fitResultsDir = "/d/home/septian/EtaPi0Analysis/run_merged/fitMoment_GlueX1_2019_11_t010100_m010200_MCMCN6000BI1000S08WCOV_R6.34/";
     const TString fitResultsFilename = "ResultsBruMcmcCovariance.root";
 
