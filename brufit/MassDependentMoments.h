@@ -1,6 +1,8 @@
 #pragma once
 
-#include <MomentHelper.h>
+#include "MomentHelper.h"
+#include <map>
+#include <stdexcept>
 
 class MassDependentMoments {
     public:
@@ -17,15 +19,15 @@ class MassDependentMoments {
             if (it != _moments.end()) {
                 return it->second;
             } else {
-                throw runtime_error("Mass value not found in moments map.");
+                throw std::runtime_error("Mass value not found in moments map.");
             }
         }
 
         void PrintMoments() {
-            cout << "Mass-dependent moments size: " << _moments.size() << endl;
+            std::cout << "Mass-dependent moments size: " << _moments.size() << std::endl;
             for (auto it = _moments.begin(); it != _moments.end(); ++it) {
-                cout << endl;
-                cout << "Mass: " << it->first << endl;
+                std::cout << std::endl;
+                std::cout << "Mass: " << it->first << std::endl;
                 it->second.PrintVals();
             }
         }
@@ -35,5 +37,5 @@ class MassDependentMoments {
         }
 
     private:
-        map<Double_t, MomentHelper> _moments;
+        std::map<Double_t, MomentHelper> _moments;
 };
