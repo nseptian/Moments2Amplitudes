@@ -73,12 +73,18 @@ namespace m2pw{
     OrganiseVariables(x);
 
     // cout << "Equation::DoEval() : " << GetName() << ", val = " << *x << " NeedsRecalc :" << NeedsRecalc() << endl;
-    for (UInt_t i=0;i<_localNdim;i++){
+    // for (UInt_t i=0;i<_localNdim;i++){
       // cout << "  _localX[" << i << "] = " << _localX[i] << endl;
-    }
+    // }
     // _formula.Print();
     _cachedVal = _formula.EvalPar( _localX.data());
     SetNoRecalc();
+
+    TString orig_equation(_rooFormulaVar.expression());
+
+    TFormula origForm = TFormula(GetName()+"_OrigFormula", orig_equation);
+    // origForm.Print();
+    _origFormulaVal = origForm.EvalPar(_localX.data());
     
     return  _cachedVal; 
   }
@@ -131,6 +137,7 @@ namespace m2pw{
   void Equation::Print(const TString opt) const{
     std::cout<<"\t Equation::Print() :" <<GetName()<<std::endl;
     std::cout<<"\t\t Formula = "<<_origFormula<<endl;
+    std::cout<<"\t\t Formula value = "<< _origFormulaVal << std::endl;
     std::cout<<"\t\t Constrained Value = "<< _cachedVal<<endl;
     std::cout<<"\t\t Equation Value = "<< _eqnValue<<endl;
     std::cout<<"\t\t _L = "<< _L <<" "<<_LWeight<<endl;

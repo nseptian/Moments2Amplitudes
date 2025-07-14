@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CrossSection.h"
 #include <TTree.h>
 #include <TBranch.h>
 #include <TMath.h>
@@ -39,13 +40,14 @@ public:
    * @param BruFitResult Flag to load BruFit results (default: 1)
    * @param MCMCResult Flag to load MCMC results (default: 1)
    */
-  void Set(const TString& filename, const Int_t BruFitResult = 1, const Int_t MCMCResult = 1) {
+  void Set(const TString& filepath, const Int_t BruFitResult = 1, const Int_t MCMCResult = 1){
+    _filepath = filepath;
     if (!BruFitResult) return;
     
     if (MCMCResult) {
-      LoadMCMCResults(filename);
+      LoadMCMCResults(_filepath + "/ResultsBruMcmcCovariance.root");
     } else {
-      LoadDirectResults(filename);
+      LoadDirectResults(_filepath + "/ResultsBruFit.root");
     }
   }
 
@@ -142,6 +144,20 @@ private:
     _moments["H_0_0_0"] = 2.0;
   }
 
+  Double_t GetAcceptance() const {
+    TFile *file = TFile::Open(_filepath + "ResultsCrossSection.root");
+    if (!file || !file->IsOpen()) {
+      std::cerr << "Error: Cannot open file " << _filepath + "ResultsCrossSection.root" << std::endl;
+      return 1.0; // Default acceptance if file cannot be opened
+    }
+    HS::FIT::CrossSection* cross_section = (HS::FIT::CrossSection*)file->Get("cs");
+    if (!cross_section) {
+      std::cerr << "Error: CrossSection not found in file " << _filepath + "ResultsCrossSection.root" << std::endl;
+      return 1.0; // Default acceptance if cross section is not found
+    }
+    return cross_section->GetAcceptance();
+  }
+
   /**
    * @brief Load direct fit results from file
    * @param filename Path to the result file
@@ -216,9 +232,17 @@ private:
     
     // Calculate unnormalized moments
     unnormalized_mean /= nEntries;
+    Double_t acceptance = GetAcceptance();
+    // cout << "Acceptance: " << acceptance << endl;
+    if (acceptance <= 0.0) {
+      std::cerr << "Warning: Acceptance is zero or negative, setting to 1.0" << std::endl;
+      acceptance = 1.0; // Default to 1.0 if acceptance is invalid
+    }
+    // unnormalized_mean /= acceptance;
+    // cout << "Unnormalized mean for " << var_name << ": " << unnormalized_mean << endl;
     unnormalized_sigma = TMath::Sqrt(unnormalized_sigma / nEntries - unnormalized_mean * unnormalized_mean);
-    _unnormalized_moments[var_name] = unnormalized_mean;
-    _unnormalized_moments_err[var_name] = unnormalized_sigma;
+    _unnormalized_moments[var_name] = unnormalized_mean/acceptance;
+    _unnormalized_moments_err[var_name] = unnormalized_sigma/acceptance;
     
     // TODO: include efficiency correction to the unnormalized moments
   }
@@ -244,11 +268,17 @@ private:
     
     mean /= nEntries;
     sigma = TMath::Sqrt(sigma / nEntries - mean * mean);
-    _unnormalized_moments["H_0_0_0"] = mean;
-    _unnormalized_moments_err["H_0_0_0"] = sigma;
+    Double_t acceptance = GetAcceptance();
+    if (acceptance <= 0.0) {
+      std::cerr << "Warning: Acceptance is zero or negative, setting to 1.0" << std::endl;
+      acceptance = 1.0; // Default to 1.0 if acceptance is invalid
+    }
+    _unnormalized_moments["H_0_0_0"] = mean/acceptance;
+    _unnormalized_moments_err["H_0_0_0"] = sigma/acceptance;
   }
   
   // Member variables
+  TString _filepath;
   std::map<TString, Double_t> _moments;                    ///< Normalized moments
   std::map<TString, Double_t> _moments_err;                ///< Normalized moment errors
   std::map<TString, Double_t> _unnormalized_moments;       ///< Unnormalized moments

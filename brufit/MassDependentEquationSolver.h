@@ -14,6 +14,7 @@
 #include <TTree.h>
 #include <vector>
 #include <map>
+#include <set>
 #include <memory>
 #include <TRandom3.h>
 #include <Math/Minimizer.h>
@@ -35,6 +36,68 @@ namespace m2pw {
 
     class MassDependentEquationSolver {
     public:
+        /**
+         * @brief Configuration for mass dependence of different l values
+         */
+        struct MassDependenceConfig {
+            std::map<int, std::vector<TString>> massDependentWaves;  // l -> list of wave names
+            std::vector<int> massIndependentL;                       // l values that are mass independent
+            
+            // Constructor with default behavior
+            MassDependenceConfig() {
+                massDependentWaves[2] = {"a2_1320"};  // Default: only l=2 with single wave
+                massIndependentL = {0, 1};            // l=0,1 mass independent
+            }
+            
+            // Check if a given l value is mass dependent
+            bool IsMassDependent(int l) const {
+                return massDependentWaves.find(l) != massDependentWaves.end();
+            }
+            
+            // Check if a given l value is mass independent
+            bool IsMassIndependent(int l) const {
+                return std::find(massIndependentL.begin(), massIndependentL.end(), l) != massIndependentL.end();
+            }
+            
+            // Get wave names for a given l value
+            std::vector<TString> GetWavesForL(int l) const {
+                auto it = massDependentWaves.find(l);
+                return (it != massDependentWaves.end()) ? it->second : std::vector<TString>{};
+            }
+        };
+
+        /**
+         * @brief Configuration for selecting which H moments to include in chi2
+         */
+        struct HMomentsConfig {
+            std::vector<int> includedL;     // L values of H moments to include in chi2
+            std::vector<int> excludedL;     // L values of H moments to exclude from chi2
+            bool includeAll;                // If true, include all H moments (ignore other settings)
+            
+            // Constructor with default behavior (include all)
+            HMomentsConfig() : includeAll(true) {}
+            
+            // Constructor to include specific L values
+            HMomentsConfig(const std::vector<int>& included) 
+                : includedL(included), includeAll(false) {}
+            
+            // Check if a given L value should be included in chi2
+            bool ShouldIncludeL(int L) const {
+                if (includeAll) return true;
+                
+                // Check exclusion list first
+                if (std::find(excludedL.begin(), excludedL.end(), L) != excludedL.end()) {
+                    return false;
+                }
+                
+                // If inclusion list is empty, include all except excluded
+                if (includedL.empty()) return true;
+                
+                // Check inclusion list
+                return std::find(includedL.begin(), includedL.end(), L) != includedL.end();
+            }
+        };
+
         // Parameter mapping utilities
         struct ParameterInfo {
             TString name;
@@ -48,11 +111,40 @@ namespace m2pw {
 
         MassDependentEquationSolver(const Setup& setup, std::vector<double> mass_bins, 
                                    double l_max, double noise, std::vector<TString> noUse);
+        
+        // Constructor with mass dependence configuration
+        MassDependentEquationSolver(const Setup& setup, 
+                                   std::vector<double> mass_bins, 
+                                   double l_max, 
+                                   double noise, 
+                                   std::vector<TString> noUse,
+                                   const MassDependenceConfig& config);
+        
+        // Constructor with both mass dependence and H moments configuration
+        MassDependentEquationSolver(const Setup& setup, 
+                                   std::vector<double> mass_bins, 
+                                   double l_max, 
+                                   double noise, 
+                                   std::vector<TString> noUse,
+                                   const MassDependenceConfig& massDepConfig,
+                                   const HMomentsConfig& hMomentsConfig);
+        
         ~MassDependentEquationSolver() = default;
 
         // Core evaluation methods
         double DoEval(const double* mass_dep_pars);
         unsigned int NDim() const;
+        
+        /**
+         * @brief Evaluate chi2 with current parameter values
+         * @return Current chi2 value
+         */
+        double EvalChi2() const;
+        
+        /**
+         * @brief Print which H moments are included in chi2 calculation
+         */
+        void PrintIncludedMoments() const;
 
         // Custom methods
         void PrintEquations(const TString opt = "", const double mass_bin_center = 0.0) const;
@@ -72,6 +164,55 @@ namespace m2pw {
         const std::vector<double>& GetMassBins() const { return massBins_; }
         double GetLastChi2() const { return lastChi2_; }
         
+        // Method to set/update configuration
+        void SetMassDependenceConfig(const MassDependenceConfig& config);
+        void SetHMomentsConfig(const HMomentsConfig& config);
+        
+        // Get current configuration
+        const MassDependenceConfig& GetMassDependenceConfig() const { return massDependenceConfig_; }
+        const HMomentsConfig& GetHMomentsConfig() const { return hMomentsConfig_; }
+
+        // Static factory methods for common configurations
+        static MassDependenceConfig CreateDefaultConfig() {
+            return MassDependenceConfig(); // l=2 mass dependent with a2_1320, l=0,1 mass independent
+        }
+        
+        static MassDependenceConfig CreateMultipleA2Config() {
+            MassDependenceConfig config;
+            config.massDependentWaves[2] = {"a2_1320", "a2_1700"};
+            config.massIndependentL = {0, 1};
+            return config;
+        }
+        
+        static MassDependenceConfig CreateL0L2Config() {
+            MassDependenceConfig config;
+            config.massDependentWaves[0] = {"a0_980"};
+            config.massDependentWaves[2] = {"a2_1320", "a2_1700"};
+            config.massIndependentL = {1};
+            return config;
+        }
+        
+        static MassDependenceConfig CreateCustomConfig(const std::map<int, std::vector<TString>>& massDep,
+                                                      const std::vector<int>& massIndep) {
+            MassDependenceConfig config;
+            config.massDependentWaves = massDep;
+            config.massIndependentL = massIndep;
+            return config;
+        }
+
+        // Static factory methods for H moment configurations
+        static HMomentsConfig CreateL4OnlyConfig() {
+            return HMomentsConfig({4});
+        }
+        
+        static HMomentsConfig CreateL2L4OnlyConfig() {
+            return HMomentsConfig({2, 4});
+        }
+        
+        static HMomentsConfig CreateIncludeAllConfig() {
+            return HMomentsConfig(); // Include all by default
+        }
+
         // Parameter management and minimization
         struct ParameterManager {
             std::vector<TString> parIndexNames;
@@ -82,8 +223,30 @@ namespace m2pw {
             void AddMassIndependentParameters(const std::vector<double>& massBins, 
                                             const std::vector<TString>& parNames, 
                                             int seed = 0);
+            void AddMassIndependentParameters(const std::vector<double>& massBins, 
+                                            const std::vector<TString>& parNames, 
+                                            int seed,
+                                            const MassDependenceConfig& config);
+            void AddMassIndependentParameters(const std::vector<double>& massBins, 
+                                            const std::vector<TString>& parNames, 
+                                            int seed,
+                                            const MassDependenceConfig& config,
+                                            const HMomentsConfig& hConfig,
+                                            const MassDependentEquationSolver& solver);
             void AddMassDependentParameters(const std::vector<TString>& parNames, 
                                           int seed = 0);
+            void AddMassDependentParameters(const std::vector<TString>& parNames, 
+                                          int seed, 
+                                          const std::vector<int>& massDependentL);
+            void AddMassDependentParameters(const std::vector<TString>& parNames, 
+                                          int seed,
+                                          const MassDependenceConfig& config);
+            void AddMassDependentParameters(const std::vector<TString>& parNames, 
+                                          int seed,
+                                          const MassDependenceConfig& config,
+                                          const HMomentsConfig& hConfig,
+                                          const MassDependentEquationSolver& solver);
+
             std::vector<double> GetInitialValues() const;
         };
 
@@ -120,6 +283,9 @@ namespace m2pw {
         std::vector<MassDependentFunction> massDepFuncs_;
         std::vector<double> massBins_;
         std::map<TString, int> parNameToIndex_;
+        MassDependenceConfig massDependenceConfig_;
+        HMomentsConfig hMomentsConfig_;  // Configuration for H moment selection
+        std::map<TString, int> waveToFunctionIndex_;  // Maps wave names to function indices
         
         // Caching for performance
         mutable double lastChi2_ = 0.0;
@@ -128,7 +294,7 @@ namespace m2pw {
         
         // Helper methods
         void InitializeMassBins(const std::vector<double>& mass_bins);
-        void InitializeFunctions(double l_max);
+        void InitializeMDFunctions();
         void ClearCache() const;
         bool IsParameterCached(const double* params) const;
         
@@ -137,6 +303,36 @@ namespace m2pw {
         // Chi2 calculation
         double EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const;
 
+        // Helper methods for single wave evaluation (no coherent sum)
+        double GetSingleWaveMagnitude(double mass_bin, 
+                                    const TString& par_name,
+                                    const std::map<TString, std::vector<double>>& massDepPars,
+                                    const TString& waveName) const;
+        
+        double GetSingleWavePhase(double mass_bin, 
+                                const TString& base_name,
+                                const std::map<TString, std::vector<double>>& massDepPars,
+                                const TString& waveName) const;
+        
+        // Helper methods for coherent amplitude combination (multiple waves)
+        double GetCoherentMagnitudeForL(double mass_bin, 
+                                       const TString& par_name,
+                                       const std::map<TString, std::vector<double>>& massDepPars,
+                                       int l_value) const;
+        
+        double GetCoherentPhaseForL(double mass_bin, 
+                                   const TString& base_name,
+                                   const std::map<TString, std::vector<double>>& massDepPars,
+                                   int l_value) const;
+        
+        // Helper method to map wave names to function indices
+        int GetFunctionIndexForWave(const TString& waveName) const;
+        
+        // Helper method to extract L value from equation name (e.g., "H_0_0" -> 0)
+        int ExtractLFromEquationName(const TString& eqnName) const;
+        
+        // Helper method to determine if parameters for a given L are needed based on H moments config
+        bool ParameterNeededForHMoments(int l, const HMomentsConfig& hConfig) const;
     };
 
     // Implementation of inline methods

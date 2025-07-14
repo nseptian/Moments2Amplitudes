@@ -23,6 +23,7 @@ namespace m2pw{
     const TString& GetOrigFormula() const {return _origFormula;}
     
     Double_t EqnValue() const {return _eqnValue;}
+    Double_t GetOrigFormulaValue() const {return _origFormulaVal;}
     
     unsigned int LocalNDim() const {
       return _localNdim;
@@ -66,6 +67,7 @@ namespace m2pw{
     
     mutable Double_t _cachedVal=0;
     Double_t _eqnValue=0;
+    mutable Double_t _origFormulaVal=0;
     std::vector<Double_t> _constantVals;
     mutable std::vector<Double_t> _localX;
     mutable Double_t _formuVal=0;
