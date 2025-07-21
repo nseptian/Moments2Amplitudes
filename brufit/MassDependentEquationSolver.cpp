@@ -135,22 +135,22 @@ namespace m2pw {
         }
 
         // Initialize parameter name to index mapping - FILTER BASED ON H MOMENTS CONFIG
-        int index = 0;
-        for (int l = 0; l <= static_cast<int>(l_max); ++l) {
-            // Only include parameters for L values that are needed for the H moments
-            if (!ParameterNeededForHMoments(l, hMomentsConfig)) {
-                std::cout << "Skipping parameters for l=" << l << " (not needed for selected H moments)" << std::endl;
-                continue;
-            }
+        // int index = 0;
+        // for (int l = 0; l <= static_cast<int>(l_max); ++l) {
+        //     // Only include parameters for L values that are needed for the H moments
+        //     if (!ParameterNeededForHMoments(l, hMomentsConfig)) {
+        //         std::cout << "Skipping parameters for l=" << l << " (not needed for selected H moments)" << std::endl;
+        //         continue;
+        //     }
             
-            for (int m = -l; m <= l; ++m) {
-                parNameToIndex_[Form("a_%d_%d", l, m)] = index++;
-                parNameToIndex_[Form("b_%d_%d", l, m)] = index++;
-                std::cout << "Including parameters: a_" << l << "_" << m << " and b_" << l << "_" << m << std::endl;
-            }
-        }
+        //     for (int m = -l; m <= l; ++m) {
+        //         parNameToIndex_[Form("a_%d_%d", l, m)] = index++;
+        //         parNameToIndex_[Form("b_%d_%d", l, m)] = index++;
+        //         std::cout << "Including parameters: a_" << l << "_" << m << " and b_" << l << "_" << m << std::endl;
+        //     }
+        // }
         
-        std::cout << "Total parameters to fit: " << parNameToIndex_.size() << std::endl;
+        // std::cout << "Total parameters to fit: " << parNameToIndex_.size() << std::endl;
     }
 
     void MassDependentEquationSolver::InitializeMassBins(const std::vector<double>& mass_bins) {
@@ -218,73 +218,73 @@ namespace m2pw {
     }
 
     // Core evaluation method - simplified and optimized
-    double MassDependentEquationSolver::DoEval(const double* mass_dep_pars) {
-        // Check cache first
-        if (IsParameterCached(mass_dep_pars)) {
-            return lastChi2_;
-        }
+    // double MassDependentEquationSolver::DoEval(const double* mass_dep_pars) {
+    //     // Check cache first
+    //     if (IsParameterCached(mass_dep_pars)) {
+    //         return lastChi2_;
+    //     }
         
-        double total_chi2 = 0.0;
+    //     double total_chi2 = 0.0;
         
-        for (size_t i = 0; i < massBins_.size(); ++i) {
-            const double mass_bin = massBins_[i];
-            auto& pars = pars_.at(mass_bin);
+    //     for (size_t i = 0; i < massBins_.size(); ++i) {
+    //         const double mass_bin = massBins_[i];
+    //         auto& pars = pars_.at(mass_bin);
             
-            // Set parameter values for this mass bin
-            for (int j = 0; j < pars.Nvars(); ++j) {
-                const TString par_name = pars.GetParName(j);
-                std::unique_ptr<TObjArray> parts(par_name.Tokenize("_"));
+    //         // Set parameter values for this mass bin
+    //         for (int j = 0; j < pars.Nvars(); ++j) {
+    //             const TString par_name = pars.GetParName(j);
+    //             std::unique_ptr<TObjArray> parts(par_name.Tokenize("_"));
                 
-                if (parts->GetEntries() < 3) continue;
+    //             if (parts->GetEntries() < 3) continue;
                 
-                const TString refl_str = ((TObjString*)parts->At(0))->GetString();
-                const TString l_str = ((TObjString*)parts->At(1))->GetString();
-                const TString m_str = ((TObjString*)parts->At(2))->GetString();
+    //             const TString refl_str = ((TObjString*)parts->At(0))->GetString();
+    //             const TString l_str = ((TObjString*)parts->At(1))->GetString();
+    //             const TString m_str = ((TObjString*)parts->At(2))->GetString();
                 
-                double value = 0.0;
+    //             double value = 0.0;
                 
-                if (refl_str == "a" || refl_str == "b") {
-                    const auto it = parNameToIndex_.find(par_name);
-                    if (it != parNameToIndex_.end()) {
-                        const double mass_dep_par = mass_dep_pars[it->second];
+    //             if (refl_str == "a" || refl_str == "b") {
+    //                 const auto it = parNameToIndex_.find(par_name);
+    //                 if (it != parNameToIndex_.end()) {
+    //                     const double mass_dep_par = mass_dep_pars[it->second];
                         
-                        if (l_str == "0" || l_str == "1") {
-                            value = mass_dep_par;
-                        } else if (l_str == "2") {
-                            value = massDepFuncs_[0].GetPWMagnitude(mass_bin, mass_dep_par);
-                        }
-                    }
-                } else if (refl_str == "aphi" || refl_str == "bphi") {
-                    TString base_name = refl_str;
-                    base_name.ReplaceAll("phi", "");
-                    const TString base_par_name = Form("%s_%s_%s", base_name.Data(), l_str.Data(), m_str.Data());
+    //                     if (l_str == "0" || l_str == "1") {
+    //                         value = mass_dep_par;
+    //                     } else if (l_str == "2") {
+    //                         value = massDepFuncs_[0].GetPWMagnitude(mass_bin, mass_dep_par);
+    //                     }
+    //                 }
+    //             } else if (refl_str == "aphi" || refl_str == "bphi") {
+    //                 TString base_name = refl_str;
+    //                 base_name.ReplaceAll("phi", "");
+    //                 const TString base_par_name = Form("%s_%s_%s", base_name.Data(), l_str.Data(), m_str.Data());
                     
-                    const auto it = parNameToIndex_.find(base_par_name);
-                    if (it != parNameToIndex_.end()) {
-                        const double mass_dep_par = mass_dep_pars[it->second];
-                        if (l_str == "2") {
-                            value = massDepFuncs_[0].GetPWPhase(mass_bin, mass_dep_par);
-                        }
-                    }
-                }
+    //                 const auto it = parNameToIndex_.find(base_par_name);
+    //                 if (it != parNameToIndex_.end()) {
+    //                     const double mass_dep_par = mass_dep_pars[it->second];
+    //                     if (l_str == "2") {
+    //                         value = massDepFuncs_[0].GetPWPhase(mass_bin, mass_dep_par);
+    //                     }
+    //                 }
+    //             }
                 
-                pars.SetCurrentVal(par_name, value);
-            }
+    //             pars.SetCurrentVal(par_name, value);
+    //         }
             
-            // Evaluate chi2 for this mass bin
-            total_chi2 += EvaluateChi2ForMassBin(mass_bin, pars);
-        }
+    //         // Evaluate chi2 for this mass bin
+    //         total_chi2 += EvaluateChi2ForMassBin(mass_bin, pars);
+    //     }
         
-        // Update cache
-        lastChi2_ = total_chi2;
-        if (cachedParams_.size() != NDim()) {
-            cachedParams_.resize(NDim());
-        }
-        std::copy(mass_dep_pars, mass_dep_pars + NDim(), cachedParams_.begin());
-        cacheValid_ = true;
+    //     // Update cache
+    //     lastChi2_ = total_chi2;
+    //     if (cachedParams_.size() != NDim()) {
+    //         cachedParams_.resize(NDim());
+    //     }
+    //     std::copy(mass_dep_pars, mass_dep_pars + NDim(), cachedParams_.begin());
+    //     cacheValid_ = true;
         
-        return total_chi2;
-    }
+    //     return total_chi2;
+    // }
 
     unsigned int MassDependentEquationSolver::NDim() const {
         if (pars_.empty()) return 0;
@@ -476,7 +476,7 @@ namespace m2pw {
     
 
 
-    void MassDependentEquationSolver::MakeResultTree(const TString& fileName, int seed) const {
+    void MassDependentEquationSolver::MakeResultTree(const ParameterManager& paramManager, const TString& fileName, int seed = -1) const {
         if (pars_.empty()) {
             std::cerr << "No parameters to save" << std::endl;
             return;
@@ -556,6 +556,28 @@ namespace m2pw {
 
             tree->Fill();
         }
+
+        // vector<double> ParameterValues = paramManager.GetValues();
+
+        cout << "Filling the result tree with mass-dependent parameters..." << std::endl;
+
+        // create new tree to store mass dependent parameters
+        auto mdTree = std::make_unique<TTree>("mass_dependent_params", "Mass Dependent Parameters");
+        
+        const int nMDPars = paramManager.totalNpars;
+        double md_par_vals[nMDPars];
+        int idx = 0;
+        for (const auto& [parName, value] : paramManager.parsList) {
+            // double currentValue = value;
+            if (parName.BeginsWith("MD_")) {  // Only mass-dependent parameters
+                cout << parName << " = " << value << std::endl;
+                md_par_vals[idx] = value;
+                mdTree->Branch(parName, &md_par_vals[idx]);
+                idx++;
+            }
+        }
+
+        mdTree->Fill();
 
         // Save chi2 and optionally seed information
         auto chi2_tree = std::make_unique<TTree>("chi2", "chi2");
@@ -657,7 +679,7 @@ namespace m2pw {
     //     }
     // }
 
-    std::vector<double> MassDependentEquationSolver::ParameterManager::GetInitialValues() const {
+    std::vector<double> MassDependentEquationSolver::ParameterManager::GetValues() const {
         std::vector<double> values(totalNpars);
         for (int i = 0; i < totalNpars; ++i) {
             values[i] = parsList.at(parIndexNames[i]);
@@ -735,11 +757,11 @@ namespace m2pw {
         MinimizeChi2(paramManager, seed);
     }
 
-    void MassDependentEquationSolver::MinimizeChi2(const ParameterManager& paramManager, int seed) {
+    void MassDependentEquationSolver::MinimizeChi2(ParameterManager& paramManager, int seed) {
         std::cout << "Total number of parameters: " << paramManager.totalNpars << std::endl;
 
         // Get initial parameter values
-        std::vector<double> initialValues = paramManager.GetInitialValues();
+        std::vector<double> initialValues = paramManager.GetValues();
 
         auto minimizer = std::unique_ptr<ROOT::Math::Minimizer>(
             ROOT::Math::Factory::CreateMinimizer("Minuit2", "Migrad"));
@@ -797,6 +819,14 @@ namespace m2pw {
         // if (isValid) {
         //     MakeResultTree(Form("MassDependentResults_%d.root", seed), seed);
         // }
+
+        const double* parValues = minimizer->X();
+        
+        // update parameter manager values
+        for (int i = 0; i < paramManager.totalNpars; ++i) {
+            const TString& parName = paramManager.parIndexNames[i];
+            paramManager.parsList[parName] = parValues[i];
+        }
 
         if (!massBins_.empty()) {
             PrintEquations("v", massBins_[0]);
@@ -1052,9 +1082,9 @@ namespace m2pw {
             std::cerr << "Error opening file: " << filePath << std::endl;
             return;
         }
-        TTree* tree = dynamic_cast<TTree*>(file.Get("result"));
+        TTree* tree = dynamic_cast<TTree*>(file.Get("mass_dependent_params"));
         if (!tree) {
-            std::cerr << "Error: Tree 'result' not found in file: " << filePath << std::endl;
+            std::cerr << "Error: Tree 'mass_dependent_params' not found in file: " << filePath << std::endl;
             return;
         }
 
@@ -1088,7 +1118,7 @@ namespace m2pw {
             for (const TString& waveName : waveNames) {
                 TString name = Form("MD_%s_%s_k", parName.Data(), waveName.Data());
                 // parsList[name] = 10.0;  // Default initial value
-                parsList[name] = tree->GetLeaf(parName.Data())->GetValue();
+                parsList[name] = tree->GetLeaf(name)->GetValue();
                 nameToIndex[name] = totalNpars;
                 parIndexNames.push_back(name);
                 if (isFixed) {

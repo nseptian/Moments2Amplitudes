@@ -131,7 +131,7 @@ namespace m2pw {
         ~MassDependentEquationSolver() = default;
 
         // Core evaluation methods
-        double DoEval(const double* mass_dep_pars);
+        // double DoEval(const double* mass_dep_pars);
         unsigned int NDim() const;
         
         /**
@@ -154,9 +154,6 @@ namespace m2pw {
         // Optimized evaluation methods
         double DoEval(const std::map<TString, std::vector<double>>& massDepPars, 
                      const std::map<TString, std::map<TString, std::vector<double>>>& massIndepPars);
-        
-        // Memory efficient file operations
-        void MakeResultTree(const TString& fileName, int seed = -1) const;
         
         // Getters
         const std::vector<double>& GetMassBins() const { return massBins_; }
@@ -255,8 +252,12 @@ namespace m2pw {
                                           const MassDependentEquationSolver& solver,
                                           const bool isFixed);
 
-            std::vector<double> GetInitialValues() const;
+            std::vector<double> GetValues() const;
         };
+
+
+        // Memory efficient file operations
+        void MakeResultTree(const ParameterManager& paramManager, const TString& fileName, int seed) const;
 
         // Chi2 function class for minimization
         class Chi2Function {
@@ -282,7 +283,7 @@ namespace m2pw {
         // Utility methods
         static std::vector<TString> GetParNames();
         void MinimizeChi2(int seed = 0);
-        void MinimizeChi2(const ParameterManager& paramManager, int seed = 0);
+        void MinimizeChi2(ParameterManager& paramManager, int seed = 0);
 
 private:
     // Core data structures - using consistent naming
