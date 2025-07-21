@@ -27,7 +27,6 @@ namespace m2pw {
     // Configuration constants
     namespace Config {
         constexpr double DEFAULT_CHI2_TOLERANCE = 1e-6;
-        constexpr size_t MAX_CACHE_SIZE = 1000;
         const TString BW_NAMES[3] = {"k", "M", "width"};
     }
 
@@ -109,16 +108,16 @@ namespace m2pw {
             ParameterInfo(const TString& parName);
         };
 
-        MassDependentEquationSolver(const Setup& setup, std::vector<double> mass_bins, 
-                                   double l_max, double noise, std::vector<TString> noUse);
+        // MassDependentEquationSolver(const Setup& setup, std::vector<double> mass_bins, 
+        //                            double l_max, double noise, std::vector<TString> noUse);
         
-        // Constructor with mass dependence configuration
-        MassDependentEquationSolver(const Setup& setup, 
-                                   std::vector<double> mass_bins, 
-                                   double l_max, 
-                                   double noise, 
-                                   std::vector<TString> noUse,
-                                   const MassDependenceConfig& config);
+        // // Constructor with mass dependence configuration
+        // MassDependentEquationSolver(const Setup& setup, 
+        //                            std::vector<double> mass_bins, 
+        //                            double l_max, 
+        //                            double noise, 
+        //                            std::vector<TString> noUse,
+        //                            const MassDependenceConfig& config);
         
         // Constructor with both mass dependence and H moments configuration
         MassDependentEquationSolver(const Setup& setup, 
@@ -157,8 +156,7 @@ namespace m2pw {
                      const std::map<TString, std::map<TString, std::vector<double>>>& massIndepPars);
         
         // Memory efficient file operations
-        void MakeResultTree(const TString& fileName) const;
-        void MakeResultTree(const TString& fileName, int seed) const;
+        void MakeResultTree(const TString& fileName, int seed = -1) const;
         
         // Getters
         const std::vector<double>& GetMassBins() const { return massBins_; }
@@ -217,9 +215,11 @@ namespace m2pw {
         struct ParameterManager {
             std::vector<TString> parIndexNames;
             std::map<TString, double> parsList;
+            std::vector<TString> fixedParNames;  // For fixed parameters
             std::map<TString, int> nameToIndex;
             int totalNpars = 0;
 
+            // Add mass independent parameters with random initialization
             void AddMassIndependentParameters(const std::vector<double>& massBins, 
                                             const std::vector<TString>& parNames, 
                                             int seed = 0);
@@ -246,6 +246,14 @@ namespace m2pw {
                                           const MassDependenceConfig& config,
                                           const HMomentsConfig& hConfig,
                                           const MassDependentEquationSolver& solver);
+
+            // Add parameters with values from a file
+            void AddMassDependentParameters(const std::vector<TString>& parNames,
+                                          const TString filePath,
+                                          const MassDependenceConfig& config,
+                                          const HMomentsConfig& hConfig,
+                                          const MassDependentEquationSolver& solver,
+                                          const bool isFixed);
 
             std::vector<double> GetInitialValues() const;
         };
@@ -276,63 +284,67 @@ namespace m2pw {
         void MinimizeChi2(int seed = 0);
         void MinimizeChi2(const ParameterManager& paramManager, int seed = 0);
 
-    private:
-        // Core data structures - using consistent naming
-        std::map<double, ParameterHelper> pars_;
-        std::map<double, equation_t> eqns_;
-        std::vector<MassDependentFunction> massDepFuncs_;
-        std::vector<double> massBins_;
-        std::map<TString, int> parNameToIndex_;
-        MassDependenceConfig massDependenceConfig_;
-        HMomentsConfig hMomentsConfig_;  // Configuration for H moment selection
-        std::map<TString, int> waveToFunctionIndex_;  // Maps wave names to function indices
-        
-        // Caching for performance
-        mutable double lastChi2_ = 0.0;
-        mutable std::vector<double> cachedParams_;
-        mutable bool cacheValid_ = false;
-        
-        // Helper methods
-        void InitializeMassBins(const std::vector<double>& mass_bins);
-        void InitializeMDFunctions();
-        void ClearCache() const;
-        bool IsParameterCached(const double* params) const;
-        
-        std::unique_ptr<ParameterInfo> ParseParameterName(const TString& parName) const;
-        
-        // Chi2 calculation
-        double EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const;
+private:
+    // Core data structures - using consistent naming
+    std::map<double, ParameterHelper> pars_;
+    std::map<double, equation_t> eqns_;
+    std::vector<MassDependentFunction> massDepFuncs_;
+    std::vector<double> massBins_;
+    std::map<TString, int> parNameToIndex_;
+    MassDependenceConfig massDependenceConfig_;
+    HMomentsConfig hMomentsConfig_;  // Configuration for H moment selection
+    std::map<TString, int> waveToFunctionIndex_;  // Maps wave names to function indices
 
-        // Helper methods for single wave evaluation (no coherent sum)
-        double GetSingleWaveMagnitude(double mass_bin, 
-                                    const TString& par_name,
-                                    const std::map<TString, std::vector<double>>& massDepPars,
-                                    const TString& waveName) const;
-        
-        double GetSingleWavePhase(double mass_bin, 
-                                const TString& base_name,
+    // Caching for performance
+    mutable double lastChi2_ = 0.0;
+    mutable std::vector<double> cachedParams_;
+    mutable bool cacheValid_ = false;
+
+    // Minimizer status and validity
+    bool minimizerIsValid_ = false;
+    int minimizerStatus_ = -1;
+
+    // Helper methods
+    void InitializeMassBins(const std::vector<double>& mass_bins);
+    void InitializeMDFunctions();
+    void ClearCache() const;
+    bool IsParameterCached(const double* params) const;
+
+    std::unique_ptr<ParameterInfo> ParseParameterName(const TString& parName) const;
+
+    // Chi2 calculation
+    double EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const;
+
+    // Helper methods for single wave evaluation (no coherent sum)
+    double GetSingleWaveMagnitude(double mass_bin, 
+                                const TString& par_name,
                                 const std::map<TString, std::vector<double>>& massDepPars,
                                 const TString& waveName) const;
-        
-        // Helper methods for coherent amplitude combination (multiple waves)
-        double GetCoherentMagnitudeForL(double mass_bin, 
-                                       const TString& par_name,
-                                       const std::map<TString, std::vector<double>>& massDepPars,
-                                       int l_value) const;
-        
-        double GetCoherentPhaseForL(double mass_bin, 
-                                   const TString& base_name,
+
+    double GetSingleWavePhase(double mass_bin, 
+                            const TString& base_name,
+                            const std::map<TString, std::vector<double>>& massDepPars,
+                            const TString& waveName) const;
+
+    // Helper methods for coherent amplitude combination (multiple waves)
+    double GetCoherentMagnitudeForL(double mass_bin, 
+                                   const TString& par_name,
                                    const std::map<TString, std::vector<double>>& massDepPars,
                                    int l_value) const;
-        
-        // Helper method to map wave names to function indices
-        int GetFunctionIndexForWave(const TString& waveName) const;
-        
-        // Helper method to extract L value from equation name (e.g., "H_0_0" -> 0)
-        int ExtractLFromEquationName(const TString& eqnName) const;
-        
-        // Helper method to determine if parameters for a given L are needed based on H moments config
-        bool ParameterNeededForHMoments(int l, const HMomentsConfig& hConfig) const;
+
+    double GetCoherentPhaseForL(double mass_bin, 
+                               const TString& base_name,
+                               const std::map<TString, std::vector<double>>& massDepPars,
+                               int l_value) const;
+
+    // Helper method to map wave names to function indices
+    int GetFunctionIndexForWave(const TString& waveName) const;
+
+    // Helper method to extract L value from equation name (e.g., "H_0_0" -> 0)
+    int ExtractLFromEquationName(const TString& eqnName) const;
+
+    // Helper method to determine if parameters for a given L are needed based on H moments config
+    bool ParameterNeededForHMoments(int l, const HMomentsConfig& hConfig) const;
     };
 
     // Implementation of inline methods

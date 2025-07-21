@@ -6,96 +6,96 @@
 
 namespace m2pw {
 
-    MassDependentEquationSolver::MassDependentEquationSolver(const Setup& setup, 
-                                                           std::vector<double> mass_bins, 
-                                                           double l_max, double noise, 
-                                                           std::vector<TString> noUse) 
-        : massBins_(std::move(mass_bins)), massDependenceConfig_(MassDependenceConfig()), hMomentsConfig_(HMomentsConfig()) {
+    // MassDependentEquationSolver::MassDependentEquationSolver(const Setup& setup, 
+    //                                                        std::vector<double> mass_bins, 
+    //                                                        double l_max, double noise, 
+    //                                                        std::vector<TString> noUse) 
+    //     : massBins_(std::move(mass_bins)), massDependenceConfig_(MassDependenceConfig()), hMomentsConfig_(HMomentsConfig()) {
         
-        InitializeMassBins(massBins_);
-        InitializeMDFunctions();
+    //     InitializeMassBins(massBins_);
+    //     InitializeMDFunctions();
         
-        // Initialize equations for each mass bin
-        const auto validEqn = [&noUse](const TString& name) {
-            // if (name.BeginsWith("a_")) return false; // Skip amplitude equations
-            if (name == "normalise") return false;
-            return std::none_of(noUse.begin(), noUse.end(), 
-                               [&name](const TString& match) { return name.Contains(match); });
-        };
+    //     // Initialize equations for each mass bin
+    //     const auto validEqn = [&noUse](const TString& name) {
+    //         // if (name.BeginsWith("a_")) return false; // Skip amplitude equations
+    //         if (name == "normalise") return false;
+    //         return std::none_of(noUse.begin(), noUse.end(), 
+    //                            [&name](const TString& match) { return name.Contains(match); });
+    //     };
 
-        for (const double& mass_bin : massBins_) {
-            pars_[mass_bin] = ParameterHelper(setup);
+    //     for (const double& mass_bin : massBins_) {
+    //         pars_[mass_bin] = ParameterHelper(setup);
             
-            for (const auto& form : setup.ParameterFormulas()) {
-                if (!validEqn(form->GetName())) continue;
+    //         for (const auto& form : setup.ParameterFormulas()) {
+    //             if (!validEqn(form->GetName())) continue;
                 
-                if (auto* var = dynamic_cast<RooFormulaVar*>(form)) {
-                    eqns_[mass_bin].emplace_back(var, &pars_[mass_bin], noise);
-                }
-            }
+    //             if (auto* var = dynamic_cast<RooFormulaVar*>(form)) {
+    //                 eqns_[mass_bin].emplace_back(var, &pars_[mass_bin], noise);
+    //             }
+    //         }
 
-            // Initialize equations
-            for (auto& eqn : eqns_[mass_bin]) {
-                eqn.FindL();
-                eqn.DoEval(pars_[mass_bin].CurrentVals());
-            }
-        }
+    //         // Initialize equations
+    //         for (auto& eqn : eqns_[mass_bin]) {
+    //             eqn.FindL();
+    //             eqn.DoEval(pars_[mass_bin].CurrentVals());
+    //         }
+    //     }
 
-        // Initialize parameter name to index mapping
-        int index = 0;
-        for (int l = 0; l <= static_cast<int>(l_max); ++l) {
-            for (int m = -l; m <= l; ++m) {
-                parNameToIndex_[Form("a_%d_%d", l, m)] = index++;
-                parNameToIndex_[Form("b_%d_%d", l, m)] = index++;
-            }
-        }
-    }
+    //     // Initialize parameter name to index mapping
+    //     int index = 0;
+    //     for (int l = 0; l <= static_cast<int>(l_max); ++l) {
+    //         for (int m = -l; m <= l; ++m) {
+    //             parNameToIndex_[Form("a_%d_%d", l, m)] = index++;
+    //             parNameToIndex_[Form("b_%d_%d", l, m)] = index++;
+    //         }
+    //     }
+    // }
 
-    MassDependentEquationSolver::MassDependentEquationSolver(const Setup& setup, 
-                                                           std::vector<double> mass_bins, 
-                                                           double l_max, double noise, 
-                                                           std::vector<TString> noUse,
-                                                           const MassDependenceConfig& config) 
-        : massBins_(std::move(mass_bins)), massDependenceConfig_(config), hMomentsConfig_(HMomentsConfig()) {
+    // MassDependentEquationSolver::MassDependentEquationSolver(const Setup& setup, 
+    //                                                        std::vector<double> mass_bins, 
+    //                                                        double l_max, double noise, 
+    //                                                        std::vector<TString> noUse,
+    //                                                        const MassDependenceConfig& config) 
+    //     : massBins_(std::move(mass_bins)), massDependenceConfig_(config), hMomentsConfig_(HMomentsConfig()) {
         
-        InitializeMassBins(massBins_);
-        InitializeMDFunctions();
+    //     InitializeMassBins(massBins_);
+    //     InitializeMDFunctions();
         
-        // Initialize equations for each mass bin
-        const auto validEqn = [&noUse](const TString& name) {
-            // if (name.BeginsWith("a_")) return false; // Skip amplitude equations
-            if (name == "normalise") return false;
-            return std::none_of(noUse.begin(), noUse.end(), 
-                               [&name](const TString& match) { return name.Contains(match); });
-        };
+    //     // Initialize equations for each mass bin
+    //     const auto validEqn = [&noUse](const TString& name) {
+    //         // if (name.BeginsWith("a_")) return false; // Skip amplitude equations
+    //         if (name == "normalise") return false;
+    //         return std::none_of(noUse.begin(), noUse.end(), 
+    //                            [&name](const TString& match) { return name.Contains(match); });
+    //     };
 
-        for (const double& mass_bin : massBins_) {
-            pars_[mass_bin] = ParameterHelper(setup);
+    //     for (const double& mass_bin : massBins_) {
+    //         pars_[mass_bin] = ParameterHelper(setup);
             
-            for (const auto& form : setup.ParameterFormulas()) {
-                if (!validEqn(form->GetName())) continue;
+    //         for (const auto& form : setup.ParameterFormulas()) {
+    //             if (!validEqn(form->GetName())) continue;
                 
-                if (auto* var = dynamic_cast<RooFormulaVar*>(form)) {
-                    eqns_[mass_bin].emplace_back(var, &pars_[mass_bin], noise);
-                }
-            }
+    //             if (auto* var = dynamic_cast<RooFormulaVar*>(form)) {
+    //                 eqns_[mass_bin].emplace_back(var, &pars_[mass_bin], noise);
+    //             }
+    //         }
 
-            // Initialize equations
-            for (auto& eqn : eqns_[mass_bin]) {
-                eqn.FindL();
-                eqn.DoEval(pars_[mass_bin].CurrentVals());
-            }
-        }
+    //         // Initialize equations
+    //         for (auto& eqn : eqns_[mass_bin]) {
+    //             eqn.FindL();
+    //             eqn.DoEval(pars_[mass_bin].CurrentVals());
+    //         }
+    //     }
 
-        // Initialize parameter name to index mapping
-        int index = 0;
-        for (int l = 0; l <= static_cast<int>(l_max); ++l) {
-            for (int m = -l; m <= l; ++m) {
-                parNameToIndex_[Form("a_%d_%d", l, m)] = index++;
-                parNameToIndex_[Form("b_%d_%d", l, m)] = index++;
-            }
-        }
-    }
+    //     // Initialize parameter name to index mapping
+    //     int index = 0;
+    //     for (int l = 0; l <= static_cast<int>(l_max); ++l) {
+    //         for (int m = -l; m <= l; ++m) {
+    //             parNameToIndex_[Form("a_%d_%d", l, m)] = index++;
+    //             parNameToIndex_[Form("b_%d_%d", l, m)] = index++;
+    //         }
+    //     }
+    // }
 
     MassDependentEquationSolver::MassDependentEquationSolver(const Setup& setup, 
                                                            std::vector<double> mass_bins, 
@@ -472,90 +472,9 @@ namespace m2pw {
             std::cout << "No parameters found for mass bin center: " << mass_bin_center << std::endl;
         }
     }
+    
+    
 
-    void MassDependentEquationSolver::MakeResultTree(const TString& fileName) const {
-        if (pars_.empty()) {
-            std::cerr << "No parameters to save" << std::endl;
-            return;
-        }
-
-        std::unique_ptr<TFile> file(TFile::Open(fileName, "RECREATE"));
-        if (!file || file->IsZombie()) {
-            std::cerr << "Error creating file: " << fileName << std::endl;
-            return;
-        }
-
-        auto tree = std::make_unique<TTree>("result", "result");
-        const int nMassBins = static_cast<int>(massBins_.size());
-        const int nPars = pars_.begin()->second.Nvars();
-        
-        // Use vectors for better memory management
-        std::vector<double> par_vals(nPars);
-        double mass_bin_center = 0.0;
-        
-        // Collect all unique H moment names from all mass bins
-        std::set<TString> allHMomentNames;
-        for (const auto& [mass_bin, equations] : eqns_) {
-            for (const auto& eqn : equations) {
-                TString eqnName = eqn.GetName();
-                if (eqnName.BeginsWith("H_")) {
-                    allHMomentNames.insert(eqnName);
-                }
-            }
-        }
-        
-        tree->Branch("mass_bin", &mass_bin_center);
-        for (int i = 0; i < nPars; ++i) {
-            const TString par_name = pars_.begin()->second.GetParName(i);
-            tree->Branch(par_name, &par_vals[i]);
-        }
-        
-        // Add branches for H moment values only (no errors)
-        std::map<TString, double> hMomentBranchValues;
-        for (const TString& momentName : allHMomentNames) {
-            hMomentBranchValues[momentName] = 0.0;
-            tree->Branch(momentName, &hMomentBranchValues[momentName]);
-        }
-
-        std::cout << "Filling the result tree with parameter values and H moment values..." << std::endl;
-
-        for (const auto& [mass_bin, pars] : pars_) {
-            mass_bin_center = mass_bin;
-            
-            // Fill parameter values
-            for (int i = 0; i < nPars; ++i) {
-                const TString par_name = pars.GetParName(i);
-                par_vals[i] = pars.GetCurrentVal(par_name);
-            }
-            
-            // Fill H moment values for this mass bin
-            for (const TString& momentName : allHMomentNames) {
-                hMomentBranchValues[momentName] = 0.0;
-                
-                // Find the equation for this moment in this mass bin
-                const auto eqnIt = eqns_.find(mass_bin);
-                if (eqnIt != eqns_.end()) {
-                    for (const auto& eqn : eqnIt->second) {
-                        if (eqn.GetName() == momentName) {
-                            hMomentBranchValues[momentName] = eqn.GetOrigFormulaValue();
-                            break;
-                        }
-                    }
-                }
-            }
-            
-            tree->Fill();
-        }
-
-        // Save chi2 information (without seed for this version)
-        auto chi2_tree = std::make_unique<TTree>("chi2", "chi2");
-        double chi2 = lastChi2_;
-        chi2_tree->Branch("chi2", &chi2);
-        chi2_tree->Fill();
-
-        file->Write();
-        std::cout << "Result tree saved to " << fileName << " with H moment values as individual branches" << std::endl;
-    }
 
     void MassDependentEquationSolver::MakeResultTree(const TString& fileName, int seed) const {
         if (pars_.empty()) {
@@ -572,12 +491,11 @@ namespace m2pw {
         auto tree = std::make_unique<TTree>("result", "result");
         const int nMassBins = static_cast<int>(massBins_.size());
         const int nPars = pars_.begin()->second.Nvars();
-        
+
         // Use vectors for better memory management
         std::vector<double> par_vals(nPars);
         double mass_bin_center = 0.0;
-        // Note: seed is NOT stored in the main result tree, only in chi2 tree
-        
+
         // Collect all unique H moment names from all mass bins
         std::set<TString> allHMomentNames;
         for (const auto& [mass_bin, equations] : eqns_) {
@@ -588,13 +506,13 @@ namespace m2pw {
                 }
             }
         }
-        
+
         tree->Branch("mass_bin", &mass_bin_center);
         for (int i = 0; i < nPars; ++i) {
             const TString par_name = pars_.begin()->second.GetParName(i);
             tree->Branch(par_name, &par_vals[i]);
         }
-        
+
         // Add branches for H moment values only (no errors)
         std::map<TString, double> hMomentBranchValues;
         for (const TString& momentName : allHMomentNames) {
@@ -602,46 +520,58 @@ namespace m2pw {
             tree->Branch(momentName, &hMomentBranchValues[momentName]);
         }
 
-        std::cout << "Filling the result tree with parameter values and H moment values (seed: " << seed << ")..." << std::endl;
+        if (seed >= 0)
+            std::cout << "Filling the result tree with parameter values and H moment values (seed: " << seed << ")..." << std::endl;
+        else
+            std::cout << "Filling the result tree with parameter values and H moment values..." << std::endl;
 
         for (const auto& [mass_bin, pars] : pars_) {
             mass_bin_center = mass_bin;
-            
+
             // Fill parameter values
             for (int i = 0; i < nPars; ++i) {
                 const TString par_name = pars.GetParName(i);
                 par_vals[i] = pars.GetCurrentVal(par_name);
             }
-            
+
             // Fill H moment values for this mass bin
             for (const TString& momentName : allHMomentNames) {
                 hMomentBranchValues[momentName] = 0.0;
-                
+
                 // Find the equation for this moment in this mass bin
                 const auto eqnIt = eqns_.find(mass_bin);
                 if (eqnIt != eqns_.end()) {
                     for (const auto& eqn : eqnIt->second) {
                         if (eqn.GetName() == momentName) {
-                            hMomentBranchValues[momentName] = eqn.EqnValue();
+                            // Use EqnValue() if seed is provided, else GetOrigFormulaValue()
+                            if (seed >= 0)
+                                hMomentBranchValues[momentName] = eqn.EqnValue();
+                            else
+                                hMomentBranchValues[momentName] = eqn.GetOrigFormulaValue();
                             break;
                         }
                     }
                 }
             }
-            
+
             tree->Fill();
         }
 
-        // Save chi2 and seed information (seed only stored in chi2 tree)
+        // Save chi2 and optionally seed information
         auto chi2_tree = std::make_unique<TTree>("chi2", "chi2");
         double chi2 = lastChi2_;
-        int seed_val = seed;
         chi2_tree->Branch("chi2", &chi2);
-        chi2_tree->Branch("seed", &seed_val);
+        if (seed >= 0) {
+            int seed_val = seed;
+            chi2_tree->Branch("seed", &seed_val);
+        }
         chi2_tree->Fill();
 
         file->Write();
-        std::cout << "Result tree saved to " << fileName << " with seed " << seed << " and H moment values as individual branches" << std::endl;
+        if (seed >= 0)
+            std::cout << "Result tree saved to " << fileName << " with seed " << seed << " and H moment values as individual branches" << std::endl;
+        else
+            std::cout << "Result tree saved to " << fileName << " with H moment values as individual branches" << std::endl;
     }
 
     // ParameterManager implementation
@@ -692,8 +622,8 @@ namespace m2pw {
             }
 
             // Step 4: Add parameter with generalized naming
-            TString name = Form("MD_%s_%s", parName.Data(), Config::BW_NAMES[0].Data());
-            parsList[name] = TRandom3(seed).Uniform(5, 20);  // Random initial value
+            TString name = Form("MD_%s_k", parName.Data());
+            parsList[name] = TRandom3(seed).Uniform(-50, 50);  // Random initial value
             nameToIndex[name] = totalNpars;
             parIndexNames.push_back(name);
             totalNpars++;
@@ -710,6 +640,7 @@ namespace m2pw {
         AddMassDependentParameters(parNames, seed, defaultMassDependentL);
     }
 
+
     // void MassDependentEquationSolver::ParameterManager::AddMassDependentParameters(
     //     const std::vector<TString>& parNames, 
     //     int seed) {
@@ -718,7 +649,7 @@ namespace m2pw {
     //         if (!(parName.Contains("2")) || parName.Contains("phi_0") || 
     //             parName.Contains("phi_1") || parName.Contains("phi_2")) continue;
 
-    //         TString name = Form("MD_%s_%s", parName.Data(), Config::BW_NAMES[0].Data());
+    //         TString name = Form("MD_%s_k", parName.Data());
     //         parsList[name] = 10.0;
     //         nameToIndex[name] = totalNpars;
     //         parIndexNames.push_back(name);
@@ -790,6 +721,8 @@ namespace m2pw {
         return parNames;
     }
 
+    
+
     // Minimization methods
     void MassDependentEquationSolver::MinimizeChi2(int seed) {
         // Setup parameter manager
@@ -808,10 +741,9 @@ namespace m2pw {
         // Get initial parameter values
         std::vector<double> initialValues = paramManager.GetInitialValues();
 
-        // Setup minimizer with Chi2Function wrapper
         auto minimizer = std::unique_ptr<ROOT::Math::Minimizer>(
             ROOT::Math::Factory::CreateMinimizer("Minuit2", "Migrad"));
-        
+
         if (!minimizer) {
             std::cerr << "Error: Cannot create Minuit2 minimizer" << std::endl;
             return;
@@ -819,41 +751,53 @@ namespace m2pw {
 
         Chi2Function chi2Function(*this, paramManager.parIndexNames);
         ROOT::Math::Functor functor(chi2Function, paramManager.totalNpars);
-        
+
         TStopwatch timer;
         timer.Start();
 
         std::cout << "Chi2 before minimization: " << chi2Function(initialValues.data()) << std::endl;
 
         minimizer->SetFunction(functor);
-        
-        // Set parameters
+
+        auto isFixed = [&paramManager](const TString& parName) {
+            return std::find(paramManager.fixedParNames.begin(), paramManager.fixedParNames.end(), parName) != paramManager.fixedParNames.end();
+        };
+
         for (int i = 0; i < paramManager.totalNpars; ++i) {
             const TString& parName = paramManager.parIndexNames[i];
-            std::cout << "Setting parameter " << i << ": " << parName 
-                 << " with initial value " << initialValues[i] << std::endl;
-            minimizer->SetVariable(i, parName.Data(), initialValues[i], 0.1);
+            
+            if (isFixed(parName)) {
+                std::cout << "Setting fixed fit parameter " << i << ": " << parName 
+                          << " with value " << initialValues[i] << std::endl;
+                minimizer->SetFixedVariable(i, parName.Data(), initialValues[i]);
+            }
+            else {
+                std::cout << "Setting free fit parameter " << i << ": " << parName 
+                          << " with initial value " << initialValues[i] << std::endl;
+                minimizer->SetVariable(i, parName.Data(), initialValues[i], 0.1);
+            }
         }
 
         minimizer->SetPrintLevel(2);
-        minimizer->SetMaxFunctionCalls(10000);
-        minimizer->SetTolerance(Config::DEFAULT_CHI2_TOLERANCE);
+        minimizer->SetMaxFunctionCalls(1000000);
+        minimizer->SetTolerance(1e-6);
 
         bool isValid = minimizer->Minimize();
+        minimizerIsValid_ = isValid;
+        minimizerStatus_ = minimizer->Status();
+        lastChi2_ = minimizer->MinValue();
 
-        double minChi2 = minimizer->MinValue();
-        std::cout << "Chi2 after minimization: " << minChi2 << std::endl;
+        std::cout << "Chi2 after minimization: " << lastChi2_ << std::endl;
 
         timer.Stop();
         std::cout << "Minimization time: " << timer.RealTime() << " seconds" << std::endl;
 
         minimizer->PrintResults();
 
-        if (isValid) {
-            MakeResultTree(Form("MassDependentResults_%d.root", seed), seed);
-        }
-        
-        // Print results for first mass bin
+        // if (isValid) {
+        //     MakeResultTree(Form("MassDependentResults_%d.root", seed), seed);
+        // }
+
         if (!massBins_.empty()) {
             PrintEquations("v", massBins_[0]);
             PrintParCurrentVals(massBins_[0]);
@@ -1043,8 +987,8 @@ namespace m2pw {
                 nameToIndex[name] = totalNpars;
                 parIndexNames.push_back(name);
                 totalNpars++;
-                
-                std::cout << "Added mass-independent parameter: " << name << " (L=" << l_value << ")" << std::endl;
+
+                std::cout << "Added mass-independent parameter for (L = " << l_value << "): " << name << " (index: " << totalNpars-1 << ") = " << initialValue << std::endl;
             }
         }
     }
@@ -1081,14 +1025,84 @@ namespace m2pw {
             // Add parameters for each wave that contributes to this l value
             std::vector<TString> waveNames = config.GetWavesForL(l_value);
             for (const TString& waveName : waveNames) {
-                TString name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), Config::BW_NAMES[0].Data());
-                parsList[name] = 10.0;  // Default initial value
+                TString name = Form("MD_%s_%s_k", parName.Data(), waveName.Data());
+                // parsList[name] = 10.0;  // Default initial value
+                parsList[name] = TRandom3(seed).Uniform(-50, 50);  // Random initial value
                 nameToIndex[name] = totalNpars;
                 parIndexNames.push_back(name);
                 totalNpars++;
                 
                 std::cout << "Added mass-dependent parameter for L=" << l_value 
                          << ": " << name << " (index: " << totalNpars-1 << ")" << std::endl;
+            }
+        }
+    }
+
+
+    void MassDependentEquationSolver::ParameterManager::AddMassDependentParameters(const std::vector<TString>& parNames,
+                                                                                const TString filePath,
+                                                                                const MassDependenceConfig& config,
+                                                                                const HMomentsConfig& hConfig,
+                                                                                const MassDependentEquationSolver& solver,
+                                                                                const bool isFixed = false
+                                                                                ) {
+        // Load mass-dependent parameters from file
+        TFile file(filePath, "READ");
+        if (!file.IsOpen() || file.IsZombie()) {
+            std::cerr << "Error opening file: " << filePath << std::endl;
+            return;
+        }
+        TTree* tree = dynamic_cast<TTree*>(file.Get("result"));
+        if (!tree) {
+            std::cerr << "Error: Tree 'result' not found in file: " << filePath << std::endl;
+            return;
+        }
+
+        tree->GetEntry(0);  // Load first entry to get parameter names
+        cout << "Loading mass dependent parameter initial values from file: " << filePath << std::endl;
+
+        for (const TString& parName : parNames) {
+            // Parse parameter name to extract l value
+            std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+            if (parts->GetEntries() < 3) continue;
+            
+            TString l_str = ((TObjString*)parts->At(1))->GetString();
+            int l_value = l_str.Atoi();
+            
+            // Check if this parameter is needed for the H moments configuration
+            if (!solver.ParameterNeededForHMoments(l_value, hConfig)) {
+                std::cout << "Skipping parameter " << parName << " (L=" << l_value << " not needed for H moments)" << std::endl;
+                continue;
+            }
+            
+            // Check if this l value should be mass dependent
+            if (!config.IsMassDependent(l_value)) continue;
+            
+            // Skip phase parameters for now
+            if (parName.Contains("phi")) {
+                continue;
+            }
+
+            // Add parameters for each wave that contributes to this l value
+            std::vector<TString> waveNames = config.GetWavesForL(l_value);
+            for (const TString& waveName : waveNames) {
+                TString name = Form("MD_%s_%s_k", parName.Data(), waveName.Data());
+                // parsList[name] = 10.0;  // Default initial value
+                parsList[name] = tree->GetLeaf(parName.Data())->GetValue();
+                nameToIndex[name] = totalNpars;
+                parIndexNames.push_back(name);
+                if (isFixed) {
+                    fixedParNames.push_back(name);
+                    cout << "Added fixed mass-dependent parameter for L=" << l_value 
+                         << ": " << name << " (index: " << totalNpars-1 << ") = " << parsList[name] << std::endl;
+                }
+                else {
+                    std::cout << "Added free mass-dependent parameter for L=" << l_value 
+                         << ": " << name << " (index: " << totalNpars-1 << ") = " << parsList[name] << std::endl;
+                }
+                totalNpars++;
+                
+                
             }
         }
     }
