@@ -60,31 +60,39 @@ void H_four_model(int seed = 0) {
     // m2pw::MassDependentEquationSolver solver{setup, massBins, 2, 0.0, {"H_3"}};
     // auto l4OnlyConfig = m2pw::MassDependentEquationSolver::CreateL4OnlyConfig();
     auto a2_1320_config = MassDependentEquationSolver::CreateDefaultConfig();
+    auto H4_config = MassDependentEquationSolver::CreateL4OnlyConfig();
 
-    std::cout << "Mass dependence configuration:" << std::endl;
-    std::cout << "   - L=0 mass dependent: " << (a2_1320_config.IsMassDependent(0) ? "YES" : "NO") << std::endl;
-    std::cout << "   - L=1 mass dependent: " << (a2_1320_config.IsMassDependent(1) ? "YES" : "NO") << std::endl;
-    std::cout << "   - L=2 mass dependent: " << (a2_1320_config.IsMassDependent(2) ? "YES" : "NO") << std::endl;
+    // std::cout << "Mass dependence configuration:" << std::endl;
+    // std::cout << "   - L=0 mass dependent: " << (a2_1320_config.IsMassDependent(0) ? "YES" : "NO") << std::endl;
+    // std::cout << "   - L=1 mass dependent: " << (a2_1320_config.IsMassDependent(1) ? "YES" : "NO") << std::endl;
+    // std::cout << "   - L=2 mass dependent: " << (a2_1320_config.IsMassDependent(2) ? "YES" : "NO") << std::endl;
     
-    std::cout << "   - L=0 mass independent: " << (a2_1320_config.IsMassIndependent(0) ? "YES" : "NO") << std::endl;
-    std::cout << "   - L=1 mass independent: " << (a2_1320_config.IsMassIndependent(1) ? "YES" : "NO") << std::endl;
-    std::cout << "   - L=2 mass independent: " << (a2_1320_config.IsMassIndependent(2) ? "YES" : "NO") << std::endl;
+    // std::cout << "   - L=0 mass independent: " << (a2_1320_config.IsMassIndependent(0) ? "YES" : "NO") << std::endl;
+    // std::cout << "   - L=1 mass independent: " << (a2_1320_config.IsMassIndependent(1) ? "YES" : "NO") << std::endl;
+    // std::cout << "   - L=2 mass independent: " << (a2_1320_config.IsMassIndependent(2) ? "YES" : "NO") << std::endl;
 
-    MassDependentEquationSolver solver{setup, massBins, 2, 0.0, {"H_3"}, a2_1320_config};
+    MassDependentEquationSolver solver{setup, massBins, 2, 0.0, {"H_3"}, a2_1320_config, H4_config};
     solver.SetEquationValues(massDepMoments);
 
-    auto H4_config = MassDependentEquationSolver::CreateL4OnlyConfig();
-    auto H24_config = MassDependentEquationSolver::CreateL2L4OnlyConfig();
-    auto HAll_config = MassDependentEquationSolver::CreateIncludeAllConfig();
+    // auto H4_config = MassDependentEquationSolver::CreateL4OnlyConfig();
+    // auto H24_config = MassDependentEquationSolver::CreateL2L4OnlyConfig();
+    // auto HAll_config = MassDependentEquationSolver::CreateIncludeAllConfig();
     
     // Test with L=4 only
     std::cout << "\n=== Testing with L=4 only configuration ===" << std::endl;
     solver.SetHMomentsConfig(H4_config);
     // solver.PrintIncludedMoments();
 
-    solver.MinimizeChi2(seed);
-    
-    solver.MakeResultTree("result_tree_L4_only.root");
+    m2pw::MassDependentEquationSolver::ParameterManager paramManager;
+    paramManager.AddMassDependentParameters(solver.GetParNames(), 
+                                            seed, 
+                                            solver.GetMassDependenceConfig(), 
+                                            solver.GetHMomentsConfig(), 
+                                            solver);
+
+    solver.MinimizeChi2(paramManager, seed);
+
+    solver.MakeResultTree(paramManager, "result_tree_L4_only_" + std::to_string(seed) + ".root", seed);
 
     // TStopwatch timer;
     // timer.Start();
