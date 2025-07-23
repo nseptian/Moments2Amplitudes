@@ -543,11 +543,7 @@ namespace m2pw {
                 if (eqnIt != eqns_.end()) {
                     for (const auto& eqn : eqnIt->second) {
                         if (eqn.GetName() == momentName) {
-                            // Use EqnValue() if seed is provided, else GetOrigFormulaValue()
-                            if (seed >= 0)
-                                hMomentBranchValues[momentName] = eqn.EqnValue();
-                            else
-                                hMomentBranchValues[momentName] = eqn.GetOrigFormulaValue();
+                            hMomentBranchValues[momentName] = eqn.GetOrigFormulaValue();
                             break;
                         }
                     }
@@ -608,7 +604,7 @@ namespace m2pw {
                 if (parName.Contains("2")) continue;
 
                 TString name = Form("MI_%1.6f_%s", massBin, parName.Data());
-                double initialValue = name.Contains("_1_") ? 0.0 : rng.Uniform(-100, 100);
+                double initialValue = name.Contains("_1_") ? 0.0 : rng.Uniform(-200, 200);
                 
                 parsList[name] = initialValue;
                 nameToIndex[name] = totalNpars;
@@ -802,10 +798,10 @@ namespace m2pw {
 
         minimizer->SetPrintLevel(2);
         minimizer->SetMaxFunctionCalls(1000000);
-        minimizer->SetTolerance(1e-6);
+        // minimizer->SetTolerance(1e-6);
+        // minimizer->SetStrategy(2);  // Use strategy 2 for better convergence
 
-        bool isValid = minimizer->Minimize();
-        minimizerIsValid_ = isValid;
+        minimizerIsValid_ = minimizer->Minimize();
         minimizerStatus_ = minimizer->Status();
         lastChi2_ = minimizer->MinValue();
 
@@ -828,10 +824,10 @@ namespace m2pw {
             paramManager.parsList[parName] = parValues[i];
         }
 
-        if (!massBins_.empty()) {
-            PrintEquations("v", massBins_[0]);
-            PrintParCurrentVals(massBins_[0]);
-        }
+        // if (!massBins_.empty()) {
+        //     PrintEquations("v", massBins_[0]);
+        //     PrintParCurrentVals(massBins_[0]);
+        // }
     }
 
     // Helper method for single wave magnitude (no coherent sum needed)
@@ -1011,7 +1007,7 @@ namespace m2pw {
                 if (!config.IsMassIndependent(l_value)) continue;
 
                 TString name = Form("MI_%1.6f_%s", massBin, parName.Data());
-                double initialValue = name.Contains("_1_") ? 0.0 : rng.Uniform(-100, 100);
+                double initialValue = name.Contains("_1_") ? 0.0 : rng.Uniform(-200, 200);
                 
                 parsList[name] = initialValue;
                 nameToIndex[name] = totalNpars;
@@ -1124,11 +1120,11 @@ namespace m2pw {
                 if (isFixed) {
                     fixedParNames.push_back(name);
                     cout << "Added fixed mass-dependent parameter for L=" << l_value 
-                         << ": " << name << " (index: " << totalNpars-1 << ") = " << parsList[name] << std::endl;
+                         << ": " << name << " (index: " << totalNpars << ") = " << parsList[name] << std::endl;
                 }
                 else {
                     std::cout << "Added free mass-dependent parameter for L=" << l_value 
-                         << ": " << name << " (index: " << totalNpars-1 << ") = " << parsList[name] << std::endl;
+                         << ": " << name << " (index: " << totalNqpars << ") = " << parsList[name] << std::endl;
                 }
                 totalNpars++;
                 
