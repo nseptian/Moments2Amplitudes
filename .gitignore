@@ -5,6 +5,8 @@ src/*.pcm
 plots*
 samples*
 data*
+test_macros*
+*.root
 
 # pixi environments
 .pixi
