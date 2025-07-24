@@ -3,6 +3,8 @@ src/*.so
 src/*.d
 src/*.pcm
 plots*
+samples*
+data*
 
 # pixi environments
 .pixi
