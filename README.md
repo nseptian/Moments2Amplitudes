@@ -1,6 +1,8 @@
 # Moments2Amplitudes
 
-This repository contains code and tools to develop and test algorithms for extracting Partial Wave Amplitudes from Moments of Angular Distributions in two-pseudoscalar mesons produced in polarized photon-proton collisions following tutorial from [brufit](https://github.com/dglazier/brufit/tree/R6.34Test/tutorials/PhotoAmps/TwoSpin0AmpsFromMoments)
+This repository provides tools for **mass-dependent modeling of angular moments om two-pseudoscalar ,esons produced in polarized photon-proton collisions** by imposing mass-dependent models on partial wave amplitudes. The main goal is to fit experimental or simulated moment data using physically-motivated, mass-dependent parameterizations of the underlying amplitudes.
+
+The code and workflow are inspired by and compatible with [brufit](https://github.com/dglazier/brufit/tree/R6.34Test/tutorials/PhotoAmps/TwoSpin0AmpsFromMoments).
 
 ## Requirements
 
@@ -13,6 +15,9 @@ This repository contains code and tools to develop and test algorithms for extra
 ```
 .
 ├── WeightPhSp.py                # Main script for phase-space weighting
+├── src/                         # C++ source files for mass-dependent fitting
+├── include/                     # C++ headers for mass-dependent fitting
+├── macros/                      # ROOT macros for running fits and analyses
 ├── jupyter_notebook/            # Jupyter notebooks for analysis and plotting
 ├── brufit/                      # brufit scripts
 ├── samples/                     # Sample data files
@@ -36,9 +41,9 @@ This repository contains code and tools to develop and test algorithms for extra
 
 ---
 
-## Step-by-Step Tutorial
+## Step-by-Step Tutorial (Mass-independent Partial Wave Amplitudes estimation from Moments)
 
-Below is a template for running a typical analysis workflow. Replace file names and parameters as needed in WeightPhSp.py
+Replace file names and parameters as needed in WeightPhSp.py
 
 ### 1. Generate Weighted Phase-Space MC Data for BruFit
 
@@ -46,7 +51,7 @@ Below is a template for running a typical analysis workflow. Replace file names 
 python WeightPhSp.py --seed 12345 --tag test_run
 ```
 
-- This will generate phase-space MC samples from  and weight them according to a model amplitude set.
+- This will generate phase-space MC samples and weight them according to a model amplitude set.
 - Setup and use brufit/runMakeMomentFitData.sh to produce BruFit formatted data.
 
 ### 2. Fit Moments
@@ -54,13 +59,19 @@ python WeightPhSp.py --seed 12345 --tag test_run
 - Setup and use brufit/MomentFit.C for moments fitting.
 
 ### 3. Estimate Partial Wave Amplitudes from Moments
+
 - Set partial wave amplitudes parametrization and path to the moments fit results in brufit/RunGivenBruMoments.C
-- In brufit directory, run:
+- In the brufit directory, run:
   
 ```bash
 brufit Load.C RunGivenMoments.C
 ```
 
-### 3. Analyze and Visualize Results
+### 4. Analyze and Visualize Results
 
-Use jupyter_notebook/Moments_IO_test.ipynb to analyze the results.
+Use `jupyter_notebook/Moments_IO_test.ipynb` to analyze the results.
+
+---
+
+## Step-by-Step Tutorial of Mass-dependent Modelling of the Moments
+Work in progress
