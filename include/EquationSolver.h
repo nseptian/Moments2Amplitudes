@@ -109,11 +109,11 @@ namespace m2pw{
     
   };//EquationSolver
 
-  extern EquationSolver *geqn_solver;
+  extern EquationSolver *geqn_fitter;
 
 extern "C" {
   double cpp_eval(const double * params, size_t d=0) {
-    Double_t result= geqn_solver->DoEval(params);
+    Double_t result= geqn_fitter->DoEval(params);
     return result;
   }
 };

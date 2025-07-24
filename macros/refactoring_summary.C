@@ -1,5 +1,5 @@
 // =============================================================================
-// REFACTORING SUMMARY: MassDependentEquationSolver and TestMassDependentMoments
+// REFACTORING SUMMARY: MassDependentFitter and TestMassDependentMoments
 // =============================================================================
 
 /*

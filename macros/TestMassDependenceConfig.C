@@ -1,4 +1,4 @@
-#include "MassDependentEquationSolver.h"
+#include "MassDependentFitter.h"
 #include <iostream>
 #include <vector>
 #include <iomanip>
@@ -10,7 +10,7 @@ void TestMassDependenceConfig() {
     
     // Test 1: Default configuration
     std::cout << "\n1. Testing Default Configuration:" << std::endl;
-    auto defaultConfig = MassDependentEquationSolver::CreateDefaultConfig();
+    auto defaultConfig = MassDependentFitter::CreateDefaultConfig();
     
     std::cout << "   - L=0 mass dependent: " << (defaultConfig.IsMassDependent(0) ? "YES" : "NO") << std::endl;
     std::cout << "   - L=1 mass dependent: " << (defaultConfig.IsMassDependent(1) ? "YES" : "NO") << std::endl;
@@ -29,7 +29,7 @@ void TestMassDependenceConfig() {
     
     // Test 2: Multiple a2 configuration
     std::cout << "\n2. Testing Multiple a2 Configuration:" << std::endl;
-    auto multiA2Config = MassDependentEquationSolver::CreateMultipleA2Config();
+    auto multiA2Config = MassDependentFitter::CreateMultipleA2Config();
     
     auto l2_waves_multi = multiA2Config.GetWavesForL(2);
     std::cout << "   - Waves for L=2: ";
@@ -40,7 +40,7 @@ void TestMassDependenceConfig() {
     
     // Test 3: L=0 + L=2 configuration
     std::cout << "\n3. Testing L=0 + L=2 Configuration:" << std::endl;
-    auto l0l2Config = MassDependentEquationSolver::CreateL0L2Config();
+    auto l0l2Config = MassDependentFitter::CreateL0L2Config();
     
     std::cout << "   - L=0 mass dependent: " << (l0l2Config.IsMassDependent(0) ? "YES" : "NO") << std::endl;
     std::cout << "   - L=1 mass dependent: " << (l0l2Config.IsMassDependent(1) ? "YES" : "NO") << std::endl;
@@ -69,7 +69,7 @@ void TestMassDependenceConfig() {
     
     std::vector<int> customMassIndep = {}; // All are mass dependent
     
-    auto customConfig = MassDependentEquationSolver::CreateCustomConfig(customMassDep, customMassIndep);
+    auto customConfig = MassDependentFitter::CreateCustomConfig(customMassDep, customMassIndep);
     
     for (int l = 0; l <= 2; ++l) {
         std::cout << "   - L=" << l << " mass dependent: " << (customConfig.IsMassDependent(l) ? "YES" : "NO");
@@ -97,28 +97,28 @@ void TestMassDependenceConfig() {
     };
     
     std::cout << "\n5. Testing ParameterManager with Default Config:" << std::endl;
-    MassDependentEquationSolver::ParameterManager pmDefault;
+    MassDependentFitter::ParameterManager pmDefault;
     pmDefault.AddMassIndependentParameters(testMassBins, testParNames, 42, defaultConfig);
     pmDefault.AddMassDependentParameters(testParNames, 42, defaultConfig);
     
     std::cout << "   - Total parameters (default config): " << pmDefault.totalNpars << std::endl;
     
     std::cout << "\n6. Testing ParameterManager with Multiple a2 Config:" << std::endl;
-    MassDependentEquationSolver::ParameterManager pmMultiA2;
+    MassDependentFitter::ParameterManager pmMultiA2;
     pmMultiA2.AddMassIndependentParameters(testMassBins, testParNames, 42, multiA2Config);
     pmMultiA2.AddMassDependentParameters(testParNames, 42, multiA2Config);
     
     std::cout << "   - Total parameters (multi-a2 config): " << pmMultiA2.totalNpars << std::endl;
     
     std::cout << "\n7. Testing ParameterManager with L=0+L=2 Config:" << std::endl;
-    MassDependentEquationSolver::ParameterManager pmL0L2;
+    MassDependentFitter::ParameterManager pmL0L2;
     pmL0L2.AddMassIndependentParameters(testMassBins, testParNames, 42, l0l2Config);
     pmL0L2.AddMassDependentParameters(testParNames, 42, l0l2Config);
     
     std::cout << "   - Total parameters (L=0+L=2 config): " << pmL0L2.totalNpars << std::endl;
     
     std::cout << "\n8. Testing ParameterManager with Custom Config:" << std::endl;
-    MassDependentEquationSolver::ParameterManager pmCustom;
+    MassDependentFitter::ParameterManager pmCustom;
     pmCustom.AddMassIndependentParameters(testMassBins, testParNames, 42, customConfig);
     pmCustom.AddMassDependentParameters(testParNames, 42, customConfig);
     
@@ -137,7 +137,7 @@ void TestMassDependenceConfig() {
     
     // Test the three specifically requested H moment configurations
     std::cout << "\n10. Testing H Moments L=4 Only Configuration:" << std::endl;
-    auto hL4OnlyConfig = MassDependentEquationSolver::CreateL4OnlyConfig();
+    auto hL4OnlyConfig = MassDependentFitter::CreateL4OnlyConfig();
     std::cout << "   - H moments included: ";
     for (int L = 0; L <= 6; ++L) {
         if (hL4OnlyConfig.ShouldIncludeL(L)) {
@@ -147,7 +147,7 @@ void TestMassDependenceConfig() {
     std::cout << std::endl;
     
     std::cout << "\n11. Testing H Moments L=2,4 Only Configuration:" << std::endl;
-    auto hL2L4OnlyConfig = MassDependentEquationSolver::CreateL2L4OnlyConfig();
+    auto hL2L4OnlyConfig = MassDependentFitter::CreateL2L4OnlyConfig();
     std::cout << "   - H moments included: ";
     for (int L = 0; L <= 6; ++L) {
         if (hL2L4OnlyConfig.ShouldIncludeL(L)) {
@@ -157,7 +157,7 @@ void TestMassDependenceConfig() {
     std::cout << std::endl;
     
     std::cout << "\n12. Testing H Moments Include All Configuration:" << std::endl;
-    auto hIncludeAllConfig = MassDependentEquationSolver::CreateIncludeAllConfig();
+    auto hIncludeAllConfig = MassDependentFitter::CreateIncludeAllConfig();
     std::cout << "   - H moments included: ";
     for (int L = 0; L <= 6; ++L) {
         if (hIncludeAllConfig.ShouldIncludeL(L)) {
@@ -171,10 +171,10 @@ void TestMassDependenceConfig() {
     std::cout << "   Config Name     | L=0 | L=1 | L=2 | L=3 | L=4 | L=5 | L=6 |" << std::endl;
     std::cout << "   --------------- | --- | --- | --- | --- | --- | --- | --- |" << std::endl;
     
-    std::vector<std::pair<TString, MassDependentEquationSolver::HMomentsConfig>> hConfigs = {
-        {"Include All", MassDependentEquationSolver::CreateIncludeAllConfig()},
-        {"L=4 Only", MassDependentEquationSolver::CreateL4OnlyConfig()},
-        {"L=2,4 Only", MassDependentEquationSolver::CreateL2L4OnlyConfig()}
+    std::vector<std::pair<TString, MassDependentFitter::HMomentsConfig>> hConfigs = {
+        {"Include All", MassDependentFitter::CreateIncludeAllConfig()},
+        {"L=4 Only", MassDependentFitter::CreateL4OnlyConfig()},
+        {"L=2,4 Only", MassDependentFitter::CreateL2L4OnlyConfig()}
     };
     
     for (const auto& [name, config] : hConfigs) {
@@ -188,16 +188,16 @@ void TestMassDependenceConfig() {
     // Example usage
     std::cout << "\n14. Usage Examples:" << std::endl;
     std::cout << "   Example 1: Fit only L=4 moments" << std::endl;
-    std::cout << "   auto hConfig = MassDependentEquationSolver::CreateL4OnlyConfig();" << std::endl;
-    std::cout << "   auto solver = MassDependentEquationSolver(setup, massBins, 2, 0.0, {}, massDepConfig, hConfig);" << std::endl;
+    std::cout << "   auto hConfig = MassDependentFitter::CreateL4OnlyConfig();" << std::endl;
+    std::cout << "   auto fitter = MassDependentFitter(setup, massBins, 2, 0.0, {}, massDepConfig, hConfig);" << std::endl;
     
     std::cout << "\n   Example 2: Fit only L=2,4 moments" << std::endl;
-    std::cout << "   auto hConfig = MassDependentEquationSolver::CreateL2L4OnlyConfig();" << std::endl;
-    std::cout << "   auto solver = MassDependentEquationSolver(setup, massBins, 2, 0.0, {}, massDepConfig, hConfig);" << std::endl;
+    std::cout << "   auto hConfig = MassDependentFitter::CreateL2L4OnlyConfig();" << std::endl;
+    std::cout << "   auto fitter = MassDependentFitter(setup, massBins, 2, 0.0, {}, massDepConfig, hConfig);" << std::endl;
     
     std::cout << "\n   Example 3: Include all H moments (default behavior)" << std::endl;
-    std::cout << "   auto hConfig = MassDependentEquationSolver::CreateIncludeAllConfig();" << std::endl;
-    std::cout << "   auto solver = MassDependentEquationSolver(setup, massBins, 2, 0.0, {}, massDepConfig, hConfig);" << std::endl;
+    std::cout << "   auto hConfig = MassDependentFitter::CreateIncludeAllConfig();" << std::endl;
+    std::cout << "   auto fitter = MassDependentFitter(setup, massBins, 2, 0.0, {}, massDepConfig, hConfig);" << std::endl;
     
     std::cout << "\n=== Test Complete ===" << std::endl;
 }

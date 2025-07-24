@@ -62,42 +62,42 @@ void TestMassDependentMoments_Clean(int seed = 0) {
     // Generate mass bins
     std::vector<double> massBins = GenerateMassBins();
 
-    // Setup solver
-    // m2pw::MassDependentEquationSolver solver{setup, massBins, 2, 0.0, {"H_3"}};
+    // Setup fitter
+    // m2pw::MassDependentFitter fitter{setup, massBins, 2, 0.0, {"H_3"}};
 
-    auto l4OnlyConfig = m2pw::MassDependentEquationSolver::CreateL4OnlyConfig();
-    auto L2L4OnlyConfig = m2pw::MassDependentEquationSolver::CreateL2L4OnlyConfig();
-    auto massDepConfig = m2pw::MassDependentEquationSolver::CreateDefaultConfig();
+    auto l4OnlyConfig = m2pw::MassDependentFitter::CreateL4OnlyConfig();
+    auto L2L4OnlyConfig = m2pw::MassDependentFitter::CreateL2L4OnlyConfig();
+    auto massDepConfig = m2pw::MassDependentFitter::CreateDefaultConfig();
 
-    m2pw::MassDependentEquationSolver solver{setup, massBins, 2, 0.0, {"H_3"}, massDepConfig, L2L4OnlyConfig};
-    solver.SetEquationValues(massDepMoments);
+    m2pw::MassDependentFitter fitter{setup, massBins, 2, 0.0, {"H_3"}, massDepConfig, L2L4OnlyConfig};
+    fitter.SetEquationValues(massDepMoments);
 
     const TString D_waves_model_file = "/d/home/septian/Moments2Amplitudes/brufit/result_tree_L4_only.root";
 
     // --- New interface demonstration ---
     // 1. Load initial values from a result tree (if available)
-    m2pw::MassDependentEquationSolver::ParameterManager paramManager;
-    paramManager.AddMassDependentParameters(solver.GetParNames(), 
+    m2pw::MassDependentFitter::ParameterManager paramManager;
+    paramManager.AddMassDependentParameters(fitter.GetParNames(), 
                                             D_waves_model_file, 
-                                            solver.GetMassDependenceConfig(), 
-                                            solver.GetHMomentsConfig(), 
-                                            solver,1);
+                                            fitter.GetMassDependenceConfig(), 
+                                            fitter.GetHMomentsConfig(), 
+                                            fitter,1);
     
-    paramManager.AddMassIndependentParameters(solver.GetMassBins(), 
-                                              solver.GetParNames(), 
+    paramManager.AddMassIndependentParameters(fitter.GetMassBins(), 
+                                              fitter.GetParNames(), 
                                               seed, 
-                                              solver.GetMassDependenceConfig(), 
-                                              solver.GetHMomentsConfig(), 
-                                              solver);
+                                              fitter.GetMassDependenceConfig(), 
+                                              fitter.GetHMomentsConfig(), 
+                                              fitter);
 
-    solver.MinimizeChi2(paramManager, seed);
+    fitter.MinimizeChi2(paramManager, seed);
 
-    // solver.RandomInit(paramManager, seed);
+    // fitter.RandomInit(paramManager, seed);
     // Uncomment and set the correct path if you want to test loading initial values
-    // solver.LoadInit("/d/home/septian/EtaPi0Analysis/run_merged/fitMoment_GlueX1_2019_11_t010100_m080200_MCMCN6000BI1000S08WCOV_R6.34/ResultsBruMcmcCovariance.root");
+    // fitter.LoadInit("/d/home/septian/EtaPi0Analysis/run_merged/fitMoment_GlueX1_2019_11_t010100_m080200_MCMCN6000BI1000S08WCOV_R6.34/ResultsBruMcmcCovariance.root");
 
     // 2. (Parameter fixing interface not yet implemented)
 
     // 3. Run minimization with the new interface
-    // solver.MinimizeChi2(paramManager);
+    // fitter.MinimizeChi2(paramManager);
 }

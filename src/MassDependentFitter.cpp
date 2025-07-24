@@ -1,4 +1,4 @@
-#include "MassDependentEquationSolver.h"
+#include "MassDependentFitter.h"
 #include "TObjString.h"
 #include <algorithm>
 #include <cmath>
@@ -6,11 +6,11 @@
 
 namespace m2pw {
 
-    // MassDependentEquationSolver::MassDependentEquationSolver(const Setup& setup, 
+    // MassDependentFitter::MassDependentFitter(const Setup& setup, 
     //                                                        std::vector<double> mass_bins, 
     //                                                        double l_max, double noise, 
     //                                                        std::vector<TString> noUse) 
-    //     : massBins_(std::move(mass_bins)), massDependenceConfig_(MassDependenceConfig()), hMomentsConfig_(HMomentsConfig()) {
+    //     : massBins_(std::move(mass_bins)), massDependenceConfig_(MassDependenceConfig()), hMomentsConfig_(MomentsConfig()) {
         
     //     InitializeMassBins(massBins_);
     //     InitializeMDFunctions();
@@ -51,12 +51,12 @@ namespace m2pw {
     //     }
     // }
 
-    // MassDependentEquationSolver::MassDependentEquationSolver(const Setup& setup, 
+    // MassDependentFitter::MassDependentFitter(const Setup& setup, 
     //                                                        std::vector<double> mass_bins, 
     //                                                        double l_max, double noise, 
     //                                                        std::vector<TString> noUse,
     //                                                        const MassDependenceConfig& config) 
-    //     : massBins_(std::move(mass_bins)), massDependenceConfig_(config), hMomentsConfig_(HMomentsConfig()) {
+    //     : massBins_(std::move(mass_bins)), massDependenceConfig_(config), hMomentsConfig_(MomentsConfig()) {
         
     //     InitializeMassBins(massBins_);
     //     InitializeMDFunctions();
@@ -97,12 +97,12 @@ namespace m2pw {
     //     }
     // }
 
-    MassDependentEquationSolver::MassDependentEquationSolver(const Setup& setup, 
+    MassDependentFitter::MassDependentFitter(const Setup& setup, 
                                                            std::vector<double> mass_bins, 
                                                            double l_max, double noise, 
                                                            std::vector<TString> noUse,
                                                            const MassDependenceConfig& massDepConfig,
-                                                           const HMomentsConfig& hMomentsConfig) 
+                                                           const MomentsConfig& hMomentsConfig) 
         : massBins_(std::move(mass_bins)), massDependenceConfig_(massDepConfig), hMomentsConfig_(hMomentsConfig) {
         
         InitializeMassBins(massBins_);
@@ -134,12 +134,12 @@ namespace m2pw {
             }
         }
 
-        // Initialize parameter name to index mapping - FILTER BASED ON H(moment)S CONFIG
+        // Initialize parameter name to index mapping - FILTER BASED ON H(L,M)S CONFIG
         // int index = 0;
         // for (int l = 0; l <= static_cast<int>(l_max); ++l) {
-        //     // Only include parameters for L values that are needed for the H(moment)s
-        //     if (!ParameterNeededForHMoments(l, hMomentsConfig)) {
-        //         std::cout << "Skipping parameters for l=" << l << " (not needed for selected H(moment)s)" << std::endl;
+        //     // Only include parameters for L values that are needed for the H(L,M)s
+        //     if (!ParameterNeededForMoments(l, hMomentsConfig)) {
+        //         std::cout << "Skipping parameters for l=" << l << " (not needed for selected H(L,M)s)" << std::endl;
         //         continue;
         //     }
             
@@ -153,14 +153,14 @@ namespace m2pw {
         // std::cout << "Total parameters to fit: " << parNameToIndex_.size() << std::endl;
     }
 
-    void MassDependentEquationSolver::InitializeMassBins(const std::vector<double>& mass_bins) {
+    void MassDependentFitter::InitializeMassBins(const std::vector<double>& mass_bins) {
         if (mass_bins.empty()) {
             throw std::invalid_argument("Mass bins cannot be empty");
         }
         // Note: std::map doesn't have reserve(), it automatically manages memory
     }
 
-    void MassDependentEquationSolver::InitializeMDFunctions() {
+    void MassDependentFitter::InitializeMDFunctions() {
         if (massBins_.size() < 2) {
             throw std::invalid_argument("At least two mass bins required");
         }
@@ -209,16 +209,16 @@ namespace m2pw {
         std::cout << "Initialized " << massDepFuncs_.size() << " mass-dependent functions based on configuration." << std::endl;
     }
 
-    void MassDependentEquationSolver::SetMassDependenceConfig(const MassDependenceConfig& config) {
+    void MassDependentFitter::SetMassDependenceConfig(const MassDependenceConfig& config) {
         massDependenceConfig_ = config;
     }
 
-    void MassDependentEquationSolver::SetHMomentsConfig(const HMomentsConfig& config) {
+    void MassDependentFitter::SetMomentsConfig(const MomentsConfig& config) {
         hMomentsConfig_ = config;
     }
 
     // Core evaluation method - simplified and optimized
-    // double MassDependentEquationSolver::DoEval(const double* mass_dep_pars) {
+    // double MassDependentFitter::DoEval(const double* mass_dep_pars) {
     //     // Check cache first
     //     if (IsParameterCached(mass_dep_pars)) {
     //         return lastChi2_;
@@ -286,7 +286,7 @@ namespace m2pw {
     //     return total_chi2;
     // }
 
-    unsigned int MassDependentEquationSolver::NDim() const {
+    unsigned int MassDependentFitter::NDim() const {
         if (pars_.empty()) return 0;
         
         unsigned int n = 0;
@@ -296,7 +296,7 @@ namespace m2pw {
         return n;
     }
 
-    double MassDependentEquationSolver::EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const {
+    double MassDependentFitter::EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const {
         double chi2 = 0.0;
         const auto current_vals = pars.CurrentVals();
         
@@ -307,9 +307,9 @@ namespace m2pw {
             // Extract L value from equation name to check if it should be included
             int L_value = ExtractLFromEquationName(eqn.GetName());
             
-            // Apply H(moment)s filtering
+            // Apply H(L,M)s filtering
             bool shouldInclude = true;
-            if (L_value >= 0) { // This is an H(moment) equation
+            if (L_value >= 0) { // This is an H(L,M) equation
                 shouldInclude = hMomentsConfig_.ShouldIncludeL(L_value);
             }
             
@@ -334,8 +334,8 @@ namespace m2pw {
         return chi2;
     }
 
-    std::unique_ptr<MassDependentEquationSolver::ParameterInfo> 
-    MassDependentEquationSolver::ParseParameterName(const TString& parName) const {
+    std::unique_ptr<MassDependentFitter::ParameterInfo> 
+    MassDependentFitter::ParseParameterName(const TString& parName) const {
         auto info = std::make_unique<ParameterInfo>(parName);
         
         std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
@@ -347,7 +347,7 @@ namespace m2pw {
     }
 
     // Optimized evaluation with parameter maps
-    double MassDependentEquationSolver::DoEval(
+    double MassDependentFitter::DoEval(
         const std::map<TString, std::vector<double>>& massDepPars,
         const std::map<TString, std::map<TString, std::vector<double>>>& massIndepPars) {
         
@@ -431,8 +431,8 @@ namespace m2pw {
         lastChi2_ = total_chi2;
         return total_chi2;
     }
-    void MassDependentEquationSolver::PrintEquations(const TString opt, const double mass_bin_center) const {
-        // std::cout << "MassDependentEquationSolver::PrintEquations() : mass_bin_center = " << mass_bin_center << std::endl;
+    void MassDependentFitter::PrintEquations(const TString opt, const double mass_bin_center) const {
+        // std::cout << "MassDependentFitter::PrintEquations() : mass_bin_center = " << mass_bin_center << std::endl;
         
         const auto it = eqns_.find(mass_bin_center);
         if (it != eqns_.end()) {
@@ -444,7 +444,7 @@ namespace m2pw {
         }
     }
 
-    void MassDependentEquationSolver::SetEquationValues(MassDependentMoments& moms) {
+    void MassDependentFitter::SetEquationValues(MassDependentMoments& moms) {
         for (auto& [mass_bin, equations] : eqns_) {
             for (auto& eqn : equations) {
                 eqn.FindL();
@@ -457,13 +457,13 @@ namespace m2pw {
         }
     }
 
-    void MassDependentEquationSolver::PrintParNameIndices() const {
+    void MassDependentFitter::PrintParNameIndices() const {
         for (const auto& [name, index] : parNameToIndex_) {
             std::cout << "Parameter: " << name << ", Index: " << index << std::endl;
         }
     }
 
-    void MassDependentEquationSolver::PrintParCurrentVals(double mass_bin_center) const {
+    void MassDependentFitter::PrintParCurrentVals(double mass_bin_center) const {
         const auto it = pars_.find(mass_bin_center);
         if (it != pars_.end()) {
             std::cout << "Current parameter values for mass bin center " << mass_bin_center << ":" << std::endl;
@@ -476,7 +476,7 @@ namespace m2pw {
     
 
 
-    void MassDependentEquationSolver::MakeResultTree(const ParameterManager& paramManager, const TString& fileName, int seed = -1) const {
+    void MassDependentFitter::MakeResultTree(const ParameterManager& paramManager, const TString& fileName) const {
         if (pars_.empty()) {
             std::cerr << "No parameters to save" << std::endl;
             return;
@@ -496,13 +496,13 @@ namespace m2pw {
         std::vector<double> par_vals(nPars);
         double mass_bin_center = 0.0;
 
-        // Collect all unique H(moment) names from all mass bins
-        std::set<TString> allHMomentNames;
+        // Collect all unique H(L,M) names from all mass bins
+        std::set<TString> allMomentNames;
         for (const auto& [mass_bin, equations] : eqns_) {
             for (const auto& eqn : equations) {
                 TString eqnName = eqn.GetName();
                 if (eqnName.BeginsWith("H_")) {
-                    allHMomentNames.insert(eqnName);
+                    allMomentNames.insert(eqnName);
                 }
             }
         }
@@ -513,17 +513,14 @@ namespace m2pw {
             tree->Branch(par_name, &par_vals[i]);
         }
 
-        // Add branches for H(moment) values only (no errors)
+        // Add branches for H(L,M) values only (no errors)
         std::map<TString, double> hMomentBranchValues;
-        for (const TString& momentName : allHMomentNames) {
+        for (const TString& momentName : allMomentNames) {
             hMomentBranchValues[momentName] = 0.0;
             tree->Branch(momentName, &hMomentBranchValues[momentName]);
         }
-
-        if (seed >= 0)
-            std::cout << "Filling the result tree with parameter values and H(moment) values (seed: " << seed << ")..." << std::endl;
-        else
-            std::cout << "Filling the result tree with parameter values and H(moment) values..." << std::endl;
+        
+        std::cout << "Filling the result tree with amplitude and moment values..." << std::endl;
 
         for (const auto& [mass_bin, pars] : pars_) {
             mass_bin_center = mass_bin;
@@ -534,8 +531,8 @@ namespace m2pw {
                 par_vals[i] = pars.GetCurrentVal(par_name);
             }
 
-            // Fill H(moment) values for this mass bin
-            for (const TString& momentName : allHMomentNames) {
+            // Fill H(L,M) values for this mass bin
+            for (const TString& momentName : allMomentNames) {
                 hMomentBranchValues[momentName] = 0.0;
 
                 // Find the equation for this moment in this mass bin
@@ -575,91 +572,95 @@ namespace m2pw {
 
         mdTree->Fill();
 
-        // Save chi2 and optionally seed information
+        
         auto chi2_tree = std::make_unique<TTree>("chi2", "chi2");
         double chi2 = lastChi2_;
         chi2_tree->Branch("chi2", &chi2);
-        if (seed >= 0) {
-            int seed_val = seed;
-            chi2_tree->Branch("seed", &seed_val);
-        }
+        int seed_val = paramManager.randomSeed;
+        bool isValid = minimizerIsValid_;
+        int status = minimizerStatus_;
+
+        std::cout << "Random seed used to initialize parameters: " << seed_val << std::endl;
+        std::cout << "Is valid minimum:" << isValid << std::endl;
+        std::cout << "Minimizer status: " << status << std::endl;
+
+        chi2_tree->Branch("isValid", &isValid);
+        chi2_tree->Branch("Status", &status);
         chi2_tree->Fill();
 
         file->Write();
-        if (seed >= 0)
-            std::cout << "Result tree saved to " << fileName << " with seed " << seed << " and H(moment) values as individual branches" << std::endl;
-        else
-            std::cout << "Result tree saved to " << fileName << " with H(moment) values as individual branches" << std::endl;
+        std::cout << "Result tree saved to " << fileName << std::endl;
     }
 
     // ParameterManager implementation
-    void MassDependentEquationSolver::ParameterManager::AddMassIndependentParameters(
-        const std::vector<double>& massBins, 
-        const std::vector<TString>& parNames, 
-        int seed) {
+    // void MassDependentFitter::ParameterManager::AddMassIndependentParameters(
+    //     const std::vector<double>& massBins, 
+    //     const std::vector<TString>& parNames, 
+    //     int seed) {
         
-        TRandom3 rng(seed);
-        for (const double massBin : massBins) {
-            for (const TString& parName : parNames) {
-                if (parName.Contains("2")) continue;
+    //     TRandom3 rng(seed);
+    //     for (const double massBin : massBins) {
+    //         for (const TString& parName : parNames) {
+    //             if (parName.Contains("2")) continue;
 
-                TString name = Form("MI_%1.6f_%s", massBin, parName.Data());
-                double initialValue = name.Contains("_1_") ? 0.0 : rng.Uniform(-200, 200);
+    //             TString name = Form("MI_%1.6f_%s", massBin, parName.Data());
+    //             double initialValue = name.Contains("_1_") ? 0.0 : rng.Uniform(-200, 200);
                 
-                parsList[name] = initialValue;
-                nameToIndex[name] = totalNpars;
-                parIndexNames.push_back(name);
-                totalNpars++;
-            }
-        }
-    }
+    //             parsList[name] = initialValue;
+    //             nameToIndex[name] = totalNpars;
+    //             parIndexNames.push_back(name);
+    //             totalNpars++;
+    //         }
+    //     }
+    // }
 
-    void MassDependentEquationSolver::ParameterManager::AddMassDependentParameters(
-        const std::vector<TString>& parNames, 
-        int seed,
-        const std::vector<int>& massDependentL) {  // NEW: Add l values to treat as mass dependent
-        
-        for (const TString& parName : parNames) {
-            // Step 1: Parse the parameter name to extract l value
-            std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
-            if (parts->GetEntries() < 3) continue;  // Need at least prefix_l_m format
-            
-            // Extract l value from parameter name (assuming format: prefix_l_m)
-            TString l_str = ((TObjString*)parts->At(1))->GetString();
-            int l_value = l_str.Atoi();
-            
-            // Step 2: Check if this l value should be mass dependent
-            bool isMassDependent = std::find(massDependentL.begin(), massDependentL.end(), l_value) 
-                                  != massDependentL.end();
-            
-            if (!isMassDependent) continue;  // Skip if not in mass dependent list
-            
-            // Step 3: Skip phase parameters for now (can be extended later)
-            if (parName.Contains("phi_0") || parName.Contains("phi_1") || parName.Contains("phi_2")) {
-                continue;
-            }
+    // void MassDependentFitter::ParameterManager::AddMassDependentParameters(
+    //     const std::vector<TString>& parNames, 
+    //     int seed,
+    //     const std::vector<int>& massDependentL) {  // NEW: Add l values to treat as mass dependent
 
-            // Step 4: Add parameter with generalized naming
-            TString name = Form("MD_%s_k", parName.Data());
-            parsList[name] = TRandom3(seed).Uniform(-50, 50);  // Random initial value
-            nameToIndex[name] = totalNpars;
-            parIndexNames.push_back(name);
-            totalNpars++;
-        }
-    }
+    //     randomSeed = seed;  // Store the seed for later use
+    //     for (const TString& parName : parNames) {
+    //         // Step 1: Parse the parameter name to extract l value
+    //         std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+    //         if (parts->GetEntries() < 3) continue;  // Need at least prefix_l_m format
+            
+    //         // Extract l value from parameter name (assuming format: prefix_l_m)
+    //         TString l_str = ((TObjString*)parts->At(1))->GetString();
+    //         int l_value = l_str.Atoi();
+            
+    //         // Step 2: Check if this l value should be mass dependent
+    //         bool isMassDependent = std::find(massDependentL.begin(), massDependentL.end(), l_value) 
+    //                               != massDependentL.end();
+            
+    //         if (!isMassDependent) continue;  // Skip if not in mass dependent list
+            
+    //         // Step 3: Skip phase parameters for now (can be extended later)
+    //         if (parName.Contains("phi_0") || parName.Contains("phi_1") || parName.Contains("phi_2")) {
+    //             continue;
+    //         }
+
+    //         // Step 4: Add parameter with generalized naming
+    //         TString name = Form("MD_%s_k", parName.Data());
+    //         parsList[name] = TRandom3(seed).Uniform(-50, 50);  // Random initial value
+    //         nameToIndex[name] = totalNpars;
+    //         parIndexNames.push_back(name);
+    //         totalNpars++;
+    //     }
+    // }
 
     // Keep the old interface for backward compatibility
-    void MassDependentEquationSolver::ParameterManager::AddMassDependentParameters(
-        const std::vector<TString>& parNames, 
-        int seed) {
+    // void MassDependentFitter::ParameterManager::AddMassDependentParameters(
+    //     const std::vector<TString>& parNames, 
+    //     int seed) {
         
-        // Default behavior: only l=2 is mass dependent
-        std::vector<int> defaultMassDependentL = {2};
-        AddMassDependentParameters(parNames, seed, defaultMassDependentL);
-    }
+    //     // Default behavior: only l=2 is mass dependent
+    //     std::vector<int> defaultMassDependentL = {2};
+    //     AddMassDependentParameters(parNames, seed, defaultMassDependentL);
+    // }
 
 
-    // void MassDependentEquationSolver::ParameterManager::AddMassDependentParameters(
+    // void MassDependentFitter::ParameterManager::AddMassDependentParameters(
     //     const std::vector<TString>& parNames, 
     //     int seed) {
         
@@ -675,7 +676,7 @@ namespace m2pw {
     //     }
     // }
 
-    std::vector<double> MassDependentEquationSolver::ParameterManager::GetValues() const {
+    std::vector<double> MassDependentFitter::ParameterManager::GetValues() const {
         std::vector<double> values(totalNpars);
         for (int i = 0; i < totalNpars; ++i) {
             values[i] = parsList.at(parIndexNames[i]);
@@ -684,12 +685,12 @@ namespace m2pw {
     }
 
     // Chi2Function implementation
-    double MassDependentEquationSolver::Chi2Function::operator()(const double* mass_dep_pars) const {
+    double MassDependentFitter::Chi2Function::operator()(const double* mass_dep_pars) const {
         MapParameters(mass_dep_pars);
-        return solver_.DoEval(massDepPars_, massIndepPars_);
+        return fitter_.DoEval(massDepPars_, massIndepPars_);
     }
 
-    void MassDependentEquationSolver::Chi2Function::MapParameters(const double* mass_dep_pars) const {
+    void MassDependentFitter::Chi2Function::MapParameters(const double* mass_dep_pars) const {
         massDepPars_.clear();
         massIndepPars_.clear();
         
@@ -704,7 +705,7 @@ namespace m2pw {
         }
     }
 
-    void MassDependentEquationSolver::Chi2Function::MapMassIndependentParameter(
+    void MassDependentFitter::Chi2Function::MapMassIndependentParameter(
         const TString& parName, double value) const {
         
         int firstUnderscore = parName.Index("_", 3);
@@ -717,7 +718,7 @@ namespace m2pw {
         massIndepPars_[massBinStr][parKey].push_back(value);
     }
 
-    void MassDependentEquationSolver::Chi2Function::MapMassDependentParameter(
+    void MassDependentFitter::Chi2Function::MapMassDependentParameter(
         const TString& parName, double value) const {
         
         int lastUnderscore = parName.Last('_');
@@ -726,7 +727,7 @@ namespace m2pw {
     }
 
     // Static utility method
-    std::vector<TString> MassDependentEquationSolver::GetParNames() {
+    std::vector<TString> MassDependentFitter::GetParNames() {
         std::vector<TString> parNames;
         for (int l = 0; l <= 2; ++l) {
             for (int m = -l; m <= l; ++m) {
@@ -742,18 +743,18 @@ namespace m2pw {
     
 
     // Minimization methods
-    void MassDependentEquationSolver::MinimizeChi2(int seed) {
-        // Setup parameter manager
-        ParameterManager paramManager;
-        std::vector<TString> parNames = GetParNames();
+    // void MassDependentFitter::MinimizeChi2() {
+    //     // Setup parameter manager
+    //     ParameterManager paramManager;
+    //     std::vector<TString> parNames = GetParNames();
         
-        paramManager.AddMassIndependentParameters(massBins_, parNames, seed, massDependenceConfig_, hMomentsConfig_, *this);
-        paramManager.AddMassDependentParameters(parNames, seed, massDependenceConfig_, hMomentsConfig_, *this);
+    //     paramManager.AddMassIndependentParameters(massBins_, parNames, seed, massDependenceConfig_, hMomentsConfig_, *this);
+    //     paramManager.AddMassDependentParameters(parNames, seed, massDependenceConfig_, hMomentsConfig_, *this);
         
-        MinimizeChi2(paramManager, seed);
-    }
+    //     MinimizeChi2(paramManager, seed);
+    // }
 
-    void MassDependentEquationSolver::MinimizeChi2(ParameterManager& paramManager, int seed) {
+    void MassDependentFitter::MinimizeChi2(ParameterManager& paramManager) {
         std::cout << "Total number of parameters: " << paramManager.totalNpars << std::endl;
 
         // Get initial parameter values
@@ -799,7 +800,6 @@ namespace m2pw {
         minimizer->SetPrintLevel(2);
         minimizer->SetMaxFunctionCalls(1000000);
         // minimizer->SetTolerance(1e-6);
-        // minimizer->SetStrategy(2);  // Use strategy 2 for better convergence
 
         minimizerIsValid_ = minimizer->Minimize();
         minimizerStatus_ = minimizer->Status();
@@ -831,7 +831,7 @@ namespace m2pw {
     }
 
     // Helper method for single wave magnitude (no coherent sum needed)
-    double MassDependentEquationSolver::GetSingleWaveMagnitude(
+    double MassDependentFitter::GetSingleWaveMagnitude(
         double mass_bin, 
         const TString& par_name,
         const std::map<TString, std::vector<double>>& massDepPars,
@@ -858,7 +858,7 @@ namespace m2pw {
     }
 
     // Helper method for single wave phase (no coherent sum needed)
-    double MassDependentEquationSolver::GetSingleWavePhase(
+    double MassDependentFitter::GetSingleWavePhase(
         double mass_bin, 
         const TString& base_name,
         const std::map<TString, std::vector<double>>& massDepPars,
@@ -885,7 +885,7 @@ namespace m2pw {
     }
 
     // Helper method to get coherent magnitude for specific l value
-    double MassDependentEquationSolver::GetCoherentMagnitudeForL(
+    double MassDependentFitter::GetCoherentMagnitudeForL(
         double mass_bin, 
         const TString& par_name,
         const std::map<TString, std::vector<double>>& massDepPars,
@@ -928,7 +928,7 @@ namespace m2pw {
     }
 
     // Helper method to get coherent phase for specific l value
-    double MassDependentEquationSolver::GetCoherentPhaseForL(
+    double MassDependentFitter::GetCoherentPhaseForL(
         double mass_bin, 
         const TString& base_name,
         const std::map<TString, std::vector<double>>& massDepPars,
@@ -968,7 +968,7 @@ namespace m2pw {
     }
 
     // Helper method to map wave names to function indices
-    int MassDependentEquationSolver::GetFunctionIndexForWave(const TString& waveName) const {
+    int MassDependentFitter::GetFunctionIndexForWave(const TString& waveName) const {
         const auto it = waveToFunctionIndex_.find(waveName);
         if (it != waveToFunctionIndex_.end()) {
             return it->second;
@@ -978,14 +978,15 @@ namespace m2pw {
         return -1;
     }
 
-    // Update ParameterManager methods
-    void MassDependentEquationSolver::ParameterManager::AddMassIndependentParameters(
+    void MassDependentFitter::ParameterManager::AddMassIndependentParameters(
         const std::vector<double>& massBins, 
         const std::vector<TString>& parNames, 
         int seed,
         const MassDependenceConfig& config,
-        const HMomentsConfig& hConfig,
-        const MassDependentEquationSolver& solver) {
+        const MomentsConfig& hConfig,
+        const MassDependentFitter& fitter) {
+
+        randomSeed = seed;
         
         TRandom3 rng(seed);
         for (const double massBin : massBins) {
@@ -997,9 +998,9 @@ namespace m2pw {
                 TString l_str = ((TObjString*)parts->At(1))->GetString();
                 int l_value = l_str.Atoi();
                 
-                // Check if this parameter is needed for the H(moment)s configuration  
-                if (!solver.ParameterNeededForHMoments(l_value, hConfig)) {
-                    std::cout << "Skipping parameter " << parName << " (L=" << l_value << " not needed for H(moment)s)" << std::endl;
+                // Check if this parameter is needed for the H(L,M)s configuration  
+                if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
+                    std::cout << "Skipping parameter " << parName << " (L=" << l_value << " not needed for H(L,M)s)" << std::endl;
                     continue;
                 }
                 
@@ -1019,13 +1020,14 @@ namespace m2pw {
         }
     }
 
-    void MassDependentEquationSolver::ParameterManager::AddMassDependentParameters(
+    void MassDependentFitter::ParameterManager::AddMassDependentParameters(
         const std::vector<TString>& parNames, 
         int seed,
         const MassDependenceConfig& config,
-        const HMomentsConfig& hConfig,
-        const MassDependentEquationSolver& solver) {
+        const MomentsConfig& hConfig,
+        const MassDependentFitter& fitter) {
         
+        randomSeed = seed;
         for (const TString& parName : parNames) {
             // Parse parameter name to extract l value
             std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
@@ -1034,9 +1036,9 @@ namespace m2pw {
             TString l_str = ((TObjString*)parts->At(1))->GetString();
             int l_value = l_str.Atoi();
             
-            // Check if this parameter is needed for the H(moment)s configuration
-            if (!solver.ParameterNeededForHMoments(l_value, hConfig)) {
-                std::cout << "Skipping parameter " << parName << " (L=" << l_value << " not needed for H(moment)s)" << std::endl;
+            // Check if this parameter is needed for the H(L,M)s configuration
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
+                std::cout << "Skipping parameter " << parName << " l=" << l_value << std::endl;
                 continue;
             }
             
@@ -1058,18 +1060,18 @@ namespace m2pw {
                 parIndexNames.push_back(name);
                 totalNpars++;
                 
-                std::cout << "Added mass-dependent parameter for L=" << l_value 
+                std::cout << "Added mass-dependent parameter for l=" << l_value 
                          << ": " << name << " (index: " << totalNpars-1 << ")" << std::endl;
             }
         }
     }
 
 
-    void MassDependentEquationSolver::ParameterManager::AddMassDependentParameters(const std::vector<TString>& parNames,
+    void MassDependentFitter::ParameterManager::AddMassDependentParameters(const std::vector<TString>& parNames,
                                                                                 const TString filePath,
                                                                                 const MassDependenceConfig& config,
-                                                                                const HMomentsConfig& hConfig,
-                                                                                const MassDependentEquationSolver& solver,
+                                                                                const MomentsConfig& hConfig,
+                                                                                const MassDependentFitter& fitter,
                                                                                 const bool isFixed = false
                                                                                 ) {
         // Load mass-dependent parameters from file
@@ -1095,9 +1097,9 @@ namespace m2pw {
             TString l_str = ((TObjString*)parts->At(1))->GetString();
             int l_value = l_str.Atoi();
             
-            // Check if this parameter is needed for the H(moment)s configuration
-            if (!solver.ParameterNeededForHMoments(l_value, hConfig)) {
-                std::cout << "Skipping parameter " << parName << " (L=" << l_value << " not needed for H(moment)s)" << std::endl;
+            // Check if this parameter is needed for the H(L,M)s configuration
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
+                std::cout << "Skipping parameter " << parName << " (L=" << l_value << " not needed for H(L,M)s)" << std::endl;
                 continue;
             }
             
@@ -1133,7 +1135,7 @@ namespace m2pw {
         }
     }
 
-    double MassDependentEquationSolver::EvalChi2() const {
+    double MassDependentFitter::EvalChi2() const {
         double total_chi2 = 0.0;
         
         for (const auto& [mass_bin, pars] : pars_) {
@@ -1145,22 +1147,22 @@ namespace m2pw {
         }
         
         // Update the cached chi2 value
-        const_cast<MassDependentEquationSolver*>(this)->lastChi2_ = total_chi2;
+        const_cast<MassDependentFitter*>(this)->lastChi2_ = total_chi2;
         
         std::cout << "Total chi2: " << total_chi2 << std::endl;
         return total_chi2;
     }
 
-    void MassDependentEquationSolver::PrintIncludedMoments() const {
-        std::cout << "\n=== H(moment)s Configuration ===" << std::endl;
+    void MassDependentFitter::PrintIncludedMoments() const {
+        std::cout << "\n=== H(L,M)s Configuration ===" << std::endl;
         
         if (hMomentsConfig_.includeAll) {
-            std::cout << "Including ALL H(moment)s in chi2 calculation" << std::endl;
+            std::cout << "Including ALL H(L,M)s in chi2 calculation" << std::endl;
             return;
         }
         
         if (!hMomentsConfig_.includedL.empty()) {
-            std::cout << "Including H(moment)s for L values: ";
+            std::cout << "Including H(L,M)s for L values: ";
             for (size_t i = 0; i < hMomentsConfig_.includedL.size(); ++i) {
                 std::cout << hMomentsConfig_.includedL[i];
                 if (i < hMomentsConfig_.includedL.size() - 1) std::cout << ", ";
@@ -1169,7 +1171,7 @@ namespace m2pw {
         }
         
         if (!hMomentsConfig_.excludedL.empty()) {
-            std::cout << "Excluding H(moment)s for L values: ";
+            std::cout << "Excluding H(L,M)s for L values: ";
             for (size_t i = 0; i < hMomentsConfig_.excludedL.size(); ++i) {
                 std::cout << hMomentsConfig_.excludedL[i];
                 if (i < hMomentsConfig_.excludedL.size() - 1) std::cout << ", ";
@@ -1178,18 +1180,18 @@ namespace m2pw {
         }
         
         // Show which specific moments will be included
-        std::cout << "Specific H(moment)s included in chi2:" << std::endl;
+        std::cout << "Specific H(L,M)s included in chi2:" << std::endl;
         for (int L = 0; L <= 4; ++L) {
             bool shouldInclude = hMomentsConfig_.ShouldIncludeL(L);
             std::cout << "  L=" << L << ": " << (shouldInclude ? "YES" : "NO") << std::endl;
         }
     }
 
-    int MassDependentEquationSolver::ExtractLFromEquationName(const TString& eqnName) const {
+    int MassDependentFitter::ExtractLFromEquationName(const TString& eqnName) const {
         // Equation names are typically like "H_alpha_L_M" (e.g., "H_0_0_0", "H_1_2_1", "H_2_4_2")
         // std::cout << "Extracting L from equation name: " << eqnName << std::endl;
         if (!eqnName.BeginsWith("H_")) {
-            return -1; // Not an H(moment) equation
+            return -1; // Not an H(L,M) equation
         }
         
         std::unique_ptr<TObjArray> parts(eqnName.Tokenize("_"));
@@ -1205,25 +1207,25 @@ namespace m2pw {
         return -1; // Could not parse L value
     }
 
-    bool MassDependentEquationSolver::ParameterNeededForHMoments(int l, const HMomentsConfig& hConfig) const {
-        // Check what H(moment) L values are included
-        std::set<int> includedHMomentL;
+    bool MassDependentFitter::ParameterNeededForMoments(int l, const MomentsConfig& hConfig) const {
+        // Check what H(L,M) L values are included
+        std::set<int> includedMomentL;
         
-        // Determine which H(moment) L values are actually included
+        // Determine which H(L,M) L values are actually included
         for (int H_L = 0; H_L <= 6; ++H_L) {
             if (hConfig.ShouldIncludeL(H_L)) {
-                includedHMomentL.insert(H_L);
+                includedMomentL.insert(H_L);
             }
         }
         
-        // Rule 1: If only L=4 H(moment)s are included -> need only l=2 amplitude parameters
-        if (includedHMomentL.size() == 1 && includedHMomentL.count(4) == 1) {
+        // Rule 1: If only L=4 H(L,M)s are included -> need only l=2 amplitude parameters
+        if (includedMomentL.size() == 1 && includedMomentL.count(4) == 1) {
             return (l == 2);
         }
         
-        // Rule 2: If L=2 and L=4 H(moment)s are included -> need l=0 and l=2 amplitude parameters
-        if (includedHMomentL.size() == 2 && 
-            includedHMomentL.count(2) == 1 && includedHMomentL.count(4) == 1) {
+        // Rule 2: If L=2 and L=4 H(L,M)s are included -> need l=0 and l=2 amplitude parameters
+        if (includedMomentL.size() == 2 && 
+            includedMomentL.count(2) == 1 && includedMomentL.count(4) == 1) {
             return (l == 0 || l == 2);
         }
         

@@ -25,15 +25,15 @@
 namespace m2pw {
     
     // Configuration constants
-    namespace Config {
-        constexpr double DEFAULT_CHI2_TOLERANCE = 1e-6;
-        const TString BW_NAMES[3] = {"k", "M", "width"};
-    }
+    // namespace Config {
+    //     constexpr double DEFAULT_CHI2_TOLERANCE = 1e-6;
+    //     const TString BW_NAMES[3] = {"k", "M", "width"};
+    // }
 
     using equation_t = std::vector<Equation>;
     using HS::FIT::Setup;
 
-    class MassDependentEquationSolver {
+    class MassDependentFitter {
     public:
         /**
          * @brief Configuration for mass dependence of different l values
@@ -68,16 +68,16 @@ namespace m2pw {
         /**
          * @brief Configuration for selecting which H moments to include in chi2
          */
-        struct HMomentsConfig {
+        struct MomentsConfig {
             std::vector<int> includedL;     // L values of H moments to include in chi2
             std::vector<int> excludedL;     // L values of H moments to exclude from chi2
             bool includeAll;                // If true, include all H moments (ignore other settings)
             
             // Constructor with default behavior (include all)
-            HMomentsConfig() : includeAll(true) {}
+            MomentsConfig() : includeAll(true) {}
             
             // Constructor to include specific L values
-            HMomentsConfig(const std::vector<int>& included) 
+            MomentsConfig(const std::vector<int>& included) 
                 : includedL(included), includeAll(false) {}
             
             // Check if a given L value should be included in chi2
@@ -108,11 +108,11 @@ namespace m2pw {
             ParameterInfo(const TString& parName);
         };
 
-        // MassDependentEquationSolver(const Setup& setup, std::vector<double> mass_bins, 
+        // MassDependentFitter(const Setup& setup, std::vector<double> mass_bins, 
         //                            double l_max, double noise, std::vector<TString> noUse);
         
         // // Constructor with mass dependence configuration
-        // MassDependentEquationSolver(const Setup& setup, 
+        // MassDependentFitter(const Setup& setup, 
         //                            std::vector<double> mass_bins, 
         //                            double l_max, 
         //                            double noise, 
@@ -120,15 +120,15 @@ namespace m2pw {
         //                            const MassDependenceConfig& config);
         
         // Constructor with both mass dependence and H moments configuration
-        MassDependentEquationSolver(const Setup& setup, 
+        MassDependentFitter(const Setup& setup, 
                                    std::vector<double> mass_bins, 
                                    double l_max, 
                                    double noise, 
                                    std::vector<TString> noUse,
                                    const MassDependenceConfig& massDepConfig,
-                                   const HMomentsConfig& hMomentsConfig);
+                                   const MomentsConfig& hMomentsConfig);
         
-        ~MassDependentEquationSolver() = default;
+        ~MassDependentFitter() = default;
 
         // Core evaluation methods
         // double DoEval(const double* mass_dep_pars);
@@ -161,11 +161,11 @@ namespace m2pw {
         
         // Method to set/update configuration
         void SetMassDependenceConfig(const MassDependenceConfig& config);
-        void SetHMomentsConfig(const HMomentsConfig& config);
+        void SetMomentsConfig(const MomentsConfig& config);
         
         // Get current configuration
         const MassDependenceConfig& GetMassDependenceConfig() const { return massDependenceConfig_; }
-        const HMomentsConfig& GetHMomentsConfig() const { return hMomentsConfig_; }
+        const MomentsConfig& GetMomentsConfig() const { return hMomentsConfig_; }
 
         // Static factory methods for common configurations
         static MassDependenceConfig CreateDefaultConfig() {
@@ -196,16 +196,16 @@ namespace m2pw {
         }
 
         // Static factory methods for H moment configurations
-        static HMomentsConfig CreateL4OnlyConfig() {
-            return HMomentsConfig({4});
+        static MomentsConfig CreateL4OnlyConfig() {
+            return MomentsConfig({4});
         }
         
-        static HMomentsConfig CreateL2L4OnlyConfig() {
-            return HMomentsConfig({2, 4});
+        static MomentsConfig CreateL2L4OnlyConfig() {
+            return MomentsConfig({2, 4});
         }
         
-        static HMomentsConfig CreateIncludeAllConfig() {
-            return HMomentsConfig(); // Include all by default
+        static MomentsConfig CreateIncludeAllConfig() {
+            return MomentsConfig(); // Include all by default
         }
 
         // Parameter management and minimization
@@ -215,62 +215,61 @@ namespace m2pw {
             std::vector<TString> fixedParNames;  // For fixed parameters
             std::map<TString, int> nameToIndex;
             int totalNpars = 0;
+            int randomSeed = -1;
 
             // Add mass independent parameters with random initialization
-            void AddMassIndependentParameters(const std::vector<double>& massBins, 
-                                            const std::vector<TString>& parNames, 
-                                            int seed = 0);
-            void AddMassIndependentParameters(const std::vector<double>& massBins, 
-                                            const std::vector<TString>& parNames, 
-                                            int seed,
-                                            const MassDependenceConfig& config);
+            // void AddMassIndependentParameters(const std::vector<double>& massBins, 
+            //                                 const std::vector<TString>& parNames, 
+            //                                 int seed = 0);
+            // void AddMassIndependentParameters(const std::vector<double>& massBins, 
+            //                                 const std::vector<TString>& parNames, 
+            //                                 int seed,
+            //                                 const MassDependenceConfig& config);
             void AddMassIndependentParameters(const std::vector<double>& massBins, 
                                             const std::vector<TString>& parNames, 
                                             int seed,
                                             const MassDependenceConfig& config,
-                                            const HMomentsConfig& hConfig,
-                                            const MassDependentEquationSolver& solver);
-            void AddMassDependentParameters(const std::vector<TString>& parNames, 
-                                          int seed = 0);
-            void AddMassDependentParameters(const std::vector<TString>& parNames, 
-                                          int seed, 
-                                          const std::vector<int>& massDependentL);
-            void AddMassDependentParameters(const std::vector<TString>& parNames, 
-                                          int seed,
-                                          const MassDependenceConfig& config);
+                                            const MomentsConfig& hConfig,
+                                            const MassDependentFitter& fitter);
+            // void AddMassDependentParameters(const std::vector<TString>& parNames, 
+            //                               int seed = 0);
+            // void AddMassDependentParameters(const std::vector<TString>& parNames, 
+            //                               int seed, 
+            //                               const std::vector<int>& massDependentL);
+            // void AddMassDependentParameters(const std::vector<TString>& parNames, 
+            //                               int seed,
+            //                               const MassDependenceConfig& config);
             void AddMassDependentParameters(const std::vector<TString>& parNames, 
                                           int seed,
                                           const MassDependenceConfig& config,
-                                          const HMomentsConfig& hConfig,
-                                          const MassDependentEquationSolver& solver);
+                                          const MomentsConfig& hConfig,
+                                          const MassDependentFitter& fitter);
 
             // Add parameters with values from a file
             void AddMassDependentParameters(const std::vector<TString>& parNames,
                                           const TString filePath,
                                           const MassDependenceConfig& config,
-                                          const HMomentsConfig& hConfig,
-                                          const MassDependentEquationSolver& solver,
+                                          const MomentsConfig& hConfig,
+                                          const MassDependentFitter& fitter,
                                           const bool isFixed);
 
             std::vector<double> GetValues() const;
         };
 
-
-        // Memory efficient file operations
-        void MakeResultTree(const ParameterManager& paramManager, const TString& fileName, int seed) const;
+        void MakeResultTree(const ParameterManager& paramManager, const TString& fileName) const;
 
         // Chi2 function class for minimization
         class Chi2Function {
         private:
-            MassDependentEquationSolver& solver_;
+            MassDependentFitter& fitter_;
             const std::vector<TString>& parIndexNames_;
             mutable std::map<TString, std::vector<double>> massDepPars_;
             mutable std::map<TString, std::map<TString, std::vector<double>>> massIndepPars_;
 
         public:
-            Chi2Function(MassDependentEquationSolver& solver, 
+            Chi2Function(MassDependentFitter& fitter, 
                         const std::vector<TString>& parIndexNames)
-                : solver_(solver), parIndexNames_(parIndexNames) {}
+                : fitter_(fitter), parIndexNames_(parIndexNames) {}
 
             double operator()(const double* mass_dep_pars) const;
 
@@ -282,8 +281,8 @@ namespace m2pw {
 
         // Utility methods
         static std::vector<TString> GetParNames();
-        void MinimizeChi2(int seed = 0);
-        void MinimizeChi2(ParameterManager& paramManager, int seed = 0);
+        // void MinimizeChi2(int seed = 0);
+        void MinimizeChi2(ParameterManager& paramManager);
 
 private:
     // Core data structures - using consistent naming
@@ -293,7 +292,7 @@ private:
     std::vector<double> massBins_;
     std::map<TString, int> parNameToIndex_;
     MassDependenceConfig massDependenceConfig_;
-    HMomentsConfig hMomentsConfig_;  // Configuration for H moment selection
+    MomentsConfig hMomentsConfig_;  // Configuration for H moment selection
     std::map<TString, int> waveToFunctionIndex_;  // Maps wave names to function indices
 
     // Caching for performance
@@ -308,8 +307,8 @@ private:
     // Helper methods
     void InitializeMassBins(const std::vector<double>& mass_bins);
     void InitializeMDFunctions();
-    void ClearCache() const;
-    bool IsParameterCached(const double* params) const;
+    // void ClearCache() const;
+    // bool IsParameterCached(const double* params) const;
 
     std::unique_ptr<ParameterInfo> ParseParameterName(const TString& parName) const;
 
@@ -345,11 +344,11 @@ private:
     int ExtractLFromEquationName(const TString& eqnName) const;
 
     // Helper method to determine if parameters for a given L are needed based on H moments config
-    bool ParameterNeededForHMoments(int l, const HMomentsConfig& hConfig) const;
+    bool ParameterNeededForMoments(int l, const MomentsConfig& hConfig) const;
     };
 
     // Implementation of inline methods
-    inline MassDependentEquationSolver::ParameterInfo::ParameterInfo(const TString& parName) {
+    inline MassDependentFitter::ParameterInfo::ParameterInfo(const TString& parName) {
         name = parName;
         std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
         if (parts->GetEntries() >= 3) {
@@ -360,32 +359,32 @@ private:
         }
     }
 
-    inline void MassDependentEquationSolver::ClearCache() const {
-        cacheValid_ = false;
-        cachedParams_.clear();
-    }
+    // inline void MassDependentFitter::ClearCache() const {
+    //     cacheValid_ = false;
+    //     cachedParams_.clear();
+    // }
 
-    inline bool MassDependentEquationSolver::IsParameterCached(const double* params) const {
-        if (!cacheValid_ || cachedParams_.empty()) return false;
+    // inline bool MassDependentFitter::IsParameterCached(const double* params) const {
+    //     if (!cacheValid_ || cachedParams_.empty()) return false;
         
-        const size_t nParams = NDim();
-        if (cachedParams_.size() != nParams) return false;
+    //     const size_t nParams = NDim();
+    //     if (cachedParams_.size() != nParams) return false;
         
-        for (size_t i = 0; i < nParams; ++i) {
-            if (std::abs(cachedParams_[i] - params[i]) > Config::DEFAULT_CHI2_TOLERANCE) {
-                return false;
-            }
-        }
-        return true;
-    }
+    //     for (size_t i = 0; i < nParams; ++i) {
+    //         if (std::abs(cachedParams_[i] - params[i]) > 1e-6) {
+    //             return false;
+    //         }
+    //     }
+    //     return true;
+    // }
 
 }
 
-// extern MassDependentEquationSolver *geqn_solver;
+// extern MassDependentFitter *geqn_fitter;
 
 // extern "C" {
 //   double cpp_eval(const double * params, size_t d=0) {
-//     Double_t result= geqn_solver->DoEval(params);
+//     Double_t result= geqn_fitter->DoEval(params);
 //     return result;
 //   }
 // };

@@ -77,7 +77,7 @@
         "TestMassDependentMoments_Clean.C": "cpp",
         "test_new_interface.C": "cpp",
         "test_interface_simple.C": "cpp",
-        "test_solver_interface.C": "cpp",
+        "test_fitter_interface.C": "cpp",
         "ExtractCS.C": "cpp",
         "FitSDME.C": "cpp",
         "CalcAcceptance.C": "cpp",

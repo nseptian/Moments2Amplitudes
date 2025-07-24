@@ -37,39 +37,39 @@ void RunGivenBruMoments(){
   // moments.Set("/d/grid17/septian/Moments2Amplitudes/brufit/fitMoments_GlueXAcceptanceSignal_SDwaves_R6.34/ResultsHSMinuit2.root",1,0);
   moments.Set("/d/home/septian/EtaPi0Analysis/run_Phase1/fitMoment_GlueXI_t010100_m080200_MCMCN6000BI1000S08WCOV/Mpi0eta1.420000_/ResultsBruMcmcCovariance.root",1,1);
   moments.PrintVals();
-  //setup the solver, arguments :
+  //setup the fitter, arguments :
   //  setup = BruFit setup
   //  resolution = smear moments by resolution
   //  ignore_observables = do not include the following polarised moments
   //                       i.e. alpha = 0,1,2, or 3 => H_0,H_1,H_2,H_3
-  m2pw::EquationSolver solver{setup,0.0,{"H_3"}}; //ignore H_3
-  //  m2pw::EquationSolver solver{setup,0.05,{"H_3","H_2","H_1"}};
-  solver.SetEquationValues(moments);
-  solver.Print("v");
+  m2pw::EquationSolver fitter{setup,0.0,{"H_3"}}; //ignore H_3
+  //  m2pw::EquationSolver fitter{setup,0.05,{"H_3","H_2","H_1"}};
+  fitter.SetEquationValues(moments);
+  fitter.Print("v");
 
-  solver.GetPars().Randomise();
-  solver.Solve();
+  fitter.GetPars().Randomise();
+  fitter.Solve();
 
   //create output tree
-  // solver.MakeResultTree("resultsGivenBruMomentsNoH3_data_SDWaves_10000Sample_NoPWaves.root");
-  // solver.MakeResultTree("resultsGivenBruMomentsNoH3_data_MCMC_test_10000Sample.root");
+  // fitter.MakeResultTree("resultsGivenBruMomentsNoH3_data_SDWaves_10000Sample_NoPWaves.root");
+  // fitter.MakeResultTree("resultsGivenBruMomentsNoH3_data_MCMC_test_10000Sample.root");
   
-  // gBenchmark->Start("solver");
+  // gBenchmark->Start("fitter");
 
   // //loop and perform 10,000 minimisations with random starting amplitudes
   // for(int i = 0; i<10000;i++){
   //   if(i%100==0) cout<<i<<" "<<endl;
-  //   solver.GetPars().Randomise();
-  //   solver.Solve();
-  //   solver.FillTree();
+  //   fitter.GetPars().Randomise();
+  //   fitter.Solve();
+  //   fitter.FillTree();
   // }
 
-  // gBenchmark->Stop("solver");
-  // gBenchmark->Print("solver");
+  // gBenchmark->Stop("fitter");
+  // gBenchmark->Print("fitter");
 
   // //Save results tree
-  // solver.GetPars().CloseTree();
+  // fitter.GetPars().CloseTree();
 
-  // solver.PrintResult();
+  // fitter.PrintResult();
   
 }

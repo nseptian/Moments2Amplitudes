@@ -1,5 +1,5 @@
 #include "EquationSolver.h"
-#include "MassDependentEquationSolver.h"
+#include "MassDependentFitter.h"
 
 #include "ToyManager.h"
 #include "PhotoTwoSpin0Amps.h"

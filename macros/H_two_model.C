@@ -56,10 +56,10 @@ void H_two_model(int seed=0){
 
     using namespace m2pw;
     
-    // Setup solver
-    // m2pw::MassDependentEquationSolver solver{setup, massBins, 2, 0.0, {"H_3"}};
-    // auto l4OnlyConfig = m2pw::MassDependentEquationSolver::CreateL4OnlyConfig();
-    auto a2_1320_config = MassDependentEquationSolver::CreateDefaultConfig();
+    // Setup fitter
+    // m2pw::MassDependentFitter fitter{setup, massBins, 2, 0.0, {"H_3"}};
+    // auto l4OnlyConfig = m2pw::MassDependentFitter::CreateL4OnlyConfig();
+    auto a2_1320_config = MassDependentFitter::CreateDefaultConfig();
 
     std::cout << "Mass dependence configuration:" << std::endl;
     std::cout << "   - L=0 mass dependent: " << (a2_1320_config.IsMassDependent(0) ? "YES" : "NO") << std::endl;
@@ -70,42 +70,42 @@ void H_two_model(int seed=0){
     std::cout << "   - L=1 mass independent: " << (a2_1320_config.IsMassIndependent(1) ? "YES" : "NO") << std::endl;
     std::cout << "   - L=2 mass independent: " << (a2_1320_config.IsMassIndependent(2) ? "YES" : "NO") << std::endl;
 
-    auto H4_config = MassDependentEquationSolver::CreateL4OnlyConfig();
-    auto H24_config = MassDependentEquationSolver::CreateL2L4OnlyConfig();
-    auto HAll_config = MassDependentEquationSolver::CreateIncludeAllConfig();
+    auto H4_config = MassDependentFitter::CreateL4OnlyConfig();
+    auto H24_config = MassDependentFitter::CreateL2L4OnlyConfig();
+    auto HAll_config = MassDependentFitter::CreateIncludeAllConfig();
 
-    // MassDependentEquationSolver::MassDependenceConfig a2_a0_config;
+    // MassDependentFitter::MassDependenceConfig a2_a0_config;
     // a2_a0_config.massDependentWaves[0] = {"a0_980"};
     // a2_a0_config.massDependentWaves[2] = {"a2_1320"};
     // a2_a0_config.massIndependentL = {1};
 
-    MassDependentEquationSolver solver{setup, massBins, 2, 0.0, {"H_3"}, a2_1320_config, H24_config};
-    solver.SetEquationValues(massDepMoments);
+    MassDependentFitter fitter{setup, massBins, 2, 0.0, {"H_3"}, a2_1320_config, H24_config};
+    fitter.SetEquationValues(massDepMoments);
     
     std::cout << "\n=== Include L=2,4 only configuration ===" << std::endl;
-    // solver.SetHMomentsConfig(H24_config);
-    solver.PrintIncludedMoments();
+    // fitter.SetHMomentsConfig(H24_config);
+    fitter.PrintIncludedMoments();
 
     const TString D_waves_model_file = "/d/home/septian/Moments2Amplitudes/brufit/result_tree_L4_only_0.root";
 
-    m2pw::MassDependentEquationSolver::ParameterManager paramManager;
-    paramManager.AddMassDependentParameters(solver.GetParNames(), 
+    m2pw::MassDependentFitter::ParameterManager paramManager;
+    paramManager.AddMassDependentParameters(fitter.GetParNames(), 
                                             D_waves_model_file, 
-                                            solver.GetMassDependenceConfig(), 
-                                            solver.GetHMomentsConfig(), 
-                                            solver,0);
+                                            fitter.GetMassDependenceConfig(), 
+                                            fitter.GetHMomentsConfig(), 
+                                            fitter,0);
     
-    paramManager.AddMassIndependentParameters(solver.GetMassBins(), 
-                                              solver.GetParNames(), 
+    paramManager.AddMassIndependentParameters(fitter.GetMassBins(), 
+                                              fitter.GetParNames(), 
                                               seed, 
-                                              solver.GetMassDependenceConfig(), 
-                                              solver.GetHMomentsConfig(), 
-                                              solver);
+                                              fitter.GetMassDependenceConfig(), 
+                                              fitter.GetHMomentsConfig(), 
+                                              fitter);
 
-    // solver.PrintParNameIndices();
+    // fitter.PrintParNameIndices();
 
-    solver.MinimizeChi2(paramManager, seed);
+    fitter.MinimizeChi2(paramManager, seed);
 
-    solver.MakeResultTree(paramManager, "result_tree_BWa2_freeSWaves_"+std::to_string(seed)+".root", seed);
+    fitter.MakeResultTree(paramManager, "result_tree_BWa2_freeSWaves_"+std::to_string(seed)+".root", seed);
 
 }

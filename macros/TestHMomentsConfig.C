@@ -1,4 +1,4 @@
-#include "MassDependentEquationSolver.h"
+#include "MassDependentFitter.h"
 #include <iostream>
 #include <vector>
 #include <iomanip>
@@ -10,21 +10,21 @@ void TestHMomentsConfig() {
     
     // Test the three specifically requested H moment configurations
     std::cout << "\n1. Testing L=4 Only Configuration:" << std::endl;
-    auto l4OnlyConfig = MassDependentEquationSolver::CreateL4OnlyConfig();
+    auto l4OnlyConfig = MassDependentFitter::CreateL4OnlyConfig();
     
     for (int L = 0; L <= 6; ++L) {
         std::cout << "   - Include L=" << L << ": " << (l4OnlyConfig.ShouldIncludeL(L) ? "YES" : "NO") << std::endl;
     }
     
     std::cout << "\n2. Testing L=2,4 Only Configuration:" << std::endl;
-    auto l2l4OnlyConfig = MassDependentEquationSolver::CreateL2L4OnlyConfig();
+    auto l2l4OnlyConfig = MassDependentFitter::CreateL2L4OnlyConfig();
     
     for (int L = 0; L <= 6; ++L) {
         std::cout << "   - Include L=" << L << ": " << (l2l4OnlyConfig.ShouldIncludeL(L) ? "YES" : "NO") << std::endl;
     }
     
     std::cout << "\n3. Testing Include All Configuration:" << std::endl;
-    auto includeAllConfig = MassDependentEquationSolver::CreateIncludeAllConfig();
+    auto includeAllConfig = MassDependentFitter::CreateIncludeAllConfig();
     
     for (int L = 0; L <= 6; ++L) {
         std::cout << "   - Include L=" << L << ": " << (includeAllConfig.ShouldIncludeL(L) ? "YES" : "NO") << std::endl;
@@ -33,10 +33,10 @@ void TestHMomentsConfig() {
     std::cout << "\n=== Configuration Summary Table ===" << std::endl;
     
     // Show how different configurations affect the number of included moments
-    std::vector<std::pair<TString, MassDependentEquationSolver::HMomentsConfig>> configs = {
-        {"Include All", MassDependentEquationSolver::CreateIncludeAllConfig()},
-        {"L=4 Only", MassDependentEquationSolver::CreateL4OnlyConfig()},
-        {"L=2,4 Only", MassDependentEquationSolver::CreateL2L4OnlyConfig()}
+    std::vector<std::pair<TString, MassDependentFitter::HMomentsConfig>> configs = {
+        {"Include All", MassDependentFitter::CreateIncludeAllConfig()},
+        {"L=4 Only", MassDependentFitter::CreateL4OnlyConfig()},
+        {"L=2,4 Only", MassDependentFitter::CreateL2L4OnlyConfig()}
     };
     
     std::cout << "\n4. Configuration Summary:" << std::endl;
@@ -100,21 +100,21 @@ void TestHMomentsConfig() {
     
     std::cout << "\n   Example 1: Fit only L=4 H moments" << std::endl;
     std::cout << "   // This would exclude all H moments except those with L=4" << std::endl;
-    std::cout << "   auto massConfig = MassDependentEquationSolver::CreateDefaultConfig();" << std::endl;
-    std::cout << "   auto hConfig = MassDependentEquationSolver::CreateL4OnlyConfig();" << std::endl;
-    std::cout << "   auto solver = MassDependentEquationSolver(setup, massBins, 2, 0.0, {}, massConfig, hConfig);" << std::endl;
+    std::cout << "   auto massConfig = MassDependentFitter::CreateDefaultConfig();" << std::endl;
+    std::cout << "   auto hConfig = MassDependentFitter::CreateL4OnlyConfig();" << std::endl;
+    std::cout << "   auto fitter = MassDependentFitter(setup, massBins, 2, 0.0, {}, massConfig, hConfig);" << std::endl;
     
     std::cout << "\n   Example 2: Fit only L=2,4 H moments" << std::endl;
     std::cout << "   // This would include only H moments with L=2 or L=4" << std::endl;
-    std::cout << "   auto massConfig = MassDependentEquationSolver::CreateMultipleA2Config();" << std::endl;
-    std::cout << "   auto hConfig = MassDependentEquationSolver::CreateL2L4OnlyConfig();" << std::endl;
-    std::cout << "   auto solver = MassDependentEquationSolver(setup, massBins, 2, 0.0, {}, massConfig, hConfig);" << std::endl;
+    std::cout << "   auto massConfig = MassDependentFitter::CreateMultipleA2Config();" << std::endl;
+    std::cout << "   auto hConfig = MassDependentFitter::CreateL2L4OnlyConfig();" << std::endl;
+    std::cout << "   auto fitter = MassDependentFitter(setup, massBins, 2, 0.0, {}, massConfig, hConfig);" << std::endl;
     
     std::cout << "\n   Example 3: Include all H moments (default)" << std::endl;
     std::cout << "   // This includes all H moments (same as not specifying hConfig)" << std::endl;
-    std::cout << "   auto massConfig = MassDependentEquationSolver::CreateL0L2Config();" << std::endl;
-    std::cout << "   auto hConfig = MassDependentEquationSolver::CreateIncludeAllConfig();" << std::endl;
-    std::cout << "   auto solver = MassDependentEquationSolver(setup, massBins, 2, 0.0, {}, massConfig, hConfig);" << std::endl;
+    std::cout << "   auto massConfig = MassDependentFitter::CreateL0L2Config();" << std::endl;
+    std::cout << "   auto hConfig = MassDependentFitter::CreateIncludeAllConfig();" << std::endl;
+    std::cout << "   auto fitter = MassDependentFitter(setup, massBins, 2, 0.0, {}, massConfig, hConfig);" << std::endl;
     
     std::cout << "\n=== Benefits of H Moment Selection ===" << std::endl;
     

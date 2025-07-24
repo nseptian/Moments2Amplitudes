@@ -70,20 +70,20 @@ class Chi2Function;
 // Chi2Function class definition
 class Chi2Function {
 private:
-    m2pw::MassDependentEquationSolver& solver_;
+    m2pw::MassDependentFitter& fitter_;
     const std::vector<TString>& parIndexNames_;
     mutable std::map<TString, std::vector<double>> massDepPars_;
     mutable std::map<TString, std::map<TString, std::vector<double>>> massIndepPars_;
 
 public:
-    Chi2Function(m2pw::MassDependentEquationSolver& solver, 
+    Chi2Function(m2pw::MassDependentFitter& fitter, 
                  const std::vector<TString>& parIndexNames)
-        : solver_(solver), parIndexNames_(parIndexNames) {}
+        : fitter_(fitter), parIndexNames_(parIndexNames) {}
 
     double operator()(const double* mass_dep_pars) const {
         // Map parameters and use the optimized DoEval
         MapParameters(mass_dep_pars);
-        return solver_.DoEval(massDepPars_, massIndepPars_);
+        return fitter_.DoEval(massDepPars_, massIndepPars_);
     }
 
 private:
@@ -133,11 +133,11 @@ std::vector<TString> GetParNames() {
     return parNames;
 }
 
-void MinimizeChi2(m2pw::MassDependentEquationSolver& solver, int seed = 0) {
+void MinimizeChi2(m2pw::MassDependentFitter& fitter, int seed = 0) {
     // Setup parameter manager
     ParameterManager paramManager;
     std::vector<TString> parNames = GetParNames();
-    std::vector<double> massBins = solver.GetMassBins();
+    std::vector<double> massBins = fitter.GetMassBins();
     
     paramManager.AddMassIndependentParameters(massBins, parNames, seed);
     paramManager.AddMassDependentParameters(parNames, seed);
@@ -149,7 +149,7 @@ void MinimizeChi2(m2pw::MassDependentEquationSolver& solver, int seed = 0) {
 
     // Setup minimizer with Chi2Function wrapper
     ROOT::Minuit2::Minuit2Minimizer minimizer(ROOT::Minuit2::kMigrad);
-    Chi2Function chi2Function(solver, paramManager.parIndexNames);
+    Chi2Function chi2Function(fitter, paramManager.parIndexNames);
     ROOT::Math::Functor functor(chi2Function, paramManager.totalNpars);
     
     TStopwatch timer;
@@ -177,11 +177,11 @@ void MinimizeChi2(m2pw::MassDependentEquationSolver& solver, int seed = 0) {
     minimizer.PrintResults();
 
     if (isValid) {
-        solver.MakeResultTree(Form("MassDependentResults_%d.root", seed));
+        fitter.MakeResultTree(Form("MassDependentResults_%d.root", seed));
     }
     
-    solver.PrintEquations("v", Config::FIRST_MASS_BIN_CENTER);
-    solver.PrintParCurrentVals(Config::FIRST_MASS_BIN_CENTER);
+    fitter.PrintEquations("v", Config::FIRST_MASS_BIN_CENTER);
+    fitter.PrintParCurrentVals(Config::FIRST_MASS_BIN_CENTER);
 }
 
 
@@ -231,10 +231,10 @@ void TestMassDependentMoments(int seed = 0) {
     // Generate mass bins
     std::vector<double> massBins = GenerateMassBins();
     
-    // Setup solver
-    m2pw::MassDependentEquationSolver solver{setup, massBins, 2, 0.0, {"H_3"}};
-    solver.SetEquationValues(massDepMoments);
+    // Setup fitter
+    m2pw::MassDependentFitter fitter{setup, massBins, 2, 0.0, {"H_3"}};
+    fitter.SetEquationValues(massDepMoments);
     
     // Run minimization with new interface
-    solver.MinimizeChi2(seed);
+    fitter.MinimizeChi2(seed);
 }

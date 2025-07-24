@@ -3,7 +3,7 @@
 
 
 namespace m2pw{
-  EquationSolver *geqn_solver=nullptr;
+  EquationSolver *geqn_fitter=nullptr;
 
   EquationSolver::EquationSolver(const Setup& setup, Double_t noise,std::vector<TString> noUse):
     _pars{setup}
@@ -58,7 +58,7 @@ namespace m2pw{
       _fitter.Config().ParSettings(i).SetLimits(_pars.Min(i),_pars.Max(i));
     }
  
-    if(geqn_solver==nullptr)geqn_solver=this;
+    if(geqn_fitter==nullptr)geqn_fitter=this;
     
   }
   //////////////////////////////////////////////////////////
@@ -159,11 +159,11 @@ namespace m2pw{
      _fitter.Config().SetMinimizer("Minuit2","Migrad");
     _fitter.Config().SetParamsSettings(NDim(),_pars.CurrentVals(),_pars.StepSizes().data());
  
-     // gBenchmark->Start("solver");
+     // gBenchmark->Start("fitter");
      
      _fitter.FitFCN(NDim(),*this);
-     // gBenchmark->Stop("solver");
-     // gBenchmark->Print("solver");
+     // gBenchmark->Stop("fitter");
+     // gBenchmark->Print("fitter");
      auto resultpars=_fitter.Result().GetParams();
      _pars.SetCurrentVals(resultpars);
      //     _val = DoEval(_pars.CurrentVals());
