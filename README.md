@@ -1,13 +1,13 @@
 # Moments2Amplitudes
 
-This repository provides tools for **mass-dependent modeling of angular moments om two-pseudoscalar ,esons produced in polarized photon-proton collisions** by imposing mass-dependent models on partial wave amplitudes. The main goal is to fit experimental or simulated moment data using physically-motivated, mass-dependent parameterizations of the underlying amplitudes.
+This repository provides tools for **mass-dependent modeling of angular moments of two-pseudoscalar mesons produced in polarized photon-proton collisions** by imposing mass-dependent models on partial wave amplitudes. The main goal is to fit experimental or simulated moment data using physically-motivated, mass-dependent parameterizations of the underlying amplitudes.
 
 The code and workflow are inspired by and compatible with [brufit](https://github.com/dglazier/brufit/tree/R6.34Test/tutorials/PhotoAmps/TwoSpin0AmpsFromMoments).
 
 ## Requirements
 
 - [ROOT](https://root.cern/) (with modules required by brufit installed)
-- [brufit](https://github.com/dglazier/brufit/tree/R6.34Test) (main inversion algorithm)
+- [brufit](https://github.com/dglazier/brufit/tree/R6.34Test) (PWA-Moment relations)
 - [Moments](https://github.com/bgrube/Moments) (for weighting phase space, install python requirements from this repository)
 
 ## Repository Structure
