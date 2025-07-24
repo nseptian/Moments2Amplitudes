@@ -11,27 +11,25 @@ namespace Config {
     const Double_t MASS_BIN_WIDTH = 0.04;
     const Int_t N_MASS_BINS = 20;
     const TString FIT_RESULTS_DIR = "/d/home/septian/EtaPi0Analysis/run_merged/fitMoment_GlueX1_2019_11_t010100_m080200_MCMCN6000BI1000S08WCOV_R6.34/";
-    // const TString FIT_RESULTS_FILENAME = "ResultsBruMcmcCovariance.root";
-    // const TString BW_NAMES[3] = {"k", "M", "width"};
-} // namespace Config
-
-MassDependentMoments LoadMomentsData() {
-    MassDependentMoments massDepMoments;
-    
-    for (Int_t i = 0; i < Config::N_MASS_BINS; ++i) {
-        Double_t massValue = Config::FIRST_MASS_BIN_CENTER + i * Config::MASS_BIN_WIDTH;
-        const TString massBinDirName = Form("Mpi0eta%1.6f_/", massValue);
-        const TString filePath = Config::FIT_RESULTS_DIR + massBinDirName;
-
-        std::cout << "Loading moments from file: " << filePath << std::endl;
-
-        MomentHelper moments;
-        moments.Set(filePath, 1, 1);
-        massDepMoments.SetMoments(massValue, moments);
-    }
-    
-    return massDepMoments;
 }
+
+// MassDependentMoments LoadMomentsData() {
+//     MassDependentMoments massDepMoments;
+    
+//     for (Int_t i = 0; i < Config::N_MASS_BINS; ++i) {
+//         Double_t massValue = Config::FIRST_MASS_BIN_CENTER + i * Config::MASS_BIN_WIDTH;
+//         const TString massBinDirName = Form("Mpi0eta%1.6f_/", massValue);
+//         const TString filePath = Config::FIT_RESULTS_DIR + massBinDirName;
+
+//         std::cout << "Loading moments from file: " << filePath << std::endl;
+
+//         MomentHelper moments;
+//         moments.Set(filePath, 1, 1);
+//         massDepMoments.SetMoments(massValue, moments);
+//     }
+    
+//     return massDepMoments;
+// }
 
 std::vector<double> GenerateMassBins() {
     std::vector<double> massBins;
@@ -49,10 +47,16 @@ void H_four_model(int seed = 0) {
     auto& setup = ConfigureAmpsNoValues(2, 2, 2); // (Lmax, MMax, Nref)
     
     // Load moments data
-    MassDependentMoments massDepMoments = LoadMomentsData();
-    
+    MassDependentMoments massDepMoments(Config::N_MASS_BINS, 
+                                        Config::MASS_BIN_WIDTH, 
+                                        Config::FIRST_MASS_BIN_CENTER, 
+                                        Config::FIT_RESULTS_DIR, 
+                                        "Mpi0eta");
+
+    massDepMoments.PrintMoments();
+
     // Generate mass bins
-    std::vector<double> massBins = GenerateMassBins();
+    std::vector<double> massBins = massDepMoments.GetMassBins();
 
     using namespace m2pw;
     
@@ -90,9 +94,9 @@ void H_four_model(int seed = 0) {
                                             solver.GetHMomentsConfig(), 
                                             solver);
 
-    solver.MinimizeChi2(paramManager, seed);
+    // solver.MinimizeChi2(paramManager, seed);
 
-    solver.MakeResultTree(paramManager, "result_tree_L4_only_" + std::to_string(seed) + ".root", seed);
+    // solver.MakeResultTree(paramManager, "result_tree_L4_only_" + std::to_string(seed) + ".root", seed);
 
     // TStopwatch timer;
     // timer.Start();

@@ -1,0 +1,9 @@
+run/
+src/*.so
+src/*.d
+src/*.pcm
+plots*
+
+# pixi environments
+.pixi
+*.egg-info

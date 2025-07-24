@@ -145,14 +145,14 @@ private:
   }
 
   Double_t GetAcceptance() const {
-    TFile *file = TFile::Open(_filepath + "ResultsCrossSection.root");
+    TFile *file = TFile::Open(_filepath + "/ResultsCrossSection.root");
     if (!file || !file->IsOpen()) {
-      std::cerr << "Error: Cannot open file " << _filepath + "ResultsCrossSection.root" << std::endl;
+      std::cerr << "Error: Cannot open file " << _filepath + "/ResultsCrossSection.root" << std::endl;
       return 1.0; // Default acceptance if file cannot be opened
     }
     HS::FIT::CrossSection* cross_section = (HS::FIT::CrossSection*)file->Get("cs");
     if (!cross_section) {
-      std::cerr << "Error: CrossSection not found in file " << _filepath + "ResultsCrossSection.root" << std::endl;
+      std::cerr << "Error: CrossSection not found in file " << _filepath + "/ResultsCrossSection.root" << std::endl;
       return 1.0; // Default acceptance if cross section is not found
     }
     return cross_section->GetAcceptance();

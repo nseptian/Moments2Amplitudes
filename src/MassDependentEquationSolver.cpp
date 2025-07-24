@@ -134,12 +134,12 @@ namespace m2pw {
             }
         }
 
-        // Initialize parameter name to index mapping - FILTER BASED ON H MOMENTS CONFIG
+        // Initialize parameter name to index mapping - FILTER BASED ON H(moment)S CONFIG
         // int index = 0;
         // for (int l = 0; l <= static_cast<int>(l_max); ++l) {
-        //     // Only include parameters for L values that are needed for the H moments
+        //     // Only include parameters for L values that are needed for the H(moment)s
         //     if (!ParameterNeededForHMoments(l, hMomentsConfig)) {
-        //         std::cout << "Skipping parameters for l=" << l << " (not needed for selected H moments)" << std::endl;
+        //         std::cout << "Skipping parameters for l=" << l << " (not needed for selected H(moment)s)" << std::endl;
         //         continue;
         //     }
             
@@ -307,9 +307,9 @@ namespace m2pw {
             // Extract L value from equation name to check if it should be included
             int L_value = ExtractLFromEquationName(eqn.GetName());
             
-            // Apply H moments filtering
+            // Apply H(moment)s filtering
             bool shouldInclude = true;
-            if (L_value >= 0) { // This is an H moment equation
+            if (L_value >= 0) { // This is an H(moment) equation
                 shouldInclude = hMomentsConfig_.ShouldIncludeL(L_value);
             }
             
@@ -496,7 +496,7 @@ namespace m2pw {
         std::vector<double> par_vals(nPars);
         double mass_bin_center = 0.0;
 
-        // Collect all unique H moment names from all mass bins
+        // Collect all unique H(moment) names from all mass bins
         std::set<TString> allHMomentNames;
         for (const auto& [mass_bin, equations] : eqns_) {
             for (const auto& eqn : equations) {
@@ -513,7 +513,7 @@ namespace m2pw {
             tree->Branch(par_name, &par_vals[i]);
         }
 
-        // Add branches for H moment values only (no errors)
+        // Add branches for H(moment) values only (no errors)
         std::map<TString, double> hMomentBranchValues;
         for (const TString& momentName : allHMomentNames) {
             hMomentBranchValues[momentName] = 0.0;
@@ -521,9 +521,9 @@ namespace m2pw {
         }
 
         if (seed >= 0)
-            std::cout << "Filling the result tree with parameter values and H moment values (seed: " << seed << ")..." << std::endl;
+            std::cout << "Filling the result tree with parameter values and H(moment) values (seed: " << seed << ")..." << std::endl;
         else
-            std::cout << "Filling the result tree with parameter values and H moment values..." << std::endl;
+            std::cout << "Filling the result tree with parameter values and H(moment) values..." << std::endl;
 
         for (const auto& [mass_bin, pars] : pars_) {
             mass_bin_center = mass_bin;
@@ -534,7 +534,7 @@ namespace m2pw {
                 par_vals[i] = pars.GetCurrentVal(par_name);
             }
 
-            // Fill H moment values for this mass bin
+            // Fill H(moment) values for this mass bin
             for (const TString& momentName : allHMomentNames) {
                 hMomentBranchValues[momentName] = 0.0;
 
@@ -587,9 +587,9 @@ namespace m2pw {
 
         file->Write();
         if (seed >= 0)
-            std::cout << "Result tree saved to " << fileName << " with seed " << seed << " and H moment values as individual branches" << std::endl;
+            std::cout << "Result tree saved to " << fileName << " with seed " << seed << " and H(moment) values as individual branches" << std::endl;
         else
-            std::cout << "Result tree saved to " << fileName << " with H moment values as individual branches" << std::endl;
+            std::cout << "Result tree saved to " << fileName << " with H(moment) values as individual branches" << std::endl;
     }
 
     // ParameterManager implementation
@@ -997,9 +997,9 @@ namespace m2pw {
                 TString l_str = ((TObjString*)parts->At(1))->GetString();
                 int l_value = l_str.Atoi();
                 
-                // Check if this parameter is needed for the H moments configuration  
+                // Check if this parameter is needed for the H(moment)s configuration  
                 if (!solver.ParameterNeededForHMoments(l_value, hConfig)) {
-                    std::cout << "Skipping parameter " << parName << " (L=" << l_value << " not needed for H moments)" << std::endl;
+                    std::cout << "Skipping parameter " << parName << " (L=" << l_value << " not needed for H(moment)s)" << std::endl;
                     continue;
                 }
                 
@@ -1034,9 +1034,9 @@ namespace m2pw {
             TString l_str = ((TObjString*)parts->At(1))->GetString();
             int l_value = l_str.Atoi();
             
-            // Check if this parameter is needed for the H moments configuration
+            // Check if this parameter is needed for the H(moment)s configuration
             if (!solver.ParameterNeededForHMoments(l_value, hConfig)) {
-                std::cout << "Skipping parameter " << parName << " (L=" << l_value << " not needed for H moments)" << std::endl;
+                std::cout << "Skipping parameter " << parName << " (L=" << l_value << " not needed for H(moment)s)" << std::endl;
                 continue;
             }
             
@@ -1095,9 +1095,9 @@ namespace m2pw {
             TString l_str = ((TObjString*)parts->At(1))->GetString();
             int l_value = l_str.Atoi();
             
-            // Check if this parameter is needed for the H moments configuration
+            // Check if this parameter is needed for the H(moment)s configuration
             if (!solver.ParameterNeededForHMoments(l_value, hConfig)) {
-                std::cout << "Skipping parameter " << parName << " (L=" << l_value << " not needed for H moments)" << std::endl;
+                std::cout << "Skipping parameter " << parName << " (L=" << l_value << " not needed for H(moment)s)" << std::endl;
                 continue;
             }
             
@@ -1124,7 +1124,7 @@ namespace m2pw {
                 }
                 else {
                     std::cout << "Added free mass-dependent parameter for L=" << l_value 
-                         << ": " << name << " (index: " << totalNqpars << ") = " << parsList[name] << std::endl;
+                         << ": " << name << " (index: " << totalNpars << ") = " << parsList[name] << std::endl;
                 }
                 totalNpars++;
                 
@@ -1152,15 +1152,15 @@ namespace m2pw {
     }
 
     void MassDependentEquationSolver::PrintIncludedMoments() const {
-        std::cout << "\n=== H Moments Configuration ===" << std::endl;
+        std::cout << "\n=== H(moment)s Configuration ===" << std::endl;
         
         if (hMomentsConfig_.includeAll) {
-            std::cout << "Including ALL H moments in chi2 calculation" << std::endl;
+            std::cout << "Including ALL H(moment)s in chi2 calculation" << std::endl;
             return;
         }
         
         if (!hMomentsConfig_.includedL.empty()) {
-            std::cout << "Including H moments for L values: ";
+            std::cout << "Including H(moment)s for L values: ";
             for (size_t i = 0; i < hMomentsConfig_.includedL.size(); ++i) {
                 std::cout << hMomentsConfig_.includedL[i];
                 if (i < hMomentsConfig_.includedL.size() - 1) std::cout << ", ";
@@ -1169,7 +1169,7 @@ namespace m2pw {
         }
         
         if (!hMomentsConfig_.excludedL.empty()) {
-            std::cout << "Excluding H moments for L values: ";
+            std::cout << "Excluding H(moment)s for L values: ";
             for (size_t i = 0; i < hMomentsConfig_.excludedL.size(); ++i) {
                 std::cout << hMomentsConfig_.excludedL[i];
                 if (i < hMomentsConfig_.excludedL.size() - 1) std::cout << ", ";
@@ -1178,7 +1178,7 @@ namespace m2pw {
         }
         
         // Show which specific moments will be included
-        std::cout << "Specific H moments included in chi2:" << std::endl;
+        std::cout << "Specific H(moment)s included in chi2:" << std::endl;
         for (int L = 0; L <= 4; ++L) {
             bool shouldInclude = hMomentsConfig_.ShouldIncludeL(L);
             std::cout << "  L=" << L << ": " << (shouldInclude ? "YES" : "NO") << std::endl;
@@ -1189,7 +1189,7 @@ namespace m2pw {
         // Equation names are typically like "H_alpha_L_M" (e.g., "H_0_0_0", "H_1_2_1", "H_2_4_2")
         // std::cout << "Extracting L from equation name: " << eqnName << std::endl;
         if (!eqnName.BeginsWith("H_")) {
-            return -1; // Not an H moment equation
+            return -1; // Not an H(moment) equation
         }
         
         std::unique_ptr<TObjArray> parts(eqnName.Tokenize("_"));
@@ -1206,22 +1206,22 @@ namespace m2pw {
     }
 
     bool MassDependentEquationSolver::ParameterNeededForHMoments(int l, const HMomentsConfig& hConfig) const {
-        // Check what H moment L values are included
+        // Check what H(moment) L values are included
         std::set<int> includedHMomentL;
         
-        // Determine which H moment L values are actually included
+        // Determine which H(moment) L values are actually included
         for (int H_L = 0; H_L <= 6; ++H_L) {
             if (hConfig.ShouldIncludeL(H_L)) {
                 includedHMomentL.insert(H_L);
             }
         }
         
-        // Rule 1: If only L=4 H moments are included -> need only l=2 amplitude parameters
+        // Rule 1: If only L=4 H(moment)s are included -> need only l=2 amplitude parameters
         if (includedHMomentL.size() == 1 && includedHMomentL.count(4) == 1) {
             return (l == 2);
         }
         
-        // Rule 2: If L=2 and L=4 H moments are included -> need l=0 and l=2 amplitude parameters
+        // Rule 2: If L=2 and L=4 H(moment)s are included -> need l=0 and l=2 amplitude parameters
         if (includedHMomentL.size() == 2 && 
             includedHMomentL.count(2) == 1 && includedHMomentL.count(4) == 1) {
             return (l == 0 || l == 2);

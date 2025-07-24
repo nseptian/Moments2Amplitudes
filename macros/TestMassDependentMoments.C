@@ -11,7 +11,7 @@ namespace Config {
     const Double_t FIRST_MASS_BIN_CENTER = 0.82; // in GeV
     const Double_t MASS_BIN_WIDTH = 0.04;
     const Int_t N_MASS_BINS = 3;
-    const TString FIT_RESULTS_DIR = "/d/home/septian/EtaPi0Analysis/run_merged/fitMoment_GlueX1_2019_11_t010100_m010200_MCMCN6000BI1000S08WCOV_R6.34/";
+    const TString FIT_RESULTS_DIR = "/d/home/septian/EtaPi0Analysis/run_merged/fitMoment_GlueX1_2019_11_t080100_m010200_MCMCN6000BI1000S08WCOV_R6.34/";
     const TString FIT_RESULTS_FILENAME = "ResultsBruMcmcCovariance.root";
     const TString BW_NAMES[3] = {"k", "M", "width"};
 }

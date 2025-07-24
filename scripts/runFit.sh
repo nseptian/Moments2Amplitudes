@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # This script is used to run the BruFit analysis on a ROOT file with parallel processing.
-rootFile='TestMassDependentMoments.C'
+# rootFile='TestMassDependentMoments.C'
+rootFile='H_two_model.C'
 loadFile='Load.C'
 
 source /d/grid17/septian/brufit_dev/brufit/set_env.sh
@@ -10,7 +11,7 @@ source /d/grid17/septian/brufit_dev/brufit/set_env.sh
 run_fit() {
     local i=$1
     echo "Starting BruFit for file $i"
-    root -l -b -q $BRUFIT/macros/LoadBru.C Load.C "$rootFile($i)" > "output_$i.txt" 2>&1
+    root -l -b -q $BRUFIT/macros/LoadBru.C Load.C "$rootFile($i)" > "H_two_model_output_$i.txt" 2>&1
     if [ $? -eq 0 ]; then
         echo "Completed BruFit for file $i"
     else
@@ -19,10 +20,10 @@ run_fit() {
 }
 
 # Maximum number of simultaneous jobs
-MAX_JOBS=100
+MAX_JOBS=64
 
 # Run fits in parallel
-for i in {1..10000}
+for i in {1..1000}
 do
     # Wait if we've reached the maximum number of background jobs
     while [ $(jobs -r | wc -l) -ge $MAX_JOBS ]; do
