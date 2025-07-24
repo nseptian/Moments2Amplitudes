@@ -23,12 +23,6 @@
 #include <TStopwatch.h>
 
 namespace m2pw {
-    
-    // Configuration constants
-    // namespace Config {
-    //     constexpr double DEFAULT_CHI2_TOLERANCE = 1e-6;
-    //     const TString BW_NAMES[3] = {"k", "M", "width"};
-    // }
 
     using equation_t = std::vector<Equation>;
     using HS::FIT::Setup;
@@ -69,9 +63,9 @@ namespace m2pw {
          * @brief Configuration for selecting which H moments to include in chi2
          */
         struct MomentsConfig {
-            std::vector<int> includedL;     // L values of H moments to include in chi2
-            std::vector<int> excludedL;     // L values of H moments to exclude from chi2
-            bool includeAll;                // If true, include all H moments (ignore other settings)
+            std::vector<int> includedL;     // L values of moments to include in chi2
+            std::vector<int> excludedL;     // L values of moments to exclude from chi2
+            bool includeAll;                // If true, include all moments (ignore other settings)
             
             // Constructor with default behavior (include all)
             MomentsConfig() : includeAll(true) {}
@@ -107,17 +101,6 @@ namespace m2pw {
             
             ParameterInfo(const TString& parName);
         };
-
-        // MassDependentFitter(const Setup& setup, std::vector<double> mass_bins, 
-        //                            double l_max, double noise, std::vector<TString> noUse);
-        
-        // // Constructor with mass dependence configuration
-        // MassDependentFitter(const Setup& setup, 
-        //                            std::vector<double> mass_bins, 
-        //                            double l_max, 
-        //                            double noise, 
-        //                            std::vector<TString> noUse,
-        //                            const MassDependenceConfig& config);
         
         // Constructor with both mass dependence and H moments configuration
         MassDependentFitter(const Setup& setup, 
@@ -130,8 +113,6 @@ namespace m2pw {
         
         ~MassDependentFitter() = default;
 
-        // Core evaluation methods
-        // double DoEval(const double* mass_dep_pars);
         unsigned int NDim() const;
         
         /**
@@ -217,28 +198,13 @@ namespace m2pw {
             int totalNpars = 0;
             int randomSeed = -1;
 
-            // Add mass independent parameters with random initialization
-            // void AddMassIndependentParameters(const std::vector<double>& massBins, 
-            //                                 const std::vector<TString>& parNames, 
-            //                                 int seed = 0);
-            // void AddMassIndependentParameters(const std::vector<double>& massBins, 
-            //                                 const std::vector<TString>& parNames, 
-            //                                 int seed,
-            //                                 const MassDependenceConfig& config);
+            // Add mass-independent parameters with random initialization
             void AddMassIndependentParameters(const std::vector<double>& massBins, 
                                             const std::vector<TString>& parNames, 
                                             int seed,
                                             const MassDependenceConfig& config,
                                             const MomentsConfig& hConfig,
                                             const MassDependentFitter& fitter);
-            // void AddMassDependentParameters(const std::vector<TString>& parNames, 
-            //                               int seed = 0);
-            // void AddMassDependentParameters(const std::vector<TString>& parNames, 
-            //                               int seed, 
-            //                               const std::vector<int>& massDependentL);
-            // void AddMassDependentParameters(const std::vector<TString>& parNames, 
-            //                               int seed,
-            //                               const MassDependenceConfig& config);
             void AddMassDependentParameters(const std::vector<TString>& parNames, 
                                           int seed,
                                           const MassDependenceConfig& config,
@@ -281,11 +247,9 @@ namespace m2pw {
 
         // Utility methods
         static std::vector<TString> GetParNames();
-        // void MinimizeChi2(int seed = 0);
         void MinimizeChi2(ParameterManager& paramManager);
 
 private:
-    // Core data structures - using consistent naming
     std::map<double, ParameterHelper> pars_;
     std::map<double, equation_t> eqns_;
     std::vector<MassDependentFunction> massDepFuncs_;
@@ -307,8 +271,6 @@ private:
     // Helper methods
     void InitializeMassBins(const std::vector<double>& mass_bins);
     void InitializeMDFunctions();
-    // void ClearCache() const;
-    // bool IsParameterCached(const double* params) const;
 
     std::unique_ptr<ParameterInfo> ParseParameterName(const TString& parName) const;
 
@@ -358,33 +320,5 @@ private:
             isPhase = (refl_str == "aphi" || refl_str == "bphi");
         }
     }
-
-    // inline void MassDependentFitter::ClearCache() const {
-    //     cacheValid_ = false;
-    //     cachedParams_.clear();
-    // }
-
-    // inline bool MassDependentFitter::IsParameterCached(const double* params) const {
-    //     if (!cacheValid_ || cachedParams_.empty()) return false;
-        
-    //     const size_t nParams = NDim();
-    //     if (cachedParams_.size() != nParams) return false;
-        
-    //     for (size_t i = 0; i < nParams; ++i) {
-    //         if (std::abs(cachedParams_[i] - params[i]) > 1e-6) {
-    //             return false;
-    //         }
-    //     }
-    //     return true;
-    // }
-
+   
 }
-
-// extern MassDependentFitter *geqn_fitter;
-
-// extern "C" {
-//   double cpp_eval(const double * params, size_t d=0) {
-//     Double_t result= geqn_fitter->DoEval(params);
-//     return result;
-//   }
-// };
