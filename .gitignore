@@ -7,6 +7,7 @@ samples*
 data*
 test_macros*
 *.root
+brufit/*
 
 # pixi environments
 .pixi

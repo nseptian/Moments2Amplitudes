@@ -6,7 +6,6 @@
 #include "Equation.h"
 #include "Setup.h"
 #include <TString.h>
-#include <Math/IParamFunction.h>
 #include <Fit/Fitter.h>
 #include "MassDependentFunction.h"
 #include <TObjString.h>
@@ -102,7 +101,7 @@ namespace m2pw {
             ParameterInfo(const TString& parName);
         };
         
-        // Constructor with both mass dependence and H moments configuration
+        // Constructor with both mass dependence and moments configuration
         MassDependentFitter(const Setup& setup, 
                                    std::vector<double> mass_bins, 
                                    double l_max, 
@@ -122,17 +121,15 @@ namespace m2pw {
         double EvalChi2() const;
         
         /**
-         * @brief Print which H moments are included in chi2 calculation
+         * @brief Print which moments are included in chi2 calculation
          */
         void PrintIncludedMoments() const;
 
-        // Custom methods
         void PrintEquations(const TString opt = "", const double mass_bin_center = 0.0) const;
         void SetEquationValues(MassDependentMoments& moms);
         void PrintParNameIndices() const;
-        void PrintParCurrentVals(double mass_bin_center) const;
-        
-        // Optimized evaluation methods
+        void PrintParCurrentVals(double mass_bin_center) const;     
+
         double DoEval(const std::map<TString, std::vector<double>>& massDepPars, 
                      const std::map<TString, std::map<TString, std::vector<double>>>& massIndepPars);
         
@@ -256,7 +253,7 @@ private:
     std::vector<double> massBins_;
     std::map<TString, int> parNameToIndex_;
     MassDependenceConfig massDependenceConfig_;
-    MomentsConfig hMomentsConfig_;  // Configuration for H moment selection
+    MomentsConfig hMomentsConfig_;  // Configuration for moment selection
     std::map<TString, int> waveToFunctionIndex_;  // Maps wave names to function indices
 
     // Caching for performance

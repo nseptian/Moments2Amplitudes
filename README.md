@@ -19,8 +19,6 @@ The code and workflow are inspired by and compatible with [brufit](https://githu
 ├── include/                     # C++ headers for mass-dependent fitting
 ├── macros/                      # ROOT macros for running fits and analyses
 ├── jupyter_notebook/            # Jupyter notebooks for analysis and plotting
-├── brufit/                      # brufit scripts
-├── samples/                     # Sample data files
 └── set_env.sh                   # Environment setup script
 ```
 
