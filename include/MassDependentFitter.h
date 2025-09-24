@@ -15,6 +15,7 @@
 #include <map>
 #include <set>
 #include <memory>
+#include <string>
 #include <TRandom3.h>
 #include <Math/Minimizer.h>
 #include <Math/Factory.h>
@@ -181,6 +182,10 @@ namespace m2pw {
         static MomentsConfig CreateL2L4OnlyConfig() {
             return MomentsConfig({2, 4});
         }
+
+        static MomentsConfig CreateL0L2L4OnlyConfig() {
+            return MomentsConfig({0, 2, 4});
+        }
         
         static MomentsConfig CreateIncludeAllConfig() {
             return MomentsConfig(); // Include all by default
@@ -192,6 +197,7 @@ namespace m2pw {
             std::map<TString, double> parsList;
             std::vector<TString> fixedParNames;  // For fixed parameters
             std::map<TString, int> nameToIndex;
+            std::vector<double> parErrors;  // Store parameter errors
             int totalNpars = 0;
             int randomSeed = -1;
 
@@ -202,6 +208,31 @@ namespace m2pw {
                                             const MassDependenceConfig& config,
                                             const MomentsConfig& hConfig,
                                             const MassDependentFitter& fitter);
+
+            // Add mass-independent parameters for specific L values from a result tree
+            void AddMassIndependentParametersForL(const std::vector<double>& massBins,
+                                                 const std::vector<TString>& parNames,
+                                                 const std::vector<int>& targetL,
+                                                 const TString& resultTreeFile);
+
+            // Add fixed mass-independent parameters for specific L values
+            void AddFixedMassIndependentParametersForL(const std::vector<double>& massBins,
+                                                     const std::vector<TString>& parNames,
+                                                     const std::vector<int>& fixedL,
+                                                     const std::map<int, double>& fixedValues,
+                                                     const MomentsConfig& hConfig,
+                                                     const MassDependentFitter& fitter,
+                                                     bool magnitudeOnly = true);
+
+            // Add fixed mass-independent parameters for specific L and reflectivity (e.g., "1+", "2-")
+            void AddFixedMassIndependentParametersForL(const std::vector<double>& massBins,
+                                                     const std::vector<TString>& parNames,
+                                                     const std::vector<std::string>& lReflectivities,
+                                                     const std::map<std::string, double>& fixedValues,
+                                                     const MomentsConfig& hConfig,
+                                                     const MassDependentFitter& fitter,
+                                                     bool magnitudeOnly = true);
+
             void AddMassDependentParameters(const std::vector<TString>& parNames, 
                                           int seed,
                                           const MassDependenceConfig& config,
@@ -217,6 +248,9 @@ namespace m2pw {
                                           const bool isFixed);
 
             std::vector<double> GetValues() const;
+            
+            // Store results from minimizer including errors
+            void StoreResults(const ROOT::Math::Minimizer* minimizer, MassDependentFitter& fitter);
         };
 
         void MakeResultTree(const ParameterManager& paramManager, const TString& fileName) const;

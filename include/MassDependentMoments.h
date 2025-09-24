@@ -9,7 +9,7 @@ class MassDependentMoments {
         MassDependentMoments() = default;
 
         MassDependentMoments(Double_t NMassBins, Double_t MassBinWidth, Double_t FirstMassBinCenter,
-                          const TString& FitResultsDir, const TString& FitResultsFilename, const TString& MassBinName = "Mpi0eta")
+                          const TString& FitResultsDir, const TString& FitResultsFilename, const TString& MassBinName)
             : _NMassBins(NMassBins), _MassBinWidth(MassBinWidth), _FirstMassBinCenter(FirstMassBinCenter),
               _FitResultsDir(FitResultsDir), _FitResultsFilename(FitResultsFilename), _MassBinName(MassBinName) {
 
@@ -18,6 +18,23 @@ class MassDependentMoments {
                 _MassBins.push_back(massValue);
 
                 const TString filePath = Form("%s/%s%1.6f_/", _FitResultsDir.Data(), _MassBinName.Data(), massValue);
+                std::cout << "Loading moments from: " << filePath << std::endl;
+                MomentHelper moments;
+                moments.Set(filePath, 1, 1);
+                _moments[massValue] = moments;
+            }
+        }
+
+        MassDependentMoments(Double_t NMassBins, Double_t MassBinWidth, Double_t FirstMassBinCenter,
+                          const TString& FitResultsDir, const TString& FitResultsFilename, const TString& MassBinName, const TString& VarBinName)
+            : _NMassBins(NMassBins), _MassBinWidth(MassBinWidth), _FirstMassBinCenter(FirstMassBinCenter),
+              _FitResultsDir(FitResultsDir), _FitResultsFilename(FitResultsFilename), _MassBinName(MassBinName), _VarBinName(VarBinName) {
+
+            for (Double_t i = 0; i < _NMassBins; ++i) {
+                Double_t massValue = _FirstMassBinCenter + i * _MassBinWidth;
+                _MassBins.push_back(massValue);
+
+                const TString filePath = Form("%s/%s%1.6f_%s_/", _FitResultsDir.Data(), _MassBinName.Data(), massValue, _VarBinName.Data());
                 std::cout << "Loading moments from: " << filePath << std::endl;
                 MomentHelper moments;
                 moments.Set(filePath, 1, 1);
@@ -65,5 +82,6 @@ class MassDependentMoments {
         TString _FitResultsDir;
         TString _FitResultsFilename;
         TString _MassBinName;
+        TString _VarBinName;
         std::vector<Double_t> _MassBins;
 };

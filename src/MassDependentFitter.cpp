@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <string>
 
 namespace m2pw {
 
@@ -314,6 +315,7 @@ namespace m2pw {
         const int nPars = pars_.begin()->second.Nvars();
 
         std::vector<double> par_vals(nPars);
+        std::vector<double> par_errors(nPars);
         double mass_bin_center = 0.0;
 
         // Collect all unique H(L,M) names from all mass bins
@@ -331,6 +333,7 @@ namespace m2pw {
         for (int i = 0; i < nPars; ++i) {
             const TString par_name = pars_.begin()->second.GetParName(i);
             tree->Branch(par_name, &par_vals[i]);
+            tree->Branch(par_name + "_error", &par_errors[i]);
         }
 
         // Add branches for H(L,M) values only (no errors)
@@ -345,10 +348,11 @@ namespace m2pw {
         for (const auto& [mass_bin, pars] : pars_) {
             mass_bin_center = mass_bin;
 
-            // Fill parameter values
+            // Fill parameter values and errors
             for (int i = 0; i < nPars; ++i) {
                 const TString par_name = pars.GetParName(i);
                 par_vals[i] = pars.GetCurrentVal(par_name);
+                par_errors[i] = pars.GetCurrentError(par_name);
             }
 
             // Fill H(L,M) values for this mass bin
@@ -379,13 +383,17 @@ namespace m2pw {
         
         const int nMDPars = paramManager.totalNpars;
         double md_par_vals[nMDPars];
+        double md_par_errors[nMDPars];
         int idx = 0;
         for (const auto& [parName, value] : paramManager.parsList) {
             // double currentValue = value;
             if (parName.BeginsWith("MD_")) {  // Only mass-dependent parameters
-                cout << parName << " = " << value << std::endl;
+                double error = (idx < paramManager.parErrors.size()) ? paramManager.parErrors[idx] : -1.0;
+                cout << parName << " = " << value << " +/- " << error << std::endl;
                 md_par_vals[idx] = value;
+                md_par_errors[idx] = error;
                 mdTree->Branch(parName, &md_par_vals[idx]);
+                mdTree->Branch(parName + "_error", &md_par_errors[idx]);
                 idx++;
             }
         }
@@ -418,6 +426,44 @@ namespace m2pw {
             values[i] = parsList.at(parIndexNames[i]);
         }
         return values;
+    }
+
+    void MassDependentFitter::ParameterManager::StoreResults(const ROOT::Math::Minimizer* minimizer, MassDependentFitter& fitter) {
+        if (!minimizer) return;
+        
+        const double* errors = minimizer->Errors();
+        parErrors.resize(totalNpars);
+        
+        // Store all parameter errors
+        for (int i = 0; i < totalNpars; ++i) {
+            parErrors[i] = errors[i];
+        }
+        
+        // Propagate errors to the pars_ ParameterHelper objects for mass-independent parameters
+        for (int i = 0; i < totalNpars; ++i) {
+            const TString& parName = parIndexNames[i];
+            
+            if (parName.BeginsWith("MI_")) {
+                // Extract mass bin and parameter info from mass-independent parameter name
+                // Format: MI_1.420000_a_0_0
+                int firstUnderscore = parName.Index("_", 3);  // Find first underscore after "MI_"
+                if (firstUnderscore > 0) {
+                    TString massBinStr = parName(3, firstUnderscore - 3);
+                    double massBin = massBinStr.Atof();
+                    
+                    // Extract the actual parameter name (after the mass bin part)
+                    TString actualParName = parName(firstUnderscore + 1, parName.Length() - firstUnderscore - 1);
+                    
+                    // Find the corresponding ParameterHelper and set the error
+                    auto parsIt = fitter.pars_.find(massBin);
+                    if (parsIt != fitter.pars_.end()) {
+                        parsIt->second.SetCurrentError(actualParName, errors[i]);
+                    }
+                }
+            }
+            // Note: Mass-dependent parameters don't directly correspond to individual 
+            // ParameterHelper entries, so we don't propagate their errors there
+        }
     }
 
     // Chi2Function implementation
@@ -515,7 +561,17 @@ namespace m2pw {
             else {
                 std::cout << "Setting free fit parameter " << i << ": " << parName 
                           << " with initial value " << initialValues[i] << std::endl;
-                minimizer->SetVariable(i, parName.Data(), initialValues[i], 0.1);
+                
+                double step = 0.1;
+                if (parName.Contains("phi")) {
+                    step = 0.01;
+                }
+                minimizer->SetVariable(i, parName.Data(), initialValues[i], step);
+                
+                // Add phi parameter constraints
+                if (parName.Contains("phi")) {
+                    minimizer->SetVariableLimits(i, -TMath::Pi(), TMath::Pi());
+                }
             }
         }
 
@@ -541,6 +597,9 @@ namespace m2pw {
             const TString& parName = paramManager.parIndexNames[i];
             paramManager.parsList[parName] = parValues[i];
         }
+        
+        // Store the errors in the parameter manager AND propagate to pars_
+        paramManager.StoreResults(minimizer.get(), *this);
     }
 
     // Helper method for single wave magnitude (no coherent sum needed)
@@ -721,8 +780,15 @@ namespace m2pw {
                 if (!config.IsMassIndependent(l_value)) continue;
 
                 TString name = Form("MI_%1.6f_%s", massBin, parName.Data());
-                double initialValue = name.Contains("_1_") ? 0.0 : rng.Uniform(-200, 200);
                 
+                // Check if parameter already exists - skip if already added
+                if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
+                    std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                    continue;
+                }
+                
+                double initialValue = name.Contains("phi") ? 0.0 : rng.Uniform(-200, 200);
+
                 parsList[name] = initialValue;
                 nameToIndex[name] = totalNpars;
                 parIndexNames.push_back(name);
@@ -731,6 +797,240 @@ namespace m2pw {
                 std::cout << "Added mass-independent parameter for (l = " << l_value << "): " << name << " (index: " << totalNpars-1 << ") = " << initialValue << std::endl;
             }
         }
+    }
+
+    void MassDependentFitter::ParameterManager::AddFixedMassIndependentParametersForL(
+        const std::vector<double>& massBins,
+        const std::vector<TString>& parNames,
+        const std::vector<int>& fixedL,
+        const std::map<int, double>& fixedValues,
+        const MomentsConfig& hConfig,
+        const MassDependentFitter& fitter,
+        bool magnitudeOnly) {
+        
+        for (const double massBin : massBins) {
+            for (const TString& parName : parNames) {
+                std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+                if (parts->GetEntries() < 3) continue;
+                
+                TString l_str = ((TObjString*)parts->At(1))->GetString();
+                int l_value = l_str.Atoi();
+                
+                // Check if this L should be fixed
+                if (std::find(fixedL.begin(), fixedL.end(), l_value) == fixedL.end()) {
+                    continue;  // This L is not in the fixed list
+                }
+                
+                // Check if this parameter is needed for the H(L,M)s configuration  
+                if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
+                    std::cout << "Skipping fixed parameter " << parName << " (l=" << l_value << " not needed)" << std::endl;
+                    continue;
+                }
+                
+                bool isPhase = parName.Contains("phi");
+                if (magnitudeOnly && isPhase) continue;  // Skip phases if only fixing magnitudes
+                
+                TString name = Form("MI_%1.6f_%s", massBin, parName.Data());
+                auto fixedIt = fixedValues.find(l_value);
+                double fixedValue = (fixedIt != fixedValues.end()) ? fixedIt->second : 0.0;
+                
+                parsList[name] = fixedValue;
+                nameToIndex[name] = totalNpars;
+                parIndexNames.push_back(name);
+                fixedParNames.push_back(name);  // Mark as fixed
+                
+                std::cout << "Added fixed parameter for L=" << l_value 
+                         << ": " << name << " = " << fixedValue << " (index: " << totalNpars << ")" << std::endl;
+                totalNpars++;
+            }
+        }
+    }
+
+    void MassDependentFitter::ParameterManager::AddFixedMassIndependentParametersForL(
+        const std::vector<double>& massBins,
+        const std::vector<TString>& parNames,
+        const std::vector<std::string>& lReflectivities,
+        const std::map<std::string, double>& fixedValues,
+        const MomentsConfig& hConfig,
+        const MassDependentFitter& fitter,
+        bool magnitudeOnly) {
+        
+        for (const std::string& lReflectivity : lReflectivities) {
+            // Parse L and reflectivity from string like "1+" or "2-"
+            if (lReflectivity.empty()) {
+                std::cerr << "Error: lReflectivity string is empty" << std::endl;
+                continue;
+            }
+            
+            char reflectivity = lReflectivity.back();  // Get last character (+ or -)
+            std::string l_str = lReflectivity.substr(0, lReflectivity.length() - 1);  // Get L value part
+            
+            if (reflectivity != '+' && reflectivity != '-') {
+                std::cerr << "Error: Invalid reflectivity '" << reflectivity << "'. Must be '+' or '-'" << std::endl;
+                continue;
+            }
+            
+            int l_value;
+            try {
+                l_value = std::stoi(l_str);
+            } catch (const std::exception& e) {
+                std::cerr << "Error: Invalid L value '" << l_str << "' in '" << lReflectivity << "'" << std::endl;
+                continue;
+            }
+            
+            // Check if this L is needed for the H(L,M)s configuration  
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
+                std::cout << "Skipping fixed parameters for L=" << l_value << " (not needed for moments)" << std::endl;
+                continue;
+            }
+            
+            // Determine prefix based on reflectivity (a for +, b for -)
+            std::string prefix = (reflectivity == '+') ? "a" : "b";
+            
+            std::cout << "Adding fixed mass-independent parameters for L=" << l_value 
+                      << " with " << (reflectivity == '+' ? "positive" : "negative") 
+                      << " reflectivity (prefix: " << prefix << ")" << std::endl;
+            
+            for (const double massBin : massBins) {
+                for (const TString& parName : parNames) {
+                    // Check if this parameter matches our L and reflectivity
+                    std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+                    if (parts->GetEntries() < 3) continue;
+                    
+                    TString par_prefix = ((TObjString*)parts->At(0))->GetString();
+                    TString par_l_str = ((TObjString*)parts->At(1))->GetString();
+                    int par_l_value = par_l_str.Atoi();
+                    
+                    // Check if this parameter matches our L value and reflectivity
+                    if (par_l_value != l_value) continue;
+                    
+                    bool isCorrectReflectivity = false;
+                    if (reflectivity == '+' && (par_prefix == "a" || par_prefix == "aphi")) {
+                        isCorrectReflectivity = true;
+                    } else if (reflectivity == '-' && (par_prefix == "b" || par_prefix == "bphi")) {
+                        isCorrectReflectivity = true;
+                    }
+                    
+                    if (!isCorrectReflectivity) continue;
+                    
+                    bool isPhase = parName.Contains("phi");
+                    if (magnitudeOnly && isPhase) continue;  // Skip phases if only fixing magnitudes
+                    
+                    TString name = Form("MI_%1.6f_%s", massBin, parName.Data());
+                    auto fixedIt = fixedValues.find(parName.Data());
+                    double fixedValue = (fixedIt != fixedValues.end()) ? fixedIt->second : 0.0;
+                    
+                    parsList[name] = fixedValue;
+                    nameToIndex[name] = totalNpars;
+                    parIndexNames.push_back(name);
+                    fixedParNames.push_back(name);  // Mark as fixed
+                    
+                    std::cout << "Added fixed parameter for L=" << l_value 
+                             << " (" << (reflectivity == '+' ? "+" : "-") << "): " 
+                             << name << " = " << fixedValue << " (index: " << totalNpars << ")" << std::endl;
+                    totalNpars++;
+                }
+            }
+        }
+    }
+
+    void MassDependentFitter::ParameterManager::AddMassIndependentParametersForL(
+        const std::vector<double>& massBins,
+        const std::vector<TString>& parNames,
+        const std::vector<int>& targetL,
+        const TString& resultTreeFile) {
+        
+        // Load mass-independent parameters from result tree file
+        TFile file(resultTreeFile, "READ");
+        if (!file.IsOpen() || file.IsZombie()) {
+            std::cerr << "Error opening file: " << resultTreeFile << std::endl;
+            return;
+        }
+        
+        TTree* tree = dynamic_cast<TTree*>(file.Get("result"));
+        if (!tree) {
+            std::cerr << "Error: Tree 'result' not found in file: " << resultTreeFile << std::endl;
+            return;
+        }
+
+        cout << "Loading mass independent parameter initial values from file: " << resultTreeFile << std::endl;
+
+        // Convert targetL to set for faster lookup
+        std::set<int> targetLSet(targetL.begin(), targetL.end());
+
+        // Set up branches to read mass_bin and parameter values
+        double mass_bin_from_file = 0.0;
+        tree->SetBranchAddress("mass_bin", &mass_bin_from_file);
+        
+        // Create maps to store parameter values for each parameter name
+        std::map<TString, double> paramValues;
+        for (const TString& parName : parNames) {
+            // Parse parameter name to extract l value
+            std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+            if (parts->GetEntries() < 3) continue;
+            
+            TString l_str = ((TObjString*)parts->At(1))->GetString();
+            int l_value = l_str.Atoi();
+            
+            // Check if this l value is in our target list
+            if (targetLSet.find(l_value) == targetLSet.end()) {
+                continue;
+            }
+            
+            // Set up branch address for this parameter
+            TBranch* branch = tree->GetBranch(parName);
+            if (!branch) {
+                std::cerr << "Warning: Could not find branch for parameter " << parName << " in tree" << std::endl;
+                continue;
+            }
+            
+            paramValues[parName] = 0.0;
+            tree->SetBranchAddress(parName, &paramValues[parName]);
+        }
+
+        // Read each entry (one per mass bin) and extract parameter values
+        Long64_t nEntries = tree->GetEntries();
+        for (Long64_t entry = 0; entry < nEntries; entry++) {
+            tree->GetEntry(entry);
+            
+            // Check if this mass bin is in our target list
+            bool foundMassBin = false;
+            for (double targetMassBin : massBins) {
+                if (TMath::Abs(mass_bin_from_file - targetMassBin) < 1e-6) {
+                    foundMassBin = true;
+                    break;
+                }
+            }
+            
+            if (!foundMassBin) continue;
+            
+            // Add parameters for this mass bin
+            for (const auto& [parName, value] : paramValues) {
+                // Create mass-independent parameter name with mass bin
+                TString name = Form("MI_%1.6f_%s", mass_bin_from_file, parName.Data());
+                
+                // Check if parameter already exists - skip if already added
+                if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
+                    std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                    continue;
+                }
+                
+                parsList[name] = value;
+                nameToIndex[name] = totalNpars;
+                parIndexNames.push_back(name);
+                
+                // Parse L value for logging
+                std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+                TString l_str = ((TObjString*)parts->At(1))->GetString();
+                int l_value = l_str.Atoi();
+                
+                std::cout << "Added mass-independent parameter for L=" << l_value 
+                         << " (mass bin " << mass_bin_from_file << "): " << name << " = " << value << " (index: " << totalNpars << ")" << std::endl;
+                totalNpars++;
+            }
+        }
+        
+        file.Close();
     }
 
     void MassDependentFitter::ParameterManager::AddMassDependentParameters(

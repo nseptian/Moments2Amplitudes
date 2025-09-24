@@ -48,6 +48,7 @@ namespace m2pw{
           _currentVals(other._currentVals),
           _cachedVals(other._cachedVals),
           _constVals(other._constVals),
+          _currentErrors(other._currentErrors),
           _nextIndex(other._nextIndex),
           _nextConstIndex(other._nextConstIndex),
           _tree(nullptr) // TTree is not trivially copyable
@@ -69,6 +70,7 @@ namespace m2pw{
             _currentVals = other._currentVals;
             _cachedVals = other._cachedVals;
             _constVals = other._constVals;
+            _currentErrors = other._currentErrors;
             _nextIndex = other._nextIndex;
             _nextConstIndex = other._nextConstIndex;
             _tree = nullptr; // Not copying TTree pointer
@@ -91,6 +93,7 @@ namespace m2pw{
           _currentVals(std::move(other._currentVals)),
           _cachedVals(std::move(other._cachedVals)),
           _constVals(std::move(other._constVals)),
+          _currentErrors(std::move(other._currentErrors)),
           _nextIndex(other._nextIndex),
           _nextConstIndex(other._nextConstIndex),
           _file(std::move(other._file)),
@@ -114,6 +117,7 @@ namespace m2pw{
             _currentVals = std::move(other._currentVals);
             _cachedVals = std::move(other._cachedVals);
             _constVals = std::move(other._constVals);
+            _currentErrors = std::move(other._currentErrors);
             _nextIndex = other._nextIndex;
             _nextConstIndex = other._nextConstIndex;
             _file = std::move(other._file);
@@ -183,6 +187,37 @@ namespace m2pw{
       return _currentVals[_nameToIndex.at(name)];
     }
     
+    // Error handling methods
+    void SetCurrentError(const TString& name, Double_t error) {
+      auto it = _nameToIndex.find(name);
+      if (it != _nameToIndex.end() && it->second < static_cast<Int_t>(_currentErrors.size())) {
+        _currentErrors[it->second] = error;
+      }
+    }
+    
+    void SetCurrentError(UInt_t i, Double_t error) {
+      if (i < _currentErrors.size()) {
+        _currentErrors[i] = error;
+      }
+    }
+    
+    Double_t GetCurrentError(const TString& name) const {
+      auto it = _nameToIndex.find(name);
+      if (it != _nameToIndex.end() && it->second < static_cast<Int_t>(_currentErrors.size())) {
+        return _currentErrors[it->second];
+      }
+      return -1.0;  // Error not available
+    }
+    
+    Double_t GetCurrentError(UInt_t i) const {
+      if (i < _currentErrors.size()) {
+        return _currentErrors[i];
+      }
+      return -1.0;  // Error not available
+    }
+    
+    const std::vector<Double_t>& CurrentErrors() const { return _currentErrors; }
+    
     void Randomise();
     void TransformConstrained(double* unitPars) const;
     void ZeroSmallAmps() ;
@@ -241,6 +276,7 @@ namespace m2pw{
     std::vector<Double_t> _currentVals;
     mutable std::vector<Double_t> _cachedVals;
     std::vector<Double_t> _constVals;
+    std::vector<Double_t> _currentErrors;  // Add error storage
     
     UInt_t _nextIndex=0;
     UInt_t _nextConstIndex=0;

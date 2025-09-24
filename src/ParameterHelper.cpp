@@ -25,6 +25,7 @@ namespace m2pw{
       _maxVals.push_back(var->getMax());
       _minVals.push_back(var->getMin());
       _stepSize.push_back((var->getMax()-var->getMin())/10);
+      _currentErrors.push_back(-1.0);  // Initialize error to -1 (not available)
 
       //Keep note of magnitudes and phases
       //Assume using PhotoAmps e.g a_Xor aphi_X etc
