@@ -1,5 +1,3 @@
-#include <TROOT.h>
-
 void Load(){
   gSystem->AddIncludePath("-I../include");
   gROOT->ProcessLine(".L ../src/ParameterHelper.cpp+");
