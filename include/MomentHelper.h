@@ -241,6 +241,7 @@ private:
     // unnormalized_mean /= acceptance;
     // cout << "Unnormalized mean for " << var_name << ": " << unnormalized_mean << endl;
     unnormalized_sigma = TMath::Sqrt(unnormalized_sigma / nEntries - unnormalized_mean * unnormalized_mean);
+    // cout << "Acceptance: " << acceptance << ", Unnormalized sigma for " << var_name << ": " << unnormalized_sigma << endl;
     _unnormalized_moments[var_name] = unnormalized_mean/acceptance;
     _unnormalized_moments_err[var_name] = unnormalized_sigma/acceptance;
     

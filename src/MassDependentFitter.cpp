@@ -1,5 +1,6 @@
 #include "MassDependentFitter.h"
 #include "TObjString.h"
+#include "TRegexp.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -92,6 +93,28 @@ namespace m2pw {
                                           massBins_.front(), bin_width, 2);  // Flatté for a0(980)
                 waveToFunctionIndex_[wave] = funcIndex;
                 std::cout << "  - Function " << funcIndex << ": " << wave << " Flatté" << std::endl;
+                funcIndex++;
+            } else if (wave == "pi1_1400") {
+                massDepFuncs_.emplace_back(static_cast<int>(massBins_.size()), 
+                                          massBins_.front(), bin_width, 3);  // Breit-Wigner for pi1(1400)
+                waveToFunctionIndex_[wave] = funcIndex;
+                std::cout << "  - Function " << funcIndex << ": " << wave << " Breit-Wigner" << std::endl;
+                funcIndex++;
+            } else if (wave.Contains("conformal") || wave.Contains("poly")) {
+                // Extract polynomial order from wave name if specified (e.g., "conformal_S0_order3")
+                int polyOrder = 2;  // Default order
+                if (wave.Contains("order")) {
+                    TString orderStr = wave;
+                    orderStr.Remove(0, orderStr.Index("order") + 5);
+                    orderStr = orderStr(TRegexp("[0-9]+"));
+                    if (orderStr.IsDigit()) {
+                        polyOrder = orderStr.Atoi();
+                    }
+                }
+                massDepFuncs_.emplace_back(static_cast<int>(massBins_.size()), 
+                                          massBins_.front(), bin_width, 4, polyOrder);  // Conformal polynomial
+                waveToFunctionIndex_[wave] = funcIndex;
+                std::cout << "  - Function " << funcIndex << ": " << wave << " Conformal Polynomial (order " << polyOrder << ")" << std::endl;
                 funcIndex++;
             } else {
                 std::cerr << "Warning: Unknown wave " << wave << " in configuration. Skipping." << std::endl;
@@ -218,11 +241,23 @@ namespace m2pw {
                         }
                     }
                 } else {
-                    // Handle phase parameters
+                    // Handle phase parameters - check mass-independent first
                     TString base_name = param_info->name;
                     base_name.ReplaceAll("phi", "");
                     
-                    if (massDependenceConfig_.IsMassDependent(l_value)) {
+                    // First check if we have mass-independent phase parameters for this parameter
+                    bool hasPhaseInMassIndepPars = false;
+                    const auto bin_it = massIndepPars.find(mass_bin_str);
+                    if (bin_it != massIndepPars.end()) {
+                        const auto par_it = bin_it->second.find(par_name);
+                        if (par_it != bin_it->second.end() && !par_it->second.empty()) {
+                            hasPhaseInMassIndepPars = true;
+                            value = par_it->second[0];
+                        }
+                    }
+                    
+                    // If no mass-independent phase found, check for mass-dependent
+                    if (!hasPhaseInMassIndepPars && massDependenceConfig_.IsMassDependent(l_value)) {
                         // Check if we need coherent sum or single wave
                         std::vector<TString> waves = massDependenceConfig_.GetWavesForL(l_value);
                         if (waves.size() > 1) {
@@ -232,16 +267,8 @@ namespace m2pw {
                             // Single wave: direct evaluation
                             value = GetSingleWavePhase(mass_bin, base_name, massDepPars, waves[0]);
                         }
-                    } else {
-                        // Use mass-independent parameters
-                        const auto bin_it = massIndepPars.find(mass_bin_str);
-                        if (bin_it != massIndepPars.end()) {
-                            const auto par_it = bin_it->second.find(par_name);
-                            if (par_it != bin_it->second.end() && !par_it->second.empty()) {
-                                value = par_it->second[0];
-                            }
-                        }
                     }
+                    // If hasPhaseInMassIndepPars is true, value is already set above
                 }
                 
                 pars.SetCurrentVal(par_name, value);
@@ -272,6 +299,10 @@ namespace m2pw {
                 eqn.FindL();
                 // Get a copy instead of a reference to avoid binding to temporary
                 MomentHelper moments = moms.GetMoments(mass_bin);
+                // cout << "Setting equation value for " << eqn.GetName() 
+                //      << " at mass bin " << mass_bin 
+                //      << ": value = " << moments.GetUnnormalizedVal(eqn.GetName())
+                //      << ", error = " << moments.GetUnnormalizedError(eqn.GetName()) << endl;
                 eqn.SetEquationValue(moments.GetUnnormalizedVal(eqn.GetName()),
                                    moments.GetUnnormalizedError(eqn.GetName()));
                 eqn.DoEval(pars_[mass_bin].CurrentVals());
@@ -294,9 +325,6 @@ namespace m2pw {
             std::cout << "No parameters found for mass bin center: " << mass_bin_center << std::endl;
         }
     }
-    
-    
-
 
     void MassDependentFitter::MakeResultTree(const ParameterManager& paramManager, const TString& fileName) const {
         if (pars_.empty()) {
@@ -348,11 +376,10 @@ namespace m2pw {
         for (const auto& [mass_bin, pars] : pars_) {
             mass_bin_center = mass_bin;
 
-            // Fill parameter values and errors
+            // Fill parameter values
             for (int i = 0; i < nPars; ++i) {
                 const TString par_name = pars.GetParName(i);
                 par_vals[i] = pars.GetCurrentVal(par_name);
-                par_errors[i] = pars.GetCurrentError(par_name);
             }
 
             // Fill H(L,M) values for this mass bin
@@ -383,17 +410,13 @@ namespace m2pw {
         
         const int nMDPars = paramManager.totalNpars;
         double md_par_vals[nMDPars];
-        double md_par_errors[nMDPars];
         int idx = 0;
         for (const auto& [parName, value] : paramManager.parsList) {
             // double currentValue = value;
             if (parName.BeginsWith("MD_")) {  // Only mass-dependent parameters
-                double error = (idx < paramManager.parErrors.size()) ? paramManager.parErrors[idx] : -1.0;
-                cout << parName << " = " << value << " +/- " << error << std::endl;
+                cout << parName << " = " << value << std::endl;
                 md_par_vals[idx] = value;
-                md_par_errors[idx] = error;
                 mdTree->Branch(parName, &md_par_vals[idx]);
-                mdTree->Branch(parName + "_error", &md_par_errors[idx]);
                 idx++;
             }
         }
@@ -1249,6 +1272,726 @@ namespace m2pw {
         
         // Default: if none of the specific cases match, include all parameters
         return (l <= 2);
+    }
+
+    void MassDependentFitter::ParameterManager::AddMassDependentParametersForL(
+        const std::vector<TString>& parNames,
+        const std::vector<int>& targetL,
+        const int seed,
+        const MassDependenceConfig& config,
+        const MomentsConfig& hConfig,
+        const MassDependentFitter& fitter,
+        const bool magnitudeOnly,
+        const bool isFixed,
+        const bool yieldOnly) {
+
+        randomSeed = seed;
+        TRandom3 rng(seed);
+        
+        for (const TString& parName : parNames) {
+            // Parse parameter name to extract l value
+            std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+            if (parts->GetEntries() < 3) continue;
+            
+            TString l_str = ((TObjString*)parts->At(1))->GetString();
+            int l_value = l_str.Atoi();
+            
+            // Check if this l value is in the target list
+            if (std::find(targetL.begin(), targetL.end(), l_value) == targetL.end()) {
+                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not in target list)" << std::endl;
+                continue;
+            }
+            
+            // Check if this parameter is needed for the H(L,M)s configuration  
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
+                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not needed for moments)" << std::endl;
+                continue;
+            }
+            
+            // Only add if this l value should be mass dependent according to config
+            if (!config.IsMassDependent(l_value)) {
+                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not configured as mass dependent)" << std::endl;
+                continue;
+            }
+
+            // Skip phase parameters if magnitudeOnly is true OR yieldOnly is true
+            if ((magnitudeOnly || yieldOnly) && parName.Contains("phi")) {
+                std::cout << "Skipping phase parameter " << parName << " (magnitudeOnly=" << magnitudeOnly 
+                         << ", yieldOnly=" << yieldOnly << ")" << std::endl;
+                continue;
+            }
+
+            // Get waves for this l value
+            std::vector<TString> waves = config.GetWavesForL(l_value);
+            if (waves.empty()) {
+                std::cout << "No waves defined for l=" << l_value << ", skipping parameter " << parName << std::endl;
+                continue;
+            }
+
+            for (const TString& waveName : waves) {
+                // Get function index for this wave
+                int funcIndex = fitter.GetFunctionIndexForWave(waveName);
+                if (funcIndex < 0 || funcIndex >= static_cast<int>(fitter.massDepFuncs_.size())) {
+                    std::cerr << "Warning: No function found for wave " << waveName << ", using defaults" << std::endl;
+                }
+
+                // Check if this is a conformal polynomial (FuncType=4)
+                bool isConformal = false;
+                int polyOrder = 2;
+                if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                    isConformal = (fitter.massDepFuncs_[funcIndex].GetFuncType() == 4);
+                    if (isConformal) {
+                        polyOrder = fitter.massDepFuncs_[funcIndex].GetPolyOrder();
+                    }
+                }
+
+                // Determine which parameter types to add
+                std::vector<TString> paramTypes;
+                if (isConformal) {
+                    // Conformal polynomial: add re_i and im_i for i=0 to polyOrder
+                    // No k parameter needed - re_0 and im_0 provide the overall scale
+                    for (int i = 0; i <= polyOrder; ++i) {
+                        paramTypes.push_back(Form("re_%d", i));
+                        paramTypes.push_back(Form("im_%d", i));
+                    }
+                    std::cout << "Conformal polynomial wave " << waveName << " (order " << polyOrder 
+                              << "): adding " << paramTypes.size() << " parameters" << std::endl;
+                } else if (yieldOnly) {
+                    paramTypes = {"k"};  // Only coupling parameters
+                    std::cout << "yieldOnly=true: Adding only k parameters for wave " << waveName << std::endl;
+                } else {
+                    paramTypes = {"k", "M", "width"};  // All parameters
+                }
+
+                for (const TString& paramType : paramTypes) {
+                    TString name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    
+                    // Check if parameter already exists - skip if already added
+                    if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
+                        std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                        continue;
+                    }
+
+                    double initialValue;
+                    if (isConformal) {
+                        // Conformal polynomial parameters
+                        if (paramType.BeginsWith("re_") || paramType.BeginsWith("im_")) {
+                            // Extract coefficient index
+                            TString indexStr = paramType;
+                            indexStr.Remove(0, 3);
+                            int coeffIndex = indexStr.Atoi();
+                            
+                            // Scale down higher order terms
+                            double scale = TMath::Power(0.5, coeffIndex);
+                            initialValue = rng.Uniform(-50, 50) * scale;
+                        } else {
+                            initialValue = 0.0;
+                        }
+                    } else if (paramType == "k") {
+                        initialValue = rng.Uniform(-30, 30);  // Random for coupling strength
+                    } else if (paramType == "M") {
+                        // Get mass from MassDependentFunction
+                        if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                            initialValue = fitter.massDepFuncs_[funcIndex].GetResonanceMass();
+                            std::cout << "Using mass from function " << funcIndex << " for " << waveName << ": " << initialValue << " GeV";
+                        } else {
+                            initialValue = 1.5;  // Fallback default
+                            std::cout << "Using default mass (function not found): " << initialValue << " GeV";
+                        }
+                    } else {  // width
+                        // Get width from MassDependentFunction
+                        if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                            initialValue = fitter.massDepFuncs_[funcIndex].GetResonanceWidth();
+                            std::cout << "Using width from function " << funcIndex << " for " << waveName << ": " << initialValue << " GeV";
+                        } else {
+                            initialValue = 0.1;  // Fallback default
+                            std::cout << "Using default width (function not found): " << initialValue << " GeV";
+                        }
+                    }
+
+                    parsList[name] = initialValue;
+                    nameToIndex[name] = totalNpars;
+                    parIndexNames.push_back(name);
+                    
+                    if (isFixed) {
+                        fixedParNames.push_back(name);
+                        std::cout << " -> Added FIXED mass-dependent parameter for L=" << l_value 
+                                 << ": " << name << " (index: " << totalNpars << ") = " << initialValue << std::endl;
+                    } else {
+                        std::cout << " -> Added FREE mass-dependent parameter for L=" << l_value 
+                                 << ": " << name << " (index: " << totalNpars << ") = " << initialValue << std::endl;
+                    }
+                    
+                    totalNpars++;
+                }
+            }
+        }
+    }
+
+    void MassDependentFitter::ParameterManager::AddMassDependentParametersForL(
+        const std::vector<TString>& parNames,
+        const std::vector<int>& targetL,
+        const TString filePath,
+        const MassDependenceConfig& config,
+        const MomentsConfig& hConfig,
+        const MassDependentFitter& fitter,
+        const bool magnitudeOnly,
+        const bool isFixed,
+        const bool yieldOnly) {
+
+        std::unique_ptr<TFile> file(TFile::Open(filePath, "READ"));
+        if (!file || file->IsZombie()) {
+            std::cerr << "Error: Cannot open file " << filePath << std::endl;
+            return;
+        }
+
+        TTree* tree = nullptr;
+        file->GetObject("mass_dependent_params", tree);
+        if (!tree) {
+            std::cerr << "Error: Cannot find tree 'mass_dependent_params' in file " << filePath << std::endl;
+            file->Close();
+            return;
+        }
+
+        std::cout << "Loading mass-dependent parameters from file: " << filePath << std::endl;
+        
+        // Read the tree entry once at the beginning
+        if (tree->GetEntries() > 0) {
+            tree->GetEntry(0);
+        }
+
+        for (const TString& parName : parNames) {
+            // Parse parameter name to extract l value
+            std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+            if (parts->GetEntries() < 3) continue;
+            
+            TString l_str = ((TObjString*)parts->At(1))->GetString();
+            int l_value = l_str.Atoi();
+            
+            // Check if this l value is in the target list
+            if (std::find(targetL.begin(), targetL.end(), l_value) == targetL.end()) {
+                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not in target list)" << std::endl;
+                continue;
+            }
+            
+            // Check if this parameter is needed for the H(L,M)s configuration  
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
+                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not needed for moments)" << std::endl;
+                continue;
+            }
+            
+            // Only add if this l value should be mass dependent according to config
+            if (!config.IsMassDependent(l_value)) {
+                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not configured as mass dependent)" << std::endl;
+                continue;
+            }
+
+            // Skip phase parameters if magnitudeOnly is true OR yieldOnly is true
+            if ((magnitudeOnly || yieldOnly) && parName.Contains("phi")) {
+                std::cout << "Skipping phase parameter " << parName << " (magnitudeOnly=" << magnitudeOnly 
+                         << ", yieldOnly=" << yieldOnly << ")" << std::endl;
+                continue;
+            }
+
+            // Get waves for this l value
+            std::vector<TString> waves = config.GetWavesForL(l_value);
+            if (waves.empty()) {
+                std::cout << "No waves defined for l=" << l_value << ", skipping parameter " << parName << std::endl;
+                continue;
+            }
+
+            for (const TString& waveName : waves) {
+                // Get function index for this wave
+                int funcIndex = fitter.GetFunctionIndexForWave(waveName);
+                
+                // Determine which parameter types to add based on yieldOnly
+                std::vector<TString> paramTypes;
+                if (yieldOnly) {
+                    paramTypes = {"k"};  // Only coupling parameters
+                    std::cout << "yieldOnly=true: Adding only k parameters for wave " << waveName << std::endl;
+                } else {
+                    paramTypes = {"k", "M", "width"};  // All parameters
+                }
+                
+                for (const TString& paramType : paramTypes) {
+                    TString name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    
+                    // Check if parameter already exists - skip if already added
+                    if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
+                        std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                        continue;
+                    }
+
+                    // Try to read the parameter value from the tree using TLeaf
+                    double value = 0.0;
+                    TLeaf* leaf = tree->GetLeaf(name);
+                    if (leaf) {
+                        value = leaf->GetValue();
+                        std::cout << "Read " << name << " = " << value << " from file";
+                    } else {
+                        // Parameter not found in file, use values from MassDependentFunction or defaults
+                        if (paramType == "k") {
+                            value = 0.0;  // Default coupling
+                            std::cout << "Parameter " << name << " not found in file, using default k = " << value;
+                        } else if (paramType == "M") {
+                            // Get mass from MassDependentFunction
+                            if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                                value = fitter.massDepFuncs_[funcIndex].GetResonanceMass();
+                                std::cout << "Parameter " << name << " not found in file, using mass from function = " << value << " GeV";
+                            } else {
+                                value = 1.5;  // Fallback default
+                                std::cout << "Parameter " << name << " not found in file, using default mass = " << value << " GeV";
+                            }
+                        } else {  // width
+                            // Get width from MassDependentFunction
+                            if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                                value = fitter.massDepFuncs_[funcIndex].GetResonanceWidth();
+                                std::cout << "Parameter " << name << " not found in file, using width from function = " << value << " GeV";
+                            } else {
+                                value = 0.1;  // Fallback default
+                                std::cout << "Parameter " << name << " not found in file, using default width = " << value << " GeV";
+                            }
+                        }
+                    }
+
+                    parsList[name] = value;
+                    nameToIndex[name] = totalNpars;
+                    parIndexNames.push_back(name);
+                    
+                    if (isFixed) {
+                        fixedParNames.push_back(name);
+                        std::cout << " (FIXED)";
+                    }
+                    
+                    std::cout << " (index: " << totalNpars << ")" << std::endl;
+                    totalNpars++;
+                }
+            }
+        }
+        
+        file->Close();
+    }
+
+    void MassDependentFitter::ParameterManager::AddMassDependentParametersForL(
+        const std::vector<TString>& parNames,
+        const std::vector<TString>& targetL,
+        const int seed,
+        const MassDependenceConfig& config,
+        const MomentsConfig& hConfig,
+        const MassDependentFitter& fitter,
+        const bool magnitudeOnly,
+        const bool isFixed,
+        const bool yieldOnly) {
+
+        randomSeed = seed;
+        TRandom3 rng(seed);
+        
+        for (const TString& parName : parNames) {
+            // Parse parameter name to extract l and m values
+            std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+            if (parts->GetEntries() < 3) continue;
+            
+            TString refl_str = ((TObjString*)parts->At(0))->GetString();
+            TString l_str = ((TObjString*)parts->At(1))->GetString();
+            TString m_str = ((TObjString*)parts->At(2))->GetString();
+            
+            int l_value = l_str.Atoi();
+            
+            // Construct amplitude name from parameter name (e.g., "a_1_-1" from "a_1_-1")
+            TString amplitudeName = refl_str + "_" + l_str + "_" + m_str;
+            
+            // Check if this amplitude is in the target list
+            if (std::find(targetL.begin(), targetL.end(), amplitudeName) == targetL.end()) {
+                std::cout << "Skipping parameter " << parName << " (amplitude " << amplitudeName << " not in target list)" << std::endl;
+                continue;
+            }
+            
+            // Check if this parameter is needed for the H(L,M)s configuration  
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
+                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not needed for moments)" << std::endl;
+                continue;
+            }
+            
+            // Only add if this l value should be mass dependent according to config
+            if (!config.IsMassDependent(l_value)) {
+                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not configured as mass dependent)" << std::endl;
+                continue;
+            }
+
+            // Skip phase parameters if magnitudeOnly is true OR yieldOnly is true
+            if ((magnitudeOnly || yieldOnly) && parName.Contains("phi")) {
+                std::cout << "Skipping phase parameter " << parName << " (magnitudeOnly=" << magnitudeOnly 
+                         << ", yieldOnly=" << yieldOnly << ")" << std::endl;
+                continue;
+            }
+
+            // Get waves for this l value
+            std::vector<TString> waves = config.GetWavesForL(l_value);
+            if (waves.empty()) {
+                std::cout << "No waves defined for l=" << l_value << ", skipping parameter " << parName << std::endl;
+                continue;
+            }
+
+            for (const TString& waveName : waves) {
+                // Get function index for this wave
+                int funcIndex = fitter.GetFunctionIndexForWave(waveName);
+                if (funcIndex < 0 || funcIndex >= static_cast<int>(fitter.massDepFuncs_.size())) {
+                    std::cerr << "Warning: No function found for wave " << waveName << ", using defaults" << std::endl;
+                }
+
+                // Determine which parameter types to add based on yieldOnly
+                std::vector<TString> paramTypes;
+                if (yieldOnly) {
+                    paramTypes = {"k"};  // Only coupling parameters
+                    std::cout << "yieldOnly=true: Adding only k parameters for wave " << waveName << std::endl;
+                } else {
+                    paramTypes = {"k", "M", "width"};  // All parameters
+                }
+
+                for (const TString& paramType : paramTypes) {
+                    TString name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    
+                    // Check if parameter already exists - skip if already added
+                    if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
+                        std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                        continue;
+                    }
+
+                    double initialValue;
+                    if (paramType == "k") {
+                        initialValue = rng.Uniform(-30, 30);  // Random for coupling strength
+                    } else if (paramType == "M") {
+                        // Get mass from MassDependentFunction
+                        if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                            initialValue = fitter.massDepFuncs_[funcIndex].GetResonanceMass();
+                            std::cout << "Using mass from function " << funcIndex << " for " << waveName << ": " << initialValue << " GeV";
+                        } else {
+                            initialValue = 1.5;  // Fallback default
+                            std::cout << "Using default mass (function not found): " << initialValue << " GeV";
+                        }
+                    } else {  // width
+                        // Get width from MassDependentFunction
+                        if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                            initialValue = fitter.massDepFuncs_[funcIndex].GetResonanceWidth();
+                            std::cout << "Using width from function " << funcIndex << " for " << waveName << ": " << initialValue << " GeV";
+                        } else {
+                            initialValue = 0.1;  // Fallback default
+                            std::cout << "Using default width (function not found): " << initialValue << " GeV";
+                        }
+                    }
+
+                    parsList[name] = initialValue;
+                    nameToIndex[name] = totalNpars;
+                    parIndexNames.push_back(name);
+                    
+                    if (isFixed) {
+                        fixedParNames.push_back(name);
+                        std::cout << " -> Added FIXED mass-dependent parameter for amplitude " << amplitudeName 
+                                 << ": " << name << " (index: " << totalNpars << ") = " << initialValue << std::endl;
+                    } else {
+                        std::cout << " -> Added FREE mass-dependent parameter for amplitude " << amplitudeName 
+                                 << ": " << name << " (index: " << totalNpars << ") = " << initialValue << std::endl;
+                    }
+                    
+                    totalNpars++;
+                }
+            }
+        }
+    }
+
+    void MassDependentFitter::ParameterManager::AddMassIndependentParametersForPhase(
+        const std::vector<double>& massBins,
+        const std::vector<TString>& parNames,
+        const std::vector<TString>& targetVariables) {
+
+        for (const double massBin : massBins) {
+            for (const TString& parName : parNames) {
+                // Check if this parameter name matches any of the target variables
+                bool isTargetVariable = false;
+                for (const TString& targetVar : targetVariables) {
+                    if (parName == targetVar) {
+                        isTargetVariable = true;
+                        break;
+                    }
+                }
+                
+                if (!isTargetVariable) {
+                    std::cout << "Skipping parameter " << parName << " (not in target variables list)" << std::endl;
+                    continue;
+                }
+
+                TString name = Form("MI_%1.6f_%s", massBin, parName.Data());
+                
+                // Check if parameter already exists - skip if already added
+                if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
+                    std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                    continue;
+                }
+                
+                // Initialize with zero as specified
+                double initialValue = 0.0;
+
+                parsList[name] = initialValue;
+                nameToIndex[name] = totalNpars;
+                parIndexNames.push_back(name);
+                totalNpars++;
+
+                std::cout << "Added mass-independent phase parameter: " << name 
+                         << " (index: " << totalNpars-1 << ") = " << initialValue << std::endl;
+            }
+        }
+    }
+
+    void MassDependentFitter::ParameterManager::AddMassIndependentParametersForPhase(
+        const std::vector<double>& massBins,
+        const std::vector<TString>& parNames,
+        const TString& resultTreeFile,
+        const std::vector<TString>& targetVariables) {
+
+        // Open the result file and read the result tree
+        std::unique_ptr<TFile> file(TFile::Open(resultTreeFile, "READ"));
+        if (!file || file->IsZombie()) {
+            std::cerr << "Error: Cannot open file " << resultTreeFile << std::endl;
+            return;
+        }
+
+        TTree* tree = nullptr;
+        file->GetObject("result", tree);
+        if (!tree) {
+            std::cerr << "Error: Cannot find tree 'result' in file " << resultTreeFile << std::endl;
+            file->Close();
+            return;
+        }
+
+        std::cout << "Loading mass-independent phase parameters from file: " << resultTreeFile << std::endl;
+
+        // Set up branch for mass_bin
+        double mass_bin_from_file = 0.0;
+        tree->SetBranchAddress("mass_bin", &mass_bin_from_file);
+
+        // Create a map to store parameter values for each parameter name
+        std::map<TString, double> paramValues;
+        
+        // Set up branches for all target variables
+        for (const TString& targetVar : targetVariables) {
+            TBranch* branch = tree->GetBranch(targetVar);
+            if (branch) {
+                paramValues[targetVar] = 0.0;
+                tree->SetBranchAddress(targetVar, &paramValues[targetVar]);
+            } else {
+                std::cerr << "Warning: Branch '" << targetVar << "' not found in tree" << std::endl;
+            }
+        }
+
+        // Read each entry (one per mass bin) and extract parameter values
+        Long64_t nEntries = tree->GetEntries();
+        for (Long64_t entry = 0; entry < nEntries; entry++) {
+            tree->GetEntry(entry);
+            
+            // Check if this mass bin is in our target list
+            bool foundMassBin = false;
+            for (double targetMassBin : massBins) {
+                if (TMath::Abs(mass_bin_from_file - targetMassBin) < 1e-6) {
+                    foundMassBin = true;
+                    break;
+                }
+            }
+            
+            if (!foundMassBin) continue;
+            
+            // Add phase parameters for this mass bin
+            for (const TString& parName : parNames) {
+                // Check if this parameter name matches any of the target variables
+                bool isTargetVariable = false;
+                for (const TString& targetVar : targetVariables) {
+                    if (parName == targetVar) {
+                        isTargetVariable = true;
+                        break;
+                    }
+                }
+                
+                if (!isTargetVariable) {
+                    continue;
+                }
+
+                TString name = Form("MI_%1.6f_%s", mass_bin_from_file, parName.Data());
+                
+                // Check if parameter already exists - skip if already added
+                if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
+                    std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                    continue;
+                }
+                
+                // Get the value from the tree
+                double value = 0.0;
+                auto it = paramValues.find(parName);
+                if (it != paramValues.end()) {
+                    value = it->second;
+                } else {
+                    std::cerr << "Warning: Parameter " << parName << " not found in loaded values, using default 0.0" << std::endl;
+                }
+
+                parsList[name] = value;
+                nameToIndex[name] = totalNpars;
+                parIndexNames.push_back(name);
+                totalNpars++;
+
+                std::cout << "Added mass-independent phase parameter for mass bin " << mass_bin_from_file 
+                         << ": " << name << " (index: " << totalNpars-1 << ") = " << value << std::endl;
+            }
+        }
+        
+        file->Close();
+    }
+
+    void MassDependentFitter::ParameterManager::AddMassDependentParametersForL(
+        const std::vector<TString>& parNames,
+        const std::vector<TString>& targetL,
+        const TString filePath,
+        const MassDependenceConfig& config,
+        const MomentsConfig& hConfig,
+        const MassDependentFitter& fitter,
+        const bool magnitudeOnly,
+        const bool isFixed,
+        const bool yieldOnly) {
+
+        std::unique_ptr<TFile> file(TFile::Open(filePath, "READ"));
+        if (!file || file->IsZombie()) {
+            std::cerr << "Error: Cannot open file " << filePath << std::endl;
+            return;
+        }
+
+        TTree* tree = nullptr;
+        file->GetObject("mass_dependent_params", tree);
+        if (!tree) {
+            std::cerr << "Error: Cannot find tree 'mass_dependent_params' in file " << filePath << std::endl;
+            file->Close();
+            return;
+        }
+
+        std::cout << "Loading mass-dependent parameters from file: " << filePath << std::endl;
+        
+        // Read the tree entry once at the beginning
+        if (tree->GetEntries() > 0) {
+            tree->GetEntry(0);
+        }
+
+        for (const TString& parName : parNames) {
+            // Parse parameter name to extract l and m values
+            std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+            if (parts->GetEntries() < 3) continue;
+            
+            TString refl_str = ((TObjString*)parts->At(0))->GetString();
+            TString l_str = ((TObjString*)parts->At(1))->GetString();
+            TString m_str = ((TObjString*)parts->At(2))->GetString();
+            
+            int l_value = l_str.Atoi();
+            
+            // Construct amplitude name from parameter name (e.g., "a_1_-1" from "a_1_-1")
+            TString amplitudeName = refl_str + "_" + l_str + "_" + m_str;
+            
+            // Check if this amplitude is in the target list
+            if (std::find(targetL.begin(), targetL.end(), amplitudeName) == targetL.end()) {
+                std::cout << "Skipping parameter " << parName << " (amplitude " << amplitudeName << " not in target list)" << std::endl;
+                continue;
+            }
+            
+            // Check if this parameter is needed for the H(L,M)s configuration  
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
+                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not needed for moments)" << std::endl;
+                continue;
+            }
+            
+            // Only add if this l value should be mass dependent according to config
+            if (!config.IsMassDependent(l_value)) {
+                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not configured as mass dependent)" << std::endl;
+                continue;
+            }
+
+            // Skip phase parameters if magnitudeOnly is true OR yieldOnly is true
+            if ((magnitudeOnly || yieldOnly) && parName.Contains("phi")) {
+                std::cout << "Skipping phase parameter " << parName << " (magnitudeOnly=" << magnitudeOnly 
+                         << ", yieldOnly=" << yieldOnly << ")" << std::endl;
+                continue;
+            }
+
+            // Get waves for this l value
+            std::vector<TString> waves = config.GetWavesForL(l_value);
+            if (waves.empty()) {
+                std::cout << "No waves defined for l=" << l_value << ", skipping parameter " << parName << std::endl;
+                continue;
+            }
+
+            for (const TString& waveName : waves) {
+                // Get function index for this wave
+                int funcIndex = fitter.GetFunctionIndexForWave(waveName);
+                
+                // Determine which parameter types to add based on yieldOnly
+                std::vector<TString> paramTypes;
+                if (yieldOnly) {
+                    paramTypes = {"k"};  // Only coupling parameters
+                    std::cout << "yieldOnly=true: Adding only k parameters for wave " << waveName << std::endl;
+                } else {
+                    paramTypes = {"k", "M", "width"};  // All parameters
+                }
+                
+                for (const TString& paramType : paramTypes) {
+                    TString name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    
+                    // Check if parameter already exists - skip if already added
+                    if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
+                        std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                        continue;
+                    }
+
+                    // Try to read the parameter value from the tree using TLeaf
+                    double value = 0.0;
+                    TLeaf* leaf = tree->GetLeaf(name);
+                    if (leaf) {
+                        value = leaf->GetValue();
+                        std::cout << "Read " << name << " = " << value << " from file";
+                    } else {
+                        // Parameter not found in file, use values from MassDependentFunction or defaults
+                        if (paramType == "k") {
+                            value = 0.0;  // Default coupling
+                            std::cout << "Parameter " << name << " not found in file, using default k = " << value;
+                        } else if (paramType == "M") {
+                            // Get mass from MassDependentFunction
+                            if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                                value = fitter.massDepFuncs_[funcIndex].GetResonanceMass();
+                                std::cout << "Parameter " << name << " not found in file, using mass from function = " << value << " GeV";
+                            } else {
+                                value = 1.5;  // Fallback default
+                                std::cout << "Parameter " << name << " not found in file, using default mass = " << value << " GeV";
+                            }
+                        } else {  // width
+                            // Get width from MassDependentFunction
+                            if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                                value = fitter.massDepFuncs_[funcIndex].GetResonanceWidth();
+                                std::cout << "Parameter " << name << " not found in file, using width from function = " << value << " GeV";
+                            } else {
+                                value = 0.1;  // Fallback default
+                                std::cout << "Parameter " << name << " not found in file, using default width = " << value << " GeV";
+                            }
+                        }
+                    }
+
+                    parsList[name] = value;
+                    nameToIndex[name] = totalNpars;
+                    parIndexNames.push_back(name);
+                    
+                    if (isFixed) {
+                        fixedParNames.push_back(name);
+                        std::cout << " (FIXED)";
+                    }
+                    
+                    std::cout << " (index: " << totalNpars << ")" << std::endl;
+                    totalNpars++;
+                }
+            }
+        }
+        
+        file->Close();
     }
 
 }

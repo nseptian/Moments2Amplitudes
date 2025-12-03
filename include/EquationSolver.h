@@ -63,17 +63,17 @@ namespace m2pw{
     void CacheVals (const double *pars) const;
 
     void Print(const TString opt="") const{
-      cout<<"EquationSolver : "<<endl;
+      std::cout<<"EquationSolver : "<<std::endl;
       _pars.Print(opt);
       for(const auto& eqn:_eqns){
-        cout << "=========================Moments Equations=========================" << endl;
+        std::cout << "=========================Moments Equations=========================" << std::endl;
 	eqn.Print(opt);
       }
       for(const auto& eqn:_others){
-        cout << "=========================Other Equations=========================" << endl;
+        std::cout << "=========================Other Equations=========================" << std::endl;
 	eqn.Print(opt);
       }
-      cout<<"\t Current Value = "<<_val<<endl;
+      std::cout<<"\t Current Value = "<<_val<<std::endl;
     }
 
     void PrintResult(){

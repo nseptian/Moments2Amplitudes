@@ -214,6 +214,15 @@ namespace m2pw {
                                                  const std::vector<TString>& parNames,
                                                  const std::vector<int>& targetL,
                                                  const TString& resultTreeFile);
+            
+            void AddMassIndependentParametersForPhase(const std::vector<double>& massBins,
+                                                 const std::vector<TString>& parNames,
+                                                 const std::vector<TString>& targetVariables);
+
+            void AddMassIndependentParametersForPhase(const std::vector<double>& massBins,
+                                                 const std::vector<TString>& parNames,
+                                                 const TString& resultTreeFile,
+                                                 const std::vector<TString>& targetVariables);
 
             // Add fixed mass-independent parameters for specific L values
             void AddFixedMassIndependentParametersForL(const std::vector<double>& massBins,
@@ -246,6 +255,48 @@ namespace m2pw {
                                           const MomentsConfig& hConfig,
                                           const MassDependentFitter& fitter,
                                           const bool isFixed);
+
+            // Add mass dependent parameters for specific waves with random initialization
+            void AddMassDependentParametersForL(const std::vector<TString>& parNames,
+                                          const std::vector<int>& targetL,
+                                          const int seed,
+                                          const MassDependenceConfig& config,
+                                          const MomentsConfig& hConfig,
+                                          const MassDependentFitter& fitter,
+                                          const bool magnitudeOnly,
+                                          const bool isFixed,
+                                          const bool yieldOnly = false);
+
+            // Add mass dependent parameters for specific waves from a result tree
+            void AddMassDependentParametersForL(const std::vector<TString>& parNames,
+                                          const std::vector<int>& targetL,
+                                          const TString filePath,
+                                          const MassDependenceConfig& config,
+                                          const MomentsConfig& hConfig,
+                                          const MassDependentFitter& fitter,
+                                          const bool magnitudeOnly,
+                                          const bool isFixed,
+                                          const bool yieldOnly = false);
+
+            void AddMassDependentParametersForL(const std::vector<TString>& parNames,
+                                          const std::vector<TString>& targetL,
+                                          const int seed,
+                                          const MassDependenceConfig& config,
+                                          const MomentsConfig& hConfig,
+                                          const MassDependentFitter& fitter,
+                                          const bool magnitudeOnly,
+                                          const bool isFixed,
+                                          const bool yieldOnly = false);
+            
+            void AddMassDependentParametersForL(const std::vector<TString>& parNames,
+                                          const std::vector<TString>& targetL,
+                                          const TString filePath,
+                                          const MassDependenceConfig& config,
+                                          const MomentsConfig& hConfig,
+                                          const MassDependentFitter& fitter,
+                                          const bool magnitudeOnly,
+                                          const bool isFixed,
+                                          const bool yieldOnly = false);
 
             std::vector<double> GetValues() const;
             

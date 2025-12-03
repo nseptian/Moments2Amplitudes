@@ -128,7 +128,7 @@ namespace m2pw{
 	_localX[ilocal]=_constantVals[iconst];
 	++iconst;
       }
-      else cout<<"DoEval should not be here "<<endl;
+      else std::cout<<"DoEval should not be here "<<std::endl;
       ++ilocal;
     }
   }
@@ -136,16 +136,16 @@ namespace m2pw{
   /////////////////////////////////////////////////////////
   void Equation::Print(const TString opt) const{
     std::cout<<"\t Equation::Print() :" <<GetName()<<std::endl;
-    std::cout<<"\t\t Formula = "<<_origFormula<<endl;
+    std::cout<<"\t\t Formula = "<<_origFormula<<std::endl;
     std::cout<<"\t\t Formula value = "<< _origFormulaVal << std::endl;
-    std::cout<<"\t\t Constrained Value = "<< _cachedVal<<endl;
-    std::cout<<"\t\t Equation Value = "<< _eqnValue<<endl;
-    std::cout<<"\t\t _L = "<< _L <<" "<<_LWeight<<endl;
+    std::cout<<"\t\t Constrained Value = "<< _cachedVal<<std::endl;
+    std::cout<<"\t\t Equation Value = "<< _eqnValue<<std::endl;
+    std::cout<<"\t\t _L = "<< _L <<" "<<_LWeight<<std::endl;
     // _formula.Print();
     if(opt!= "v") return;
     
     UInt_t isynch=0;
-    std::cout<<"\t\t Dependencies : "<<endl;
+    std::cout<<"\t\t Dependencies : "<<std::endl;
     for(auto dep :_dependencies){
       std::cout<<"\t\t"<<dep->GetName()<<std::endl;
       isynch++;
