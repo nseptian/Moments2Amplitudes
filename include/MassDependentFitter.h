@@ -200,100 +200,61 @@ namespace m2pw {
             std::vector<double> parErrors;  // Store parameter errors
             int totalNpars = 0;
             int randomSeed = -1;
+            MassDependentFitter& fitter;  // Reference to parent fitter
+
+            // Constructor
+            ParameterManager(MassDependentFitter& f) : fitter(f) {}
 
             // Add mass-independent parameters with random initialization
-            void AddMassIndependentParameters(const std::vector<double>& massBins, 
-                                            const std::vector<TString>& parNames, 
-                                            int seed,
-                                            const MassDependenceConfig& config,
-                                            const MomentsConfig& hConfig,
-                                            const MassDependentFitter& fitter);
+            void AddMassIndependentParameters(int seed);
 
             // Add mass-independent parameters for specific L values from a result tree
-            void AddMassIndependentParametersForL(const std::vector<double>& massBins,
-                                                 const std::vector<TString>& parNames,
-                                                 const std::vector<int>& targetL,
+            void AddMassIndependentParametersForL(const std::vector<int>& targetL,
                                                  const TString& resultTreeFile);
             
-            void AddMassIndependentParametersForPhase(const std::vector<double>& massBins,
-                                                 const std::vector<TString>& parNames,
-                                                 const std::vector<TString>& targetVariables);
+            void AddMassIndependentParametersForPhase(const std::vector<TString>& targetVariables);
 
-            void AddMassIndependentParametersForPhase(const std::vector<double>& massBins,
-                                                 const std::vector<TString>& parNames,
-                                                 const TString& resultTreeFile,
+            void AddMassIndependentParametersForPhase(const TString& resultTreeFile,
                                                  const std::vector<TString>& targetVariables);
 
             // Add fixed mass-independent parameters for specific L values
-            void AddFixedMassIndependentParametersForL(const std::vector<double>& massBins,
-                                                     const std::vector<TString>& parNames,
-                                                     const std::vector<int>& fixedL,
+            void AddFixedMassIndependentParametersForL(const std::vector<int>& fixedL,
                                                      const std::map<int, double>& fixedValues,
-                                                     const MomentsConfig& hConfig,
-                                                     const MassDependentFitter& fitter,
                                                      bool magnitudeOnly = true);
 
             // Add fixed mass-independent parameters for specific L and reflectivity (e.g., "1+", "2-")
-            void AddFixedMassIndependentParametersForL(const std::vector<double>& massBins,
-                                                     const std::vector<TString>& parNames,
-                                                     const std::vector<std::string>& lReflectivities,
+            void AddFixedMassIndependentParametersForL(const std::vector<std::string>& lReflectivities,
                                                      const std::map<std::string, double>& fixedValues,
-                                                     const MomentsConfig& hConfig,
-                                                     const MassDependentFitter& fitter,
                                                      bool magnitudeOnly = true);
 
-            void AddMassDependentParameters(const std::vector<TString>& parNames, 
-                                          int seed,
-                                          const MassDependenceConfig& config,
-                                          const MomentsConfig& hConfig,
-                                          const MassDependentFitter& fitter);
+            void AddMassDependentParameters(int seed);
 
             // Add parameters with values from a file
-            void AddMassDependentParameters(const std::vector<TString>& parNames,
-                                          const TString filePath,
-                                          const MassDependenceConfig& config,
-                                          const MomentsConfig& hConfig,
-                                          const MassDependentFitter& fitter,
+            void AddMassDependentParameters(const TString filePath,
                                           const bool isFixed);
 
             // Add mass dependent parameters for specific waves with random initialization
-            void AddMassDependentParametersForL(const std::vector<TString>& parNames,
-                                          const std::vector<int>& targetL,
+            void AddMassDependentParametersForL(const std::vector<int>& targetL,
                                           const int seed,
-                                          const MassDependenceConfig& config,
-                                          const MomentsConfig& hConfig,
-                                          const MassDependentFitter& fitter,
                                           const bool magnitudeOnly,
                                           const bool isFixed,
                                           const bool yieldOnly = false);
 
             // Add mass dependent parameters for specific waves from a result tree
-            void AddMassDependentParametersForL(const std::vector<TString>& parNames,
-                                          const std::vector<int>& targetL,
+            void AddMassDependentParametersForL(const std::vector<int>& targetL,
                                           const TString filePath,
-                                          const MassDependenceConfig& config,
-                                          const MomentsConfig& hConfig,
-                                          const MassDependentFitter& fitter,
                                           const bool magnitudeOnly,
                                           const bool isFixed,
                                           const bool yieldOnly = false);
 
-            void AddMassDependentParametersForL(const std::vector<TString>& parNames,
-                                          const std::vector<TString>& targetL,
+            void AddMassDependentParametersForL(const std::vector<TString>& targetL,
                                           const int seed,
-                                          const MassDependenceConfig& config,
-                                          const MomentsConfig& hConfig,
-                                          const MassDependentFitter& fitter,
                                           const bool magnitudeOnly,
                                           const bool isFixed,
                                           const bool yieldOnly = false);
             
-            void AddMassDependentParametersForL(const std::vector<TString>& parNames,
-                                          const std::vector<TString>& targetL,
+            void AddMassDependentParametersForL(const std::vector<TString>& targetL,
                                           const TString filePath,
-                                          const MassDependenceConfig& config,
-                                          const MomentsConfig& hConfig,
-                                          const MassDependentFitter& fitter,
                                           const bool magnitudeOnly,
                                           const bool isFixed,
                                           const bool yieldOnly = false);
@@ -301,7 +262,7 @@ namespace m2pw {
             std::vector<double> GetValues() const;
             
             // Store results from minimizer including errors
-            void StoreResults(const ROOT::Math::Minimizer* minimizer, MassDependentFitter& fitter);
+            void StoreResults(const ROOT::Math::Minimizer* minimizer);
         };
 
         void MakeResultTree(const ParameterManager& paramManager, const TString& fileName) const;

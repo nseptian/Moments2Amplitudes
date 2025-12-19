@@ -409,7 +409,7 @@ namespace m2pw {
         auto mdTree = std::make_unique<TTree>("mass_dependent_params", "Mass Dependent Parameters");
         
         const int nMDPars = paramManager.totalNpars;
-        double md_par_vals[nMDPars];
+        std::vector<double> md_par_vals(nMDPars);
         int idx = 0;
         for (const auto& [parName, value] : paramManager.parsList) {
             // double currentValue = value;
@@ -451,7 +451,7 @@ namespace m2pw {
         return values;
     }
 
-    void MassDependentFitter::ParameterManager::StoreResults(const ROOT::Math::Minimizer* minimizer, MassDependentFitter& fitter) {
+    void MassDependentFitter::ParameterManager::StoreResults(const ROOT::Math::Minimizer* minimizer) {
         if (!minimizer) return;
         
         const double* errors = minimizer->Errors();
@@ -622,7 +622,7 @@ namespace m2pw {
         }
         
         // Store the errors in the parameter manager AND propagate to pars_
-        paramManager.StoreResults(minimizer.get(), *this);
+        paramManager.StoreResults(minimizer.get());
     }
 
     // Helper method for single wave magnitude (no coherent sum needed)
@@ -773,15 +773,13 @@ namespace m2pw {
         return -1;
     }
 
-    void MassDependentFitter::ParameterManager::AddMassIndependentParameters(
-        const std::vector<double>& massBins, 
-        const std::vector<TString>& parNames, 
-        int seed,
-        const MassDependenceConfig& config,
-        const MomentsConfig& hConfig,
-        const MassDependentFitter& fitter) {
-
+    void MassDependentFitter::ParameterManager::AddMassIndependentParameters(int seed) {
         randomSeed = seed;
+        
+        auto parNames = MassDependentFitter::GetParNames();
+        auto& config = fitter.GetMassDependenceConfig();
+        auto& hConfig = fitter.GetMomentsConfig();
+        auto& massBins = fitter.GetMassBins();
         
         TRandom3 rng(seed);
         for (const double massBin : massBins) {
@@ -823,13 +821,13 @@ namespace m2pw {
     }
 
     void MassDependentFitter::ParameterManager::AddFixedMassIndependentParametersForL(
-        const std::vector<double>& massBins,
-        const std::vector<TString>& parNames,
         const std::vector<int>& fixedL,
         const std::map<int, double>& fixedValues,
-        const MomentsConfig& hConfig,
-        const MassDependentFitter& fitter,
         bool magnitudeOnly) {
+        
+        auto parNames = MassDependentFitter::GetParNames();
+        auto& hConfig = fitter.GetMomentsConfig();
+        auto& massBins = fitter.GetMassBins();
         
         for (const double massBin : massBins) {
             for (const TString& parName : parNames) {
@@ -870,13 +868,13 @@ namespace m2pw {
     }
 
     void MassDependentFitter::ParameterManager::AddFixedMassIndependentParametersForL(
-        const std::vector<double>& massBins,
-        const std::vector<TString>& parNames,
         const std::vector<std::string>& lReflectivities,
         const std::map<std::string, double>& fixedValues,
-        const MomentsConfig& hConfig,
-        const MassDependentFitter& fitter,
         bool magnitudeOnly) {
+        
+        auto parNames = MassDependentFitter::GetParNames();
+        auto& hConfig = fitter.GetMomentsConfig();
+        auto& massBins = fitter.GetMassBins();
         
         for (const std::string& lReflectivity : lReflectivities) {
             // Parse L and reflectivity from string like "1+" or "2-"
@@ -958,10 +956,11 @@ namespace m2pw {
     }
 
     void MassDependentFitter::ParameterManager::AddMassIndependentParametersForL(
-        const std::vector<double>& massBins,
-        const std::vector<TString>& parNames,
         const std::vector<int>& targetL,
         const TString& resultTreeFile) {
+        
+        auto parNames = MassDependentFitter::GetParNames();
+        auto& massBins = fitter.GetMassBins();
         
         // Load mass-independent parameters from result tree file
         TFile file(resultTreeFile, "READ");
@@ -1057,11 +1056,11 @@ namespace m2pw {
     }
 
     void MassDependentFitter::ParameterManager::AddMassDependentParameters(
-        const std::vector<TString>& parNames, 
-        int seed,
-        const MassDependenceConfig& config,
-        const MomentsConfig& hConfig,
-        const MassDependentFitter& fitter) {
+        int seed) {
+        
+        auto parNames = MassDependentFitter::GetParNames();
+        auto& config = fitter.GetMassDependenceConfig();
+        auto& hConfig = fitter.GetMomentsConfig();
         
         randomSeed = seed;
         for (const TString& parName : parNames) {
@@ -1103,13 +1102,12 @@ namespace m2pw {
     }
 
 
-    void MassDependentFitter::ParameterManager::AddMassDependentParameters(const std::vector<TString>& parNames,
-                                                                                const TString filePath,
-                                                                                const MassDependenceConfig& config,
-                                                                                const MomentsConfig& hConfig,
-                                                                                const MassDependentFitter& fitter,
-                                                                                const bool isFixed = false
-                                                                                ) {
+    void MassDependentFitter::ParameterManager::AddMassDependentParameters(const TString filePath,
+                                                                                const bool isFixed) {
+        auto parNames = MassDependentFitter::GetParNames();
+        auto& config = fitter.GetMassDependenceConfig();
+        auto& hConfig = fitter.GetMomentsConfig();
+        
         // Load mass-dependent parameters from file
         TFile file(filePath, "READ");
         if (!file.IsOpen() || file.IsZombie()) {
@@ -1275,16 +1273,16 @@ namespace m2pw {
     }
 
     void MassDependentFitter::ParameterManager::AddMassDependentParametersForL(
-        const std::vector<TString>& parNames,
         const std::vector<int>& targetL,
         const int seed,
-        const MassDependenceConfig& config,
-        const MomentsConfig& hConfig,
-        const MassDependentFitter& fitter,
         const bool magnitudeOnly,
         const bool isFixed,
         const bool yieldOnly) {
 
+        auto parNames = MassDependentFitter::GetParNames();
+        auto& config = fitter.GetMassDependenceConfig();
+        auto& hConfig = fitter.GetMomentsConfig();
+        
         randomSeed = seed;
         TRandom3 rng(seed);
         
@@ -1429,16 +1427,16 @@ namespace m2pw {
     }
 
     void MassDependentFitter::ParameterManager::AddMassDependentParametersForL(
-        const std::vector<TString>& parNames,
         const std::vector<int>& targetL,
         const TString filePath,
-        const MassDependenceConfig& config,
-        const MomentsConfig& hConfig,
-        const MassDependentFitter& fitter,
         const bool magnitudeOnly,
         const bool isFixed,
         const bool yieldOnly) {
 
+        auto parNames = MassDependentFitter::GetParNames();
+        auto& config = fitter.GetMassDependenceConfig();
+        auto& hConfig = fitter.GetMomentsConfig();
+        
         std::unique_ptr<TFile> file(TFile::Open(filePath, "READ"));
         if (!file || file->IsZombie()) {
             std::cerr << "Error: Cannot open file " << filePath << std::endl;
@@ -1573,16 +1571,16 @@ namespace m2pw {
     }
 
     void MassDependentFitter::ParameterManager::AddMassDependentParametersForL(
-        const std::vector<TString>& parNames,
         const std::vector<TString>& targetL,
         const int seed,
-        const MassDependenceConfig& config,
-        const MomentsConfig& hConfig,
-        const MassDependentFitter& fitter,
         const bool magnitudeOnly,
         const bool isFixed,
         const bool yieldOnly) {
 
+        auto parNames = MassDependentFitter::GetParNames();
+        auto& config = fitter.GetMassDependenceConfig();
+        auto& hConfig = fitter.GetMomentsConfig();
+        
         randomSeed = seed;
         TRandom3 rng(seed);
         
@@ -1700,9 +1698,10 @@ namespace m2pw {
     }
 
     void MassDependentFitter::ParameterManager::AddMassIndependentParametersForPhase(
-        const std::vector<double>& massBins,
-        const std::vector<TString>& parNames,
         const std::vector<TString>& targetVariables) {
+
+        auto parNames = MassDependentFitter::GetParNames();
+        auto& massBins = fitter.GetMassBins();
 
         for (const double massBin : massBins) {
             for (const TString& parName : parNames) {
@@ -1743,10 +1742,11 @@ namespace m2pw {
     }
 
     void MassDependentFitter::ParameterManager::AddMassIndependentParametersForPhase(
-        const std::vector<double>& massBins,
-        const std::vector<TString>& parNames,
         const TString& resultTreeFile,
         const std::vector<TString>& targetVariables) {
+
+        auto parNames = MassDependentFitter::GetParNames();
+        auto& massBins = fitter.GetMassBins();
 
         // Open the result file and read the result tree
         std::unique_ptr<TFile> file(TFile::Open(resultTreeFile, "READ"));
@@ -1845,16 +1845,16 @@ namespace m2pw {
     }
 
     void MassDependentFitter::ParameterManager::AddMassDependentParametersForL(
-        const std::vector<TString>& parNames,
         const std::vector<TString>& targetL,
         const TString filePath,
-        const MassDependenceConfig& config,
-        const MomentsConfig& hConfig,
-        const MassDependentFitter& fitter,
         const bool magnitudeOnly,
         const bool isFixed,
         const bool yieldOnly) {
 
+        auto parNames = MassDependentFitter::GetParNames();
+        auto& config = fitter.GetMassDependenceConfig();
+        auto& hConfig = fitter.GetMomentsConfig();
+        
         std::unique_ptr<TFile> file(TFile::Open(filePath, "READ"));
         if (!file || file->IsZombie()) {
             std::cerr << "Error: Cannot open file " << filePath << std::endl;
