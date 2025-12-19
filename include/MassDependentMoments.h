@@ -18,6 +18,16 @@ class MassDependentMoments {
                 _MassBins.push_back(massValue);
 
                 const TString filePath = Form("%s/%s%1.6f_/", _FitResultsDir.Data(), _MassBinName.Data(), massValue);
+                const TString fullFilePath = filePath + _FitResultsFilename;
+                
+                // Check if file exists
+                TFile* testFile = TFile::Open(fullFilePath);
+                if (!testFile || testFile->IsZombie()) {
+                    if (testFile) delete testFile;
+                    throw std::runtime_error(Form("File not found: %s", fullFilePath.Data()));
+                }
+                delete testFile;
+                
                 std::cout << "Loading moments from: " << filePath << std::endl;
                 MomentHelper moments;
                 moments.Set(filePath, 1, 1);
@@ -35,6 +45,16 @@ class MassDependentMoments {
                 _MassBins.push_back(massValue);
 
                 const TString filePath = Form("%s/%s%1.6f_%s_/", _FitResultsDir.Data(), _MassBinName.Data(), massValue, _VarBinName.Data());
+                const TString fullFilePath = filePath + _FitResultsFilename;
+                
+                // Check if file exists
+                TFile* testFile = TFile::Open(fullFilePath);
+                if (!testFile || testFile->IsZombie()) {
+                    if (testFile) delete testFile;
+                    throw std::runtime_error(Form("File not found: %s", fullFilePath.Data()));
+                }
+                delete testFile;
+                
                 std::cout << "Loading moments from: " << filePath << std::endl;
                 MomentHelper moments;
                 moments.Set(filePath, 1, 1);
