@@ -1,5 +1,17 @@
 {
+    "C_Cpp.default.defines": [
+        "__CLING__",
+        "__ROOTCLING__"
+    ],
+    "C_Cpp.errorSquiggles": "enabled",
+    "files.exclude": {
+        "**/*.so": true,
+        "**/*.d": true,
+        "**/*_ACLiC_*": true
+    },
     "files.associations": {
+        "*.C": "cpp",
+        "*.h": "cpp",
         "MomentFit.C": "cpp",
         "MakeMomentFitData.C": "cpp",
         "RunGivenBruMoments.C": "cpp",
@@ -95,6 +107,16 @@
         "complex": "cpp",
         "set": "cpp",
         "fstream": "cpp",
-        "iomanip": "cpp"
+        "iomanip": "cpp",
+        "H_odd_model.C": "cpp",
+        "chrono": "cpp",
+        "condition_variable": "cpp",
+        "list": "cpp",
+        "unordered_set": "cpp",
+        "ratio": "cpp",
+        "mutex": "cpp",
+        "semaphore": "cpp",
+        "stop_token": "cpp",
+        "thread": "cpp"
     }
 }

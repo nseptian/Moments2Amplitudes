@@ -1,0 +1,27 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/src",
+                "/d/grid17/septian/root_v6-34-06_install/include",
+                "/d/grid17/septian/brufit_dev/brufit/core"
+            ],
+            "defines": [
+                "__CLING__",
+                "__ROOTCLING__"
+            ],
+            "compilerPath": "/usr/bin/g++",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64",
+            "forcedInclude": [
+                "/d/grid17/septian/root_v6-34-06_install/include/TROOT.h",
+                "/d/grid17/septian/root_v6-34-06_install/include/TSystem.h"
+            ]
+        }
+    ],
+    "version": 4
+}

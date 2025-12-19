@@ -1,14 +1,21 @@
+# Ignore run outputs
 run/
-src/*.so
-src/*.d
-src/*.pcm
-plots*
-samples*
-data*
-test_macros*
-*.root
-brufit/*
+test-*
 
-# pixi environments
-.pixi
-*.egg-info
+# ROOT ACLiC compilation artifacts
+*.so
+*.d
+*_ACLiC_*
+*.pcm
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
