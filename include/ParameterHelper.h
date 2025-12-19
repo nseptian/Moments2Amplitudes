@@ -164,8 +164,8 @@ namespace m2pw{
 
     void Print(const TString opt="") const;
 
-    const Double_t Nvars() const {return _nextIndex;}
-    const Double_t Nconst() const {return _nextConstIndex;}
+    Double_t Nvars() const {return _nextIndex;}
+    Double_t Nconst() const {return _nextConstIndex;}
 
     Bool_t IsMagnitude(Int_t ipar)const {return _isMagnitude[ipar];}
 
