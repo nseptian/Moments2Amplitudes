@@ -211,6 +211,14 @@ namespace m2pw {
             // Add mass-independent parameters for specific L values from a result tree
             void AddMassIndependentParametersForL(const std::vector<int>& targetL,
                                                  const TString& resultTreeFile);
+
+            void AddMassIndependentParametersForL(const std::vector<int>& targetL,
+                                                 const std::vector<double>& massBins,
+                                                const TString& resultTreeFile);
+
+            void AddMassIndependentParametersForL(const std::vector<int>& targetL,
+                                                 const std::vector<double>& massBins,
+                                                const std::map<std::string, std::pair<double,double>>& init_values);
             
             void AddMassIndependentParametersForPhase(const std::vector<TString>& targetVariables);
 
@@ -258,6 +266,10 @@ namespace m2pw {
                                           const bool magnitudeOnly,
                                           const bool isFixed,
                                           const bool yieldOnly = false);
+
+            std::map<std::string, std::pair<double,double>> GetAmplitudeValuesAtMassBins(
+                const std::vector<int>& targetL,
+                double massBinCenter);
 
             std::vector<double> GetValues() const;
             

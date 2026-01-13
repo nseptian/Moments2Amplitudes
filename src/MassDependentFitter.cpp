@@ -1055,6 +1055,113 @@ namespace m2pw {
         file.Close();
     }
 
+    void MassDependentFitter::ParameterManager::AddMassIndependentParametersForL(
+        const std::vector<int>& targetL,
+        const std::vector<double>& massBins,
+        const TString& resultTreeFile) {
+        
+        auto parNames = MassDependentFitter::GetParNames();
+        
+        // Load mass-independent parameters from result tree file
+        TFile file(resultTreeFile, "READ");
+        if (!file.IsOpen() || file.IsZombie()) {
+            std::cerr << "Error opening file: " << resultTreeFile << std::endl;
+            return;
+        }
+        
+        TTree* tree = dynamic_cast<TTree*>(file.Get("result"));
+        if (!tree) {
+            std::cerr << "Error: Tree 'result' not found in file: " << resultTreeFile << std::endl;
+            return;
+        }
+
+        cout << "Loading mass independent parameter initial values from file: " << resultTreeFile << std::endl;
+        cout << "Selected " << massBins.size() << " mass bins" << std::endl;
+
+        // Convert targetL to set for faster lookup
+        std::set<int> targetLSet(targetL.begin(), targetL.end());
+        
+        // Convert massBins to set for faster lookup
+        std::set<double> targetMassBinSet;
+        for (double mb : massBins) {
+            targetMassBinSet.insert(mb);
+        }
+
+        // Set up branches to read mass_bin and parameter values
+        double mass_bin_from_file = 0.0;
+        tree->SetBranchAddress("mass_bin", &mass_bin_from_file);
+        
+        // Create maps to store parameter values for each parameter name
+        std::map<TString, double> paramValues;
+        for (const TString& parName : parNames) {
+            // Parse parameter name to extract l value
+            std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+            if (parts->GetEntries() < 3) continue;
+            
+            TString l_str = ((TObjString*)parts->At(1))->GetString();
+            int l_value = l_str.Atoi();
+            
+            // Check if this l value is in our target list
+            if (targetLSet.find(l_value) == targetLSet.end()) {
+                continue;
+            }
+            
+            // Set up branch address for this parameter
+            TBranch* branch = tree->GetBranch(parName);
+            if (!branch) {
+                std::cerr << "Warning: Could not find branch for parameter " << parName << " in tree" << std::endl;
+                continue;
+            }
+            
+            paramValues[parName] = 0.0;
+            tree->SetBranchAddress(parName, &paramValues[parName]);
+        }
+
+        // Read each entry (one per mass bin) and extract parameter values
+        Long64_t nEntries = tree->GetEntries();
+        for (Long64_t entry = 0; entry < nEntries; entry++) {
+            tree->GetEntry(entry);
+            
+            // Check if this mass bin is in our target list
+            bool foundMassBin = false;
+            for (double targetMassBin : massBins) {
+                if (TMath::Abs(mass_bin_from_file - targetMassBin) < 1e-6) {
+                    foundMassBin = true;
+                    break;
+                }
+            }
+            
+            if (!foundMassBin) continue;
+            
+            // Add parameters for this mass bin
+            for (const auto& [parName, value] : paramValues) {
+                // Create mass-independent parameter name with mass bin
+                TString name = Form("MI_%1.6f_%s", mass_bin_from_file, parName.Data());
+                
+                // Check if parameter already exists - skip if already added
+                if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
+                    std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                    continue;
+                }
+                
+                parsList[name] = value;
+                nameToIndex[name] = totalNpars;
+                parIndexNames.push_back(name);
+                
+                // Parse L value for logging
+                std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+                TString l_str = ((TObjString*)parts->At(1))->GetString();
+                int l_value = l_str.Atoi();
+                
+                std::cout << "Added mass-independent parameter for L=" << l_value 
+                         << " (mass bin " << mass_bin_from_file << "): " << name << " = " << value << " (index: " << totalNpars << ")" << std::endl;
+                totalNpars++;
+            }
+        }
+        
+        file.Close();
+    }
+
     void MassDependentFitter::ParameterManager::AddMassDependentParameters(
         int seed) {
         
@@ -1697,6 +1804,85 @@ namespace m2pw {
         }
     }
 
+    void MassDependentFitter::ParameterManager::AddMassIndependentParametersForL(
+        const std::vector<int>& targetL,
+        const std::vector<double>& massBins,
+        const std::map<std::string, std::pair<double,double>>& init_values) {
+        
+        cout << "Adding mass-independent parameters for L values from init_values map" << std::endl;
+        cout << "Number of mass bins: " << massBins.size() << std::endl;
+        cout << "Number of target L values: " << targetL.size() << std::endl;
+        cout << "Total init_values provided: " << init_values.size() << std::endl;
+        
+        // Iterate through mass bins
+        for (size_t mb_idx = 0; mb_idx < massBins.size(); ++mb_idx) {
+            double mass_bin = massBins[mb_idx];
+            TString massBinStr = Form("%.6f", mass_bin);
+            
+            // Iterate through target L values
+            for (size_t l_idx = 0; l_idx < targetL.size(); ++l_idx) {
+                int l_value = targetL[l_idx];
+                TString l_str = Form("%d", l_value);
+                
+                // Iterate through reflectivities (a, b) and M values (0 to L)
+                for (const std::string& refl : {"a", "b"}) {
+                    for (int m = 0; m <= l_value; ++m) {
+                        // Create the key to look up in init_values map
+                        std::string mag_key = refl + "_" + std::to_string(l_value) + "_" + std::to_string(m);
+                        
+                        // Check if this parameter exists in init_values
+                        auto it = init_values.find(mag_key);
+                        if (it == init_values.end()) {
+                            std::cerr << "Warning: Parameter " << mag_key << " not found in init_values map" << std::endl;
+                            continue;
+                        }
+                        
+                        double magnitude = it->second.first;
+                        double phase = it->second.second;
+                        
+                        // Create magnitude parameter name
+                        TString mag_param_name = Form("MI_%s_%s_%d_%d", massBinStr.Data(), refl.c_str(), l_value, m);
+                        
+                        // Check if parameter already exists
+                        if (parsList.find(mag_param_name) != parsList.end() || 
+                            nameToIndex.find(mag_param_name) != nameToIndex.end()) {
+                            std::cout << "Skipping parameter " << mag_param_name << " (already exists)" << std::endl;
+                            continue;
+                        }
+                        
+                        parsList[mag_param_name] = magnitude;
+                        nameToIndex[mag_param_name] = totalNpars;
+                        parIndexNames.push_back(mag_param_name);
+                        
+                        std::cout << "Added parameter: " << mag_param_name << " = " << magnitude 
+                                 << " (index: " << totalNpars << ")" << std::endl;
+                        totalNpars++;
+                        
+                        // Create phase parameter name
+                        TString phase_param_name = Form("MI_%s_%sphi_%d_%d", massBinStr.Data(), refl.c_str(), l_value, m);
+                        
+                        // Check if parameter already exists
+                        if (parsList.find(phase_param_name) != parsList.end() || 
+                            nameToIndex.find(phase_param_name) != nameToIndex.end()) {
+                            std::cout << "Skipping parameter " << phase_param_name << " (already exists)" << std::endl;
+                            continue;
+                        }
+                        
+                        parsList[phase_param_name] = phase;
+                        nameToIndex[phase_param_name] = totalNpars;
+                        parIndexNames.push_back(phase_param_name);
+                        
+                        std::cout << "Added parameter: " << phase_param_name << " = " << phase 
+                                 << " (index: " << totalNpars << ")" << std::endl;
+                        totalNpars++;
+                    }
+                }
+            }
+        }
+        
+        std::cout << "Total parameters added: " << totalNpars << std::endl;
+    }
+
     void MassDependentFitter::ParameterManager::AddMassIndependentParametersForPhase(
         const std::vector<TString>& targetVariables) {
 
@@ -1992,6 +2178,60 @@ namespace m2pw {
         }
         
         file->Close();
+    }
+
+    std::map<std::string, std::pair<double, double>> MassDependentFitter::ParameterManager::GetAmplitudeValuesAtMassBins(
+        const std::vector<int>& targetL,
+        double massBinCenter) {
+        
+        std::map<std::string, std::pair<double, double>> amplitudes;  // key: "a_l_m" or "b_l_m", value: {magnitude, phase}
+        
+        // Format mass bin as string with 6 decimal places
+        TString massBinStr = Form("%.6f", massBinCenter);
+        
+        // Now compute amplitudes for each L value
+        for (int l_value : targetL) {
+            // Iterate through reflectivities (a, b)
+            for (const std::string& refl : {"a", "b"}) {
+                // Iterate through M values (0 to L)
+                for (int m = 0; m <= l_value; ++m) {
+                    // Construct the key: "a_0_0", "a_0_1", "b_2_0", etc.
+                    std::string key = refl + "_" + std::to_string(l_value) + "_" + std::to_string(m);
+                    
+                    // Look up magnitude parameter: MI_<mass_bin>_<key>
+                    TString mag_param_name = Form("MI_%s_%s", massBinStr.Data(), key.c_str());
+                    double magnitude = 0.0;
+                    
+                    auto mag_it = parsList.find(mag_param_name);
+                    if (mag_it != parsList.end()) {
+                        magnitude = mag_it->second;
+                        std::cout << "Found magnitude parameter: " << mag_param_name << " = " << magnitude << std::endl;
+                    } else {
+                        std::cerr << "Warning: Could not find magnitude parameter: " << mag_param_name << std::endl;
+                    }
+                    
+                    // Look up phase parameter: MI_<mass_bin>_<refl>phi_<l>_<m>
+                    TString phase_param_name = Form("MI_%s_%sphi_%d_%d", massBinStr.Data(), refl.c_str(), l_value, m);
+                    double phase = 0.0;
+                    
+                    auto phase_it = parsList.find(phase_param_name);
+                    if (phase_it != parsList.end()) {
+                        phase = phase_it->second;
+                        std::cout << "Found phase parameter: " << phase_param_name << " = " << phase << std::endl;
+                    } else {
+                        std::cerr << "Warning: Could not find phase parameter: " << phase_param_name << std::endl;
+                    }
+                    
+                    // Store the amplitude
+                    amplitudes[key] = {magnitude, phase};
+                    
+                    std::cout << "Amplitude for " << key << " at mass_bin=" << massBinCenter 
+                             << ": magnitude=" << magnitude << ", phase=" << phase << std::endl;
+                }
+            }
+        }
+        
+        return amplitudes;
     }
 
 }
