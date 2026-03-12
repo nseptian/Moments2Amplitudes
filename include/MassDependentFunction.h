@@ -26,21 +26,21 @@ namespace m2pw{
 
         // Single parameter version
         double GetPWMagnitude(double mass, const double params) const {
-            return GetPWMagnitude(mass, vector<double>{params});
+            return GetPWMagnitude(mass, vector<double>{params}, false);
         }
 
         double GetPWPhase(double mass, const double params) const {
-            return GetPWPhase(mass, vector<double>{params});
+            return GetPWPhase(mass, vector<double>{params}, false);
         }
 
         // Vector parameter version (main implementation)
-        double GetPWMagnitude(double mass, const vector<double>& params) const {
-            complex<double> amp = GetAmplitude(mass, params);
+        double GetPWMagnitude(double mass, const vector<double>& params, bool include_globalphase = false) const {
+            complex<double> amp = GetAmplitude(mass, params, include_globalphase);
             return abs(amp);
         }
 
-        double GetPWPhase(double mass, const vector<double>& params) const {
-            complex<double> amp = GetAmplitude(mass, params);
+        double GetPWPhase(double mass, const vector<double>& params, bool include_globalphase = false) const {
+            complex<double> amp = GetAmplitude(mass, params, include_globalphase);
             return arg(amp);
         }
 
@@ -93,29 +93,44 @@ namespace m2pw{
         int _PolyOrder = 2;  // Polynomial order for conformal polynomial (FuncType=4)
 
         // Core amplitude calculation
-        complex<double> GetAmplitude(double mass, const vector<double>& params) const {
+        complex<double> GetAmplitude(double mass, const vector<double>& params, bool include_globalphase) const {
+            if (params.empty()) {
+                return complex<double>(0.0, 0.0);
+            }
+
             // Check mass bin bounds
             int bin = static_cast<int>((mass - _FirstMassBinCenter) / _MassBinWidth);
             if (bin < 0 || bin >= _NMassBins) {
                 return complex<double>(0.0, 0.0);
             }
 
-            double k = params[0];  // Coupling parameter always first
+            vector<double> coreParams = params;
+            double phase = 0.0;
+            if (include_globalphase && params.size() > 1) {
+                phase = params.back();
+                coreParams.pop_back();
+            }
+
+            if (coreParams.empty()) {
+                return complex<double>(0.0, 0.0);
+            }
+
+            double k = coreParams[0];  // Coupling parameter always first
             
             switch (_FuncType) {
                 case 0:  // a2(1320) - Breit-Wigner
                 case 1:  // a2(1700) - Breit-Wigner  
                 case 3:  // pi1(1400) - Breit-Wigner
-                    return GetBreitWignerAmplitude(mass, k, params);
+                    return GetBreitWignerAmplitude(mass, k, coreParams)*exp(complex<double>(0, phase));
                     
                 case 2:  // a0(980) - Flatté
-                    return GetFlatteAmplitude(mass, k, params);
+                    return GetFlatteAmplitude(mass, k, coreParams)*exp(complex<double>(0, phase));
                     
                 case 4:  // Conformal polynomial
-                    return GetConformalPolynomialAmplitude(mass, params);
+                    return GetConformalPolynomialAmplitude(mass, coreParams)*exp(complex<double>(0, phase));
                     
                 case 5:  // Flatté + conformal polynomial
-                    return GetFlattePlusConformalAmplitude(mass, params);
+                    return GetFlattePlusConformalAmplitude(mass, coreParams)*exp(complex<double>(0, phase));
                     
                 default:
                     return complex<double>(0.0, 0.0);

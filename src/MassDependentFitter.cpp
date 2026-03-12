@@ -8,6 +8,12 @@
 
 namespace m2pw {
 
+    namespace {
+        TString GlobalPhaseKeyForWave(const TString& waveName) {
+            return waveName;
+        }
+    }
+
     MassDependentFitter::MassDependentFitter(const Setup& setup, 
                                                            std::vector<double> mass_bins, 
                                                            double l_max, double noise, 
@@ -67,7 +73,7 @@ namespace m2pw {
         std::set<TString> allWaves;
         for (const auto& [l_value, waves] : massDependenceConfig_.massDependentWaves) {
             for (const TString& wave : waves) {
-                allWaves.insert(wave);
+                allWaves.insert(MassDependenceConfig::StripPhaseTag(wave));
             }
         }
         
@@ -228,7 +234,7 @@ namespace m2pw {
                             value = GetCoherentMagnitudeForL(mass_bin, par_name, massDepPars, l_value);
                         } else if (waves.size() == 1) {
                             // Single wave: direct evaluation
-                            value = GetSingleWaveMagnitude(mass_bin, par_name, massDepPars, waves[0]);
+                            value = GetSingleWaveMagnitude(mass_bin, par_name, massDepPars, l_value, waves[0]);
                         }
                     } else {
                         // Use mass-independent parameters
@@ -265,7 +271,7 @@ namespace m2pw {
                             value = GetCoherentPhaseForL(mass_bin, base_name, massDepPars, l_value);
                         } else if (waves.size() == 1) {
                             // Single wave: direct evaluation
-                            value = GetSingleWavePhase(mass_bin, base_name, massDepPars, waves[0]);
+                            value = GetSingleWavePhase(mass_bin, base_name, massDepPars, l_value, waves[0]);
                         }
                     }
                     // If hasPhaseInMassIndepPars is true, value is already set above
@@ -586,13 +592,13 @@ namespace m2pw {
                           << " with initial value " << initialValues[i] << std::endl;
                 
                 double step = 0.1;
-                if (parName.Contains("phi")) {
+                if (parName.Contains("phi") || parName.Contains("globalphase")) {
                     step = 0.01;
                 }
                 minimizer->SetVariable(i, parName.Data(), initialValues[i], step);
                 
                 // Add phi parameter constraints
-                if (parName.Contains("phi")) {
+                if (parName.Contains("phi") || parName.Contains("globalphase")) {
                     minimizer->SetVariableLimits(i, -TMath::Pi(), TMath::Pi());
                 }
             }
@@ -630,6 +636,7 @@ namespace m2pw {
         double mass_bin, 
         const TString& par_name,
         const std::map<TString, std::vector<double>>& massDepPars,
+        int l_value,
         const TString& waveName) const {
         
         TString key = Form("%s_%s", par_name.Data(), waveName.Data());
@@ -639,11 +646,18 @@ namespace m2pw {
             int funcIndex = GetFunctionIndexForWave(waveName);
             
             if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
-                double coupling = it->second[0];
-                double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, coupling);
+                std::vector<double> params = it->second;
+                const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
+                if (includeGlobalPhase) {
+                    const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
+                    const double globalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty()) ? phaseIt->second[0] : 0.0;
+                    params.push_back(globalPhase);
+                }
+
+                double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, params, includeGlobalPhase);
                 
                 // std::cout << "Single wave " << waveName << " magnitude for " << par_name 
-                //          << ": " << magnitude << " (coupling=" << coupling << ")" << std::endl;
+                //          << ": " << magnitude << std::endl;
                 
                 return magnitude;
             }
@@ -657,6 +671,7 @@ namespace m2pw {
         double mass_bin, 
         const TString& base_name,
         const std::map<TString, std::vector<double>>& massDepPars,
+        int l_value,
         const TString& waveName) const {
         
         TString key = Form("%s_%s", base_name.Data(), waveName.Data());
@@ -666,11 +681,18 @@ namespace m2pw {
             int funcIndex = GetFunctionIndexForWave(waveName);
             
             if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
-                double coupling = it->second[0];
-                double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, coupling);
+                std::vector<double> params = it->second;
+                const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
+                if (includeGlobalPhase) {
+                    const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
+                    const double globalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty()) ? phaseIt->second[0] : 0.0;
+                    params.push_back(globalPhase);
+                }
+
+                double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, params, includeGlobalPhase);
                 
                 // std::cout << "Single wave " << waveName << " phase for " << base_name 
-                //          << ": " << phase << " (coupling=" << coupling << ")" << std::endl;
+                //          << ": " << phase << std::endl;
                 
                 return phase;
             }
@@ -702,16 +724,23 @@ namespace m2pw {
                 int funcIndex = GetFunctionIndexForWave(waveName);
                 
                 if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
-                    double coupling = it->second[0];
-                    double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, coupling);
-                    double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, coupling);
+                    std::vector<double> params = it->second;
+                    const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
+                    if (includeGlobalPhase) {
+                        const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
+                        const double globalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty()) ? phaseIt->second[0] : 0.0;
+                        params.push_back(globalPhase);
+                    }
+
+                    double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, params, includeGlobalPhase);
+                    double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, params, includeGlobalPhase);
                     
                     // Add complex amplitude
                     std::complex<double> wave_amplitude = magnitude * std::complex<double>(std::cos(phase), std::sin(phase));
                     total_amplitude += wave_amplitude;
                     
                     std::cout << "  Wave " << waveName << " contribution: |A|=" << magnitude 
-                             << ", phase=" << phase << ", coupling=" << coupling << std::endl;
+                             << ", phase=" << phase << std::endl;
                 }
             }
         }
@@ -745,9 +774,16 @@ namespace m2pw {
                 int funcIndex = GetFunctionIndexForWave(waveName);
                 
                 if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
-                    double coupling = it->second[0];
-                    double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, coupling);
-                    double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, coupling);
+                    std::vector<double> params = it->second;
+                    const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
+                    if (includeGlobalPhase) {
+                        const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
+                        const double globalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty()) ? phaseIt->second[0] : 0.0;
+                        params.push_back(globalPhase);
+                    }
+
+                    double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, params, includeGlobalPhase);
+                    double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, params, includeGlobalPhase);
                     
                     // Add complex amplitude
                     std::complex<double> wave_amplitude = magnitude * std::complex<double>(std::cos(phase), std::sin(phase));
@@ -1170,6 +1206,29 @@ namespace m2pw {
         auto& hConfig = fitter.GetMomentsConfig();
         
         randomSeed = seed;
+
+        for (const auto& [l_value, waves] : config.massDependentWaves) {
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) continue;
+            for (const TString& configuredWave : waves) {
+                if (!MassDependenceConfig::HasPhaseTag(configuredWave)) continue;
+
+                const TString waveName = MassDependenceConfig::StripPhaseTag(configuredWave);
+                TString phaseParName = Form("MD_%s_globalphase", waveName.Data());
+                if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
+                    continue;
+                }
+
+                parsList[phaseParName] = 0.0;
+                nameToIndex[phaseParName] = totalNpars;
+                parIndexNames.push_back(phaseParName);
+                totalNpars++;
+
+                std::cout << "Added mass-dependent parameter for l=" << l_value
+                    << ": " << phaseParName
+                    << " (global phase, index: " << totalNpars-1 << ") = 0" << std::endl;
+            }
+        }
+
         for (const TString& parName : parNames) {
             // Parse parameter name to extract l value
             std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
@@ -1229,6 +1288,34 @@ namespace m2pw {
 
         tree->GetEntry(0);  // Load first entry to get parameter names
         cout << "Loading mass dependent parameter initial values from file: " << filePath << std::endl;
+
+        for (const auto& [l_value, waves] : config.massDependentWaves) {
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) continue;
+            for (const TString& configuredWave : waves) {
+                if (!MassDependenceConfig::HasPhaseTag(configuredWave)) continue;
+
+                const TString waveName = MassDependenceConfig::StripPhaseTag(configuredWave);
+                TString phaseParName = Form("MD_%s_globalphase", waveName.Data());
+                if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
+                    continue;
+                }
+
+                double value = 0.0;
+
+                parsList[phaseParName] = value;
+                nameToIndex[phaseParName] = totalNpars;
+                parIndexNames.push_back(phaseParName);
+                if (isFixed) {
+                    fixedParNames.push_back(phaseParName);
+                }
+                totalNpars++;
+
+                std::cout << "Added mass-dependent parameter for l=" << l_value
+                    << ": " << phaseParName
+                    << " (global phase, " << (isFixed ? "FIXED" : "FREE")
+                    << ", index: " << totalNpars-1 << ") = " << value << std::endl;
+            }
+        }
 
         for (const TString& parName : parNames) {
             // Parse parameter name to extract l value
@@ -1531,6 +1618,35 @@ namespace m2pw {
                 }
             }
         }
+
+        for (const int l_value : targetL) {
+            if (!config.IsMassDependent(l_value)) continue;
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) continue;
+            const auto wavesIt = config.massDependentWaves.find(l_value);
+            if (wavesIt == config.massDependentWaves.end()) continue;
+            for (const TString& configuredWave : wavesIt->second) {
+                if (!MassDependenceConfig::HasPhaseTag(configuredWave)) continue;
+
+                const TString waveName = MassDependenceConfig::StripPhaseTag(configuredWave);
+                TString phaseParName = Form("MD_%s_globalphase", waveName.Data());
+                if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
+                    continue;
+                }
+
+                parsList[phaseParName] = 0.0;
+                nameToIndex[phaseParName] = totalNpars;
+                parIndexNames.push_back(phaseParName);
+                if (isFixed) {
+                    fixedParNames.push_back(phaseParName);
+                }
+                totalNpars++;
+
+                std::cout << "Added mass-dependent parameter for l=" << l_value
+                    << ": " << phaseParName
+                    << " (global phase, " << (isFixed ? "FIXED" : "FREE")
+                    << ", index: " << totalNpars-1 << ") = 0" << std::endl;
+            }
+        }
     }
 
     void MassDependentFitter::ParameterManager::AddMassDependentParametersForL(
@@ -1673,6 +1789,37 @@ namespace m2pw {
                 }
             }
         }
+
+        for (const int l_value : targetL) {
+            if (!config.IsMassDependent(l_value)) continue;
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) continue;
+            const auto wavesIt = config.massDependentWaves.find(l_value);
+            if (wavesIt == config.massDependentWaves.end()) continue;
+            for (const TString& configuredWave : wavesIt->second) {
+                if (!MassDependenceConfig::HasPhaseTag(configuredWave)) continue;
+
+                const TString waveName = MassDependenceConfig::StripPhaseTag(configuredWave);
+                TString phaseParName = Form("MD_%s_globalphase", waveName.Data());
+                if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
+                    continue;
+                }
+
+                double value = 0.0;
+
+                parsList[phaseParName] = value;
+                nameToIndex[phaseParName] = totalNpars;
+                parIndexNames.push_back(phaseParName);
+                if (isFixed) {
+                    fixedParNames.push_back(phaseParName);
+                }
+                totalNpars++;
+
+                std::cout << "Added mass-dependent parameter for l=" << l_value
+                    << ": " << phaseParName
+                    << " (global phase, " << (isFixed ? "FIXED" : "FREE")
+                    << ", index: " << totalNpars-1 << ") = " << value << std::endl;
+            }
+        }
         
         file->Close();
     }
@@ -1690,6 +1837,14 @@ namespace m2pw {
         
         randomSeed = seed;
         TRandom3 rng(seed);
+
+        std::set<int> targetLValues;
+        for (const TString& amplitudeName : targetL) {
+            std::unique_ptr<TObjArray> ampParts(amplitudeName.Tokenize("_"));
+            if (ampParts->GetEntries() < 3) continue;
+            TString lStr = ((TObjString*)ampParts->At(1))->GetString();
+            targetLValues.insert(lStr.Atoi());
+        }
         
         for (const TString& parName : parNames) {
             // Parse parameter name to extract l and m values
@@ -1800,6 +1955,35 @@ namespace m2pw {
                     
                     totalNpars++;
                 }
+            }
+        }
+
+        for (const int l_value : targetLValues) {
+            if (!config.IsMassDependent(l_value)) continue;
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) continue;
+            const auto wavesIt = config.massDependentWaves.find(l_value);
+            if (wavesIt == config.massDependentWaves.end()) continue;
+            for (const TString& configuredWave : wavesIt->second) {
+                if (!MassDependenceConfig::HasPhaseTag(configuredWave)) continue;
+
+                const TString waveName = MassDependenceConfig::StripPhaseTag(configuredWave);
+                TString phaseParName = Form("MD_%s_globalphase", waveName.Data());
+                if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
+                    continue;
+                }
+
+                parsList[phaseParName] = 0.0;
+                nameToIndex[phaseParName] = totalNpars;
+                parIndexNames.push_back(phaseParName);
+                if (isFixed) {
+                    fixedParNames.push_back(phaseParName);
+                }
+                totalNpars++;
+
+                std::cout << "Added mass-dependent parameter for l=" << l_value
+                    << ": " << phaseParName
+                    << " (global phase, " << (isFixed ? "FIXED" : "FREE")
+                    << ", index: " << totalNpars-1 << ") = 0" << std::endl;
             }
         }
     }
@@ -2062,6 +2246,14 @@ namespace m2pw {
             tree->GetEntry(0);
         }
 
+        std::set<int> targetLValues;
+        for (const TString& amplitudeName : targetL) {
+            std::unique_ptr<TObjArray> ampParts(amplitudeName.Tokenize("_"));
+            if (ampParts->GetEntries() < 3) continue;
+            TString lStr = ((TObjString*)ampParts->At(1))->GetString();
+            targetLValues.insert(lStr.Atoi());
+        }
+
         for (const TString& parName : parNames) {
             // Parse parameter name to extract l and m values
             std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
@@ -2174,6 +2366,37 @@ namespace m2pw {
                     std::cout << " (index: " << totalNpars << ")" << std::endl;
                     totalNpars++;
                 }
+            }
+        }
+
+        for (const int l_value : targetLValues) {
+            if (!config.IsMassDependent(l_value)) continue;
+            if (!fitter.ParameterNeededForMoments(l_value, hConfig)) continue;
+            const auto wavesIt = config.massDependentWaves.find(l_value);
+            if (wavesIt == config.massDependentWaves.end()) continue;
+            for (const TString& configuredWave : wavesIt->second) {
+                if (!MassDependenceConfig::HasPhaseTag(configuredWave)) continue;
+
+                const TString waveName = MassDependenceConfig::StripPhaseTag(configuredWave);
+                TString phaseParName = Form("MD_%s_globalphase", waveName.Data());
+                if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
+                    continue;
+                }
+
+                double value = 0.0;
+
+                parsList[phaseParName] = value;
+                nameToIndex[phaseParName] = totalNpars;
+                parIndexNames.push_back(phaseParName);
+                if (isFixed) {
+                    fixedParNames.push_back(phaseParName);
+                }
+                totalNpars++;
+
+                std::cout << "Added mass-dependent parameter for l=" << l_value
+                    << ": " << phaseParName
+                    << " (global phase, " << (isFixed ? "FIXED" : "FREE")
+                    << ", index: " << totalNpars-1 << ") = " << value << std::endl;
             }
         }
         

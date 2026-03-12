@@ -51,11 +51,59 @@ namespace m2pw {
             bool IsMassIndependent(int l) const {
                 return std::find(massIndependentL.begin(), massIndependentL.end(), l) != massIndependentL.end();
             }
+
+            static bool HasPhaseTag(const TString& waveName) {
+                return waveName.EndsWith("_phase");
+            }
+
+            static TString StripPhaseTag(const TString& waveName) {
+                if (!HasPhaseTag(waveName)) {
+                    return waveName;
+                }
+
+                TString stripped = waveName;
+                stripped.Remove(stripped.Length() - 6);
+                return stripped;
+            }
+
+            bool UseGlobalPhaseForWave(int l, const TString& waveName) const {
+                auto it = massDependentWaves.find(l);
+                if (it == massDependentWaves.end()) {
+                    return false;
+                }
+
+                for (const TString& configuredWave : it->second) {
+                    if (StripPhaseTag(configuredWave) == waveName && HasPhaseTag(configuredWave)) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            bool IsGlobalPhaseEnabledForL(int l) const {
+                auto it = massDependentWaves.find(l);
+                if (it == massDependentWaves.end()) {
+                    return false;
+                }
+
+                return std::any_of(it->second.begin(), it->second.end(),
+                                   [](const TString& waveName) { return HasPhaseTag(waveName); });
+            }
             
             // Get wave names for a given l value
             std::vector<TString> GetWavesForL(int l) const {
                 auto it = massDependentWaves.find(l);
-                return (it != massDependentWaves.end()) ? it->second : std::vector<TString>{};
+                if (it == massDependentWaves.end()) {
+                    return {};
+                }
+
+                std::vector<TString> normalizedWaves;
+                normalizedWaves.reserve(it->second.size());
+                for (const TString& waveName : it->second) {
+                    normalizedWaves.push_back(StripPhaseTag(waveName));
+                }
+                return normalizedWaves;
             }
         };
 
@@ -336,11 +384,13 @@ private:
     double GetSingleWaveMagnitude(double mass_bin, 
                                 const TString& par_name,
                                 const std::map<TString, std::vector<double>>& massDepPars,
+                                int l_value,
                                 const TString& waveName) const;
 
     double GetSingleWavePhase(double mass_bin, 
                             const TString& base_name,
                             const std::map<TString, std::vector<double>>& massDepPars,
+                            int l_value,
                             const TString& waveName) const;
 
     // Helper methods for coherent amplitude combination (multiple waves)
