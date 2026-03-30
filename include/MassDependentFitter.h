@@ -245,6 +245,7 @@ namespace m2pw {
             std::map<TString, double> parsList;
             std::vector<TString> fixedParNames;  // For fixed parameters
             std::map<TString, int> nameToIndex;
+            std::map<TString, std::pair<double, double>> parameterLimits;  // Optional per-parameter limits
             std::vector<double> parErrors;  // Store parameter errors
             int totalNpars = 0;
             int randomSeed = -1;
@@ -314,6 +315,11 @@ namespace m2pw {
                                           const bool magnitudeOnly,
                                           const bool isFixed,
                                           const bool yieldOnly = false);
+
+            bool SetParameterInitialValue(const TString& parName, double value);
+            bool SetParameterLimits(const TString& parName, double lower, double upper);
+            void SetParameterInitialValues(const std::map<TString, double>& values);
+            void SetParameterLimitsBatch(const std::map<TString, std::pair<double, double>>& limits);
 
             std::map<std::string, std::pair<double,double>> GetAmplitudeValuesAtMassBins(
                 const std::vector<int>& targetL,
@@ -407,7 +413,7 @@ private:
     // Helper method to map wave names to function indices
     int GetFunctionIndexForWave(const TString& waveName) const;
 
-    // Helper method to extract L value from equation name (e.g., "H_0_0" -> 0)
+    // Helper method to extract L value from equation name (format: "H_alpha_L_M")
     int ExtractLFromEquationName(const TString& eqnName) const;
 
     // Helper method to determine if parameters for a given L are needed based on H moments config

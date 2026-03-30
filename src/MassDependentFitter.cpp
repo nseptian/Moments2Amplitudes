@@ -9,8 +9,36 @@
 namespace m2pw {
 
     namespace {
+        void LogMDInfo(const TString& stage, const TString& message) {
+            std::cout << "[MD][" << stage << "] " << message << std::endl;
+        }
+
+        void LogMDWarn(const TString& stage, const TString& message) {
+            std::cerr << "[MD][" << stage << "] " << message << std::endl;
+        }
+
+        void LogMIInfo(const TString& stage, const TString& message) {
+            std::cout << "[MI][" << stage << "] " << message << std::endl;
+        }
+
+        void LogMIWarn(const TString& stage, const TString& message) {
+            std::cerr << "[MI][" << stage << "] " << message << std::endl;
+        }
+
+        void LogFitInfo(const TString& stage, const TString& message) {
+            std::cout << "[FIT][" << stage << "] " << message << std::endl;
+        }
+
+        void LogFitWarn(const TString& stage, const TString& message) {
+            std::cerr << "[FIT][" << stage << "] " << message << std::endl;
+        }
+
         TString GlobalPhaseKeyForWave(const TString& waveName) {
             return waveName;
+        }
+
+        TString SharedResonanceKeyForWave(const TString& waveName) {
+            return Form("shared_%s", waveName.Data());
         }
     }
 
@@ -86,25 +114,25 @@ namespace m2pw {
                 massDepFuncs_.emplace_back(static_cast<int>(massBins_.size()), 
                                           massBins_.front(), bin_width, 0);  // Breit-Wigner for a2(1320)
                 waveToFunctionIndex_[wave] = funcIndex;
-                std::cout << "  - Function " << funcIndex << ": " << wave << " Breit-Wigner" << std::endl;
+                LogFitInfo("MDFUNC", Form("index=%d wave=%s model=BreitWigner", funcIndex, wave.Data()));
                 funcIndex++;
             } else if (wave == "a2_1700") {
                 massDepFuncs_.emplace_back(static_cast<int>(massBins_.size()), 
                                           massBins_.front(), bin_width, 1);  // Breit-Wigner for a2(1700)
                 waveToFunctionIndex_[wave] = funcIndex;
-                std::cout << "  - Function " << funcIndex << ": " << wave << " Breit-Wigner" << std::endl;
+                LogFitInfo("MDFUNC", Form("index=%d wave=%s model=BreitWigner", funcIndex, wave.Data()));
                 funcIndex++;
             } else if (wave == "a0_980") {
                 massDepFuncs_.emplace_back(static_cast<int>(massBins_.size()), 
                                           massBins_.front(), bin_width, 2);  // Flatté for a0(980)
                 waveToFunctionIndex_[wave] = funcIndex;
-                std::cout << "  - Function " << funcIndex << ": " << wave << " Flatté" << std::endl;
+                LogFitInfo("MDFUNC", Form("index=%d wave=%s model=Flatte", funcIndex, wave.Data()));
                 funcIndex++;
             } else if (wave == "pi1_1400") {
                 massDepFuncs_.emplace_back(static_cast<int>(massBins_.size()), 
                                           massBins_.front(), bin_width, 3);  // Breit-Wigner for pi1(1400)
                 waveToFunctionIndex_[wave] = funcIndex;
-                std::cout << "  - Function " << funcIndex << ": " << wave << " Breit-Wigner" << std::endl;
+                LogFitInfo("MDFUNC", Form("index=%d wave=%s model=BreitWigner", funcIndex, wave.Data()));
                 funcIndex++;
             } else if (wave.Contains("conformal") || wave.Contains("poly")) {
                 // Extract polynomial order from wave name if specified (e.g., "conformal_S0_order3")
@@ -120,14 +148,14 @@ namespace m2pw {
                 massDepFuncs_.emplace_back(static_cast<int>(massBins_.size()), 
                                           massBins_.front(), bin_width, 4, polyOrder);  // Conformal polynomial
                 waveToFunctionIndex_[wave] = funcIndex;
-                std::cout << "  - Function " << funcIndex << ": " << wave << " Conformal Polynomial (order " << polyOrder << ")" << std::endl;
+                LogFitInfo("MDFUNC", Form("index=%d wave=%s model=ConformalPolynomial order=%d", funcIndex, wave.Data(), polyOrder));
                 funcIndex++;
             } else {
-                std::cerr << "Warning: Unknown wave " << wave << " in configuration. Skipping." << std::endl;
+                LogFitWarn("MDFUNC", Form("wave=%s reason=unknown_wave skipped=1", wave.Data()));
             }
         }
         
-        std::cout << "Initialized " << massDepFuncs_.size() << " mass-dependent functions based on configuration." << std::endl;
+        LogFitInfo("MDFUNC", Form("initialized_count=%zu", massDepFuncs_.size()));
     }
 
     void MassDependentFitter::SetMassDependenceConfig(const MassDependenceConfig& config) {
@@ -295,7 +323,7 @@ namespace m2pw {
                 eqn.Print(opt);
             }
         } else {
-            std::cout << "No equations found for mass bin center: " << mass_bin_center << std::endl;
+            LogFitWarn("EQUATION", Form("mass_bin=%g reason=no_equations_found", mass_bin_center));
         }
     }
 
@@ -318,29 +346,29 @@ namespace m2pw {
 
     void MassDependentFitter::PrintParNameIndices() const {
         for (const auto& [name, index] : parNameToIndex_) {
-            std::cout << "Parameter: " << name << ", Index: " << index << std::endl;
+            LogFitInfo("PARAM", Form("name=%s index=%d", name.Data(), index));
         }
     }
 
     void MassDependentFitter::PrintParCurrentVals(double mass_bin_center) const {
         const auto it = pars_.find(mass_bin_center);
         if (it != pars_.end()) {
-            std::cout << "Current parameter values for mass bin center " << mass_bin_center << ":" << std::endl;
+            LogFitInfo("PARAM", Form("dump_current_values mass_bin=%g", mass_bin_center));
             it->second.Print("v");
         } else {
-            std::cout << "No parameters found for mass bin center: " << mass_bin_center << std::endl;
+            LogFitWarn("PARAM", Form("mass_bin=%g reason=no_parameters_found", mass_bin_center));
         }
     }
 
     void MassDependentFitter::MakeResultTree(const ParameterManager& paramManager, const TString& fileName) const {
         if (pars_.empty()) {
-            std::cerr << "No parameters to save" << std::endl;
+            LogFitWarn("RESULT", "reason=no_parameters_to_save");
             return;
         }
 
         std::unique_ptr<TFile> file(TFile::Open(fileName, "RECREATE"));
         if (!file || file->IsZombie()) {
-            std::cerr << "Error creating file: " << fileName << std::endl;
+            LogFitWarn("RESULT", Form("failed_to_create_file path=%s", fileName.Data()));
             return;
         }
 
@@ -377,7 +405,7 @@ namespace m2pw {
             tree->Branch(momentName, &hMomentBranchValues[momentName]);
         }
         
-        std::cout << "Filling the result tree with amplitude and moment values..." << std::endl;
+        LogFitInfo("RESULT", "filling_tree=result content=amplitude_and_moments");
 
         for (const auto& [mass_bin, pars] : pars_) {
             mass_bin_center = mass_bin;
@@ -409,7 +437,7 @@ namespace m2pw {
 
         // vector<double> ParameterValues = paramManager.GetValues();
 
-        cout << "Filling the result tree with mass-dependent parameters..." << std::endl;
+        LogFitInfo("RESULT", "filling_tree=mass_dependent_params");
 
         // create new tree to store mass dependent parameters
         auto mdTree = std::make_unique<TTree>("mass_dependent_params", "Mass Dependent Parameters");
@@ -420,7 +448,7 @@ namespace m2pw {
         for (const auto& [parName, value] : paramManager.parsList) {
             // double currentValue = value;
             if (parName.BeginsWith("MD_")) {  // Only mass-dependent parameters
-                cout << parName << " = " << value << std::endl;
+                LogFitInfo("RESULT", Form("tree=mass_dependent_params param=%s value=%g", parName.Data(), value));
                 md_par_vals[idx] = value;
                 mdTree->Branch(parName, &md_par_vals[idx]);
                 idx++;
@@ -437,16 +465,14 @@ namespace m2pw {
         bool isValid = minimizerIsValid_;
         int status = minimizerStatus_;
 
-        std::cout << "Random seed used to initialize parameters: " << seed_val << std::endl;
-        std::cout << "Is valid minimum: " << isValid << std::endl;
-        std::cout << "Minimizer status: " << status << std::endl;
+        LogFitInfo("MIN", Form("seed=%d is_valid=%d status=%d", seed_val, isValid, status));
 
         chi2_tree->Branch("isValid", &isValid);
         chi2_tree->Branch("Status", &status);
         chi2_tree->Fill();
 
         file->Write();
-        std::cout << "Result tree saved to " << fileName << std::endl;
+        LogFitInfo("RESULT", Form("saved path=%s", fileName.Data()));
     }
 
     std::vector<double> MassDependentFitter::ParameterManager::GetValues() const {
@@ -455,6 +481,58 @@ namespace m2pw {
             values[i] = parsList.at(parIndexNames[i]);
         }
         return values;
+    }
+
+    bool MassDependentFitter::ParameterManager::SetParameterInitialValue(const TString& parName, double value) {
+        auto it = parsList.find(parName);
+        if (it == parsList.end()) {
+            LogMDWarn("CONFIG", Form("set_initial_failed param=%s reason=not_found", parName.Data()));
+            return false;
+        }
+
+        const double oldValue = it->second;
+        it->second = value;
+        LogMDInfo("CONFIG", Form("set_initial_ok param=%s old=%g new=%g", parName.Data(), oldValue, value));
+        return true;
+    }
+
+    bool MassDependentFitter::ParameterManager::SetParameterLimits(const TString& parName, double lower, double upper) {
+        if (!(lower < upper)) {
+            LogMDWarn("CONFIG", Form("set_limits_failed param=%s reason=invalid_range lower=%g upper=%g", parName.Data(), lower, upper));
+            return false;
+        }
+
+        auto it = parsList.find(parName);
+        if (it == parsList.end()) {
+            LogMDWarn("CONFIG", Form("set_limits_failed param=%s reason=not_found", parName.Data()));
+            return false;
+        }
+
+        parameterLimits[parName] = {lower, upper};
+        LogMDInfo("CONFIG", Form("set_limits_ok param=%s lower=%g upper=%g", parName.Data(), lower, upper));
+        return true;
+    }
+
+    void MassDependentFitter::ParameterManager::SetParameterInitialValues(const std::map<TString, double>& values) {
+        int successCount = 0;
+        for (const auto& [parName, value] : values) {
+            if (SetParameterInitialValue(parName, value)) {
+                successCount++;
+            }
+        }
+        LogMDInfo("CONFIG", Form("set_initial_batch total=%zu success=%d failed=%zu",
+            values.size(), successCount, values.size() - successCount));
+    }
+
+    void MassDependentFitter::ParameterManager::SetParameterLimitsBatch(const std::map<TString, std::pair<double, double>>& limits) {
+        int successCount = 0;
+        for (const auto& [parName, range] : limits) {
+            if (SetParameterLimits(parName, range.first, range.second)) {
+                successCount++;
+            }
+        }
+        LogMDInfo("CONFIG", Form("set_limits_batch total=%zu success=%d failed=%zu",
+            limits.size(), successCount, limits.size() - successCount));
     }
 
     void MassDependentFitter::ParameterManager::StoreResults(const ROOT::Math::Minimizer* minimizer) {
@@ -552,7 +630,7 @@ namespace m2pw {
     }
 
     void MassDependentFitter::MinimizeChi2(ParameterManager& paramManager) {
-        std::cout << "Total number of parameters: " << paramManager.totalNpars << std::endl;
+        LogFitInfo("MIN", Form("total_parameters=%d", paramManager.totalNpars));
 
         // Get initial parameter values
         std::vector<double> initialValues = paramManager.GetValues();
@@ -561,7 +639,7 @@ namespace m2pw {
             ROOT::Math::Factory::CreateMinimizer("Minuit2", "Migrad"));
 
         if (!minimizer) {
-            std::cerr << "Error: Cannot create Minuit2 minimizer" << std::endl;
+            LogFitWarn("MIN", "reason=minuit2_creation_failed");
             return;
         }
 
@@ -571,7 +649,7 @@ namespace m2pw {
         TStopwatch timer;
         timer.Start();
 
-        std::cout << "Chi2 before minimization: " << chi2Function(initialValues.data()) << std::endl;
+        LogFitInfo("MIN", Form("chi2_before=%g", chi2Function(initialValues.data())));
 
         minimizer->SetFunction(functor);
 
@@ -583,13 +661,11 @@ namespace m2pw {
             const TString& parName = paramManager.parIndexNames[i];
             
             if (isFixed(parName)) {
-                std::cout << "Setting fixed fit parameter " << i << ": " << parName 
-                          << " with value " << initialValues[i] << std::endl;
+                LogFitInfo("MIN", Form("set_param index=%d name=%s state=FIXED value=%g", i, parName.Data(), initialValues[i]));
                 minimizer->SetFixedVariable(i, parName.Data(), initialValues[i]);
             }
             else {
-                std::cout << "Setting free fit parameter " << i << ": " << parName 
-                          << " with initial value " << initialValues[i] << std::endl;
+                LogFitInfo("MIN", Form("set_param index=%d name=%s state=FREE init=%g", i, parName.Data(), initialValues[i]));
                 
                 double step = 0.1;
                 if (parName.Contains("phi") || parName.Contains("globalphase")) {
@@ -600,6 +676,11 @@ namespace m2pw {
                 // Add phi parameter constraints
                 if (parName.Contains("phi") || parName.Contains("globalphase")) {
                     minimizer->SetVariableLimits(i, -TMath::Pi(), TMath::Pi());
+                }
+
+                const auto limitsIt = paramManager.parameterLimits.find(parName);
+                if (limitsIt != paramManager.parameterLimits.end() && limitsIt->second.first < limitsIt->second.second) {
+                    minimizer->SetVariableLimits(i, limitsIt->second.first, limitsIt->second.second);
                 }
             }
         }
@@ -612,10 +693,10 @@ namespace m2pw {
         minimizerStatus_ = minimizer->Status();
         lastChi2_ = minimizer->MinValue();
 
-        std::cout << "Chi2 after minimization: " << lastChi2_ << std::endl;
+        LogFitInfo("MIN", Form("chi2_after=%g", lastChi2_));
 
         timer.Stop();
-        std::cout << "Minimization time: " << timer.RealTime() << " seconds" << std::endl;
+        LogFitInfo("MIN", Form("elapsed_seconds=%g", timer.RealTime()));
 
         minimizer->PrintResults();
 
@@ -647,6 +728,13 @@ namespace m2pw {
             
             if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
                 std::vector<double> params = it->second;
+                if (params.size() == 1) {
+                    auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
+                    if (sharedIt != massDepPars.end()) {
+                        if (sharedIt->second.size() >= 1) params.push_back(sharedIt->second[0]);
+                        if (sharedIt->second.size() >= 2) params.push_back(sharedIt->second[1]);
+                    }
+                }
                 const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
                 if (includeGlobalPhase) {
                     const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
@@ -682,6 +770,13 @@ namespace m2pw {
             
             if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
                 std::vector<double> params = it->second;
+                if (params.size() == 1) {
+                    auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
+                    if (sharedIt != massDepPars.end()) {
+                        if (sharedIt->second.size() >= 1) params.push_back(sharedIt->second[0]);
+                        if (sharedIt->second.size() >= 2) params.push_back(sharedIt->second[1]);
+                    }
+                }
                 const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
                 if (includeGlobalPhase) {
                     const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
@@ -725,6 +820,13 @@ namespace m2pw {
                 
                 if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
                     std::vector<double> params = it->second;
+                    if (params.size() == 1) {
+                        auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
+                        if (sharedIt != massDepPars.end()) {
+                            if (sharedIt->second.size() >= 1) params.push_back(sharedIt->second[0]);
+                            if (sharedIt->second.size() >= 2) params.push_back(sharedIt->second[1]);
+                        }
+                    }
                     const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
                     if (includeGlobalPhase) {
                         const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
@@ -775,6 +877,13 @@ namespace m2pw {
                 
                 if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
                     std::vector<double> params = it->second;
+                    if (params.size() == 1) {
+                        auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
+                        if (sharedIt != massDepPars.end()) {
+                            if (sharedIt->second.size() >= 1) params.push_back(sharedIt->second[0]);
+                            if (sharedIt->second.size() >= 2) params.push_back(sharedIt->second[1]);
+                        }
+                    }
                     const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
                     if (includeGlobalPhase) {
                         const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
@@ -805,7 +914,7 @@ namespace m2pw {
             return it->second;
         }
         
-        std::cerr << "Warning: Unknown wave name " << waveName << std::endl;
+        LogMDWarn("LOOKUP", Form("wave=%s reason=unknown_wave_name", waveName.Data()));
         return -1;
     }
 
@@ -829,7 +938,7 @@ namespace m2pw {
                 
                 // Check if this parameter is needed for the H(L,M)s configuration  
                 if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
-                    std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not needed)" << std::endl;
+                    LogMIInfo("SKIP", Form("param=%s reason=not_needed_for_selected_moments l=%d", parName.Data(), l_value));
                     continue;
                 }
                 
@@ -840,7 +949,7 @@ namespace m2pw {
                 
                 // Check if parameter already exists - skip if already added
                 if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
-                    std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                    LogMIInfo("SKIP", Form("param=%s reason=already_exists", name.Data()));
                     continue;
                 }
                 
@@ -851,7 +960,8 @@ namespace m2pw {
                 parIndexNames.push_back(name);
                 totalNpars++;
 
-                std::cout << "Added mass-independent parameter for (l = " << l_value << "): " << name << " (index: " << totalNpars-1 << ") = " << initialValue << std::endl;
+                LogMIInfo("ADD", Form("param=%s l=%d index=%d value=%g",
+                    name.Data(), l_value, totalNpars - 1, initialValue));
             }
         }
     }
@@ -880,7 +990,7 @@ namespace m2pw {
                 
                 // Check if this parameter is needed for the H(L,M)s configuration  
                 if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
-                    std::cout << "Skipping fixed parameter " << parName << " (l=" << l_value << " not needed)" << std::endl;
+                    LogMIInfo("SKIP", Form("param=%s reason=fixed_not_needed_for_selected_moments l=%d", parName.Data(), l_value));
                     continue;
                 }
                 
@@ -896,8 +1006,8 @@ namespace m2pw {
                 parIndexNames.push_back(name);
                 fixedParNames.push_back(name);  // Mark as fixed
                 
-                std::cout << "Added fixed parameter for L=" << l_value 
-                         << ": " << name << " = " << fixedValue << " (index: " << totalNpars << ")" << std::endl;
+                LogMIInfo("ADD", Form("param=%s l=%d state=FIXED index=%d value=%g",
+                    name.Data(), l_value, totalNpars, fixedValue));
                 totalNpars++;
             }
         }
@@ -915,7 +1025,7 @@ namespace m2pw {
         for (const std::string& lReflectivity : lReflectivities) {
             // Parse L and reflectivity from string like "1+" or "2-"
             if (lReflectivity.empty()) {
-                std::cerr << "Error: lReflectivity string is empty" << std::endl;
+                LogMIWarn("CONFIG", "invalid_l_reflectivity reason=empty_string");
                 continue;
             }
             
@@ -923,7 +1033,7 @@ namespace m2pw {
             std::string l_str = lReflectivity.substr(0, lReflectivity.length() - 1);  // Get L value part
             
             if (reflectivity != '+' && reflectivity != '-') {
-                std::cerr << "Error: Invalid reflectivity '" << reflectivity << "'. Must be '+' or '-'" << std::endl;
+                LogMIWarn("CONFIG", Form("invalid_reflectivity value=%c", reflectivity));
                 continue;
             }
             
@@ -931,22 +1041,20 @@ namespace m2pw {
             try {
                 l_value = std::stoi(l_str);
             } catch (const std::exception& e) {
-                std::cerr << "Error: Invalid L value '" << l_str << "' in '" << lReflectivity << "'" << std::endl;
+                LogMIWarn("CONFIG", Form("invalid_L_value value=%s token=%s", l_str.c_str(), lReflectivity.c_str()));
                 continue;
             }
             
             // Check if this L is needed for the H(L,M)s configuration  
             if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
-                std::cout << "Skipping fixed parameters for L=" << l_value << " (not needed for moments)" << std::endl;
+                LogMIInfo("SKIP", Form("l=%d reason=fixed_not_needed_for_selected_moments", l_value));
                 continue;
             }
             
             // Determine prefix based on reflectivity (a for +, b for -)
             std::string prefix = (reflectivity == '+') ? "a" : "b";
             
-            std::cout << "Adding fixed mass-independent parameters for L=" << l_value 
-                      << " with " << (reflectivity == '+' ? "positive" : "negative") 
-                      << " reflectivity (prefix: " << prefix << ")" << std::endl;
+            LogMIInfo("INIT", Form("fixed_params l=%d reflectivity=%c prefix=%s", l_value, reflectivity, prefix.c_str()));
             
             for (const double massBin : massBins) {
                 for (const TString& parName : parNames) {
@@ -982,9 +1090,8 @@ namespace m2pw {
                     parIndexNames.push_back(name);
                     fixedParNames.push_back(name);  // Mark as fixed
                     
-                    std::cout << "Added fixed parameter for L=" << l_value 
-                             << " (" << (reflectivity == '+' ? "+" : "-") << "): " 
-                             << name << " = " << fixedValue << " (index: " << totalNpars << ")" << std::endl;
+                    LogMIInfo("ADD", Form("param=%s l=%d reflectivity=%c state=FIXED index=%d value=%g",
+                        name.Data(), l_value, reflectivity, totalNpars, fixedValue));
                     totalNpars++;
                 }
             }
@@ -1001,17 +1108,17 @@ namespace m2pw {
         // Load mass-independent parameters from result tree file
         TFile file(resultTreeFile, "READ");
         if (!file.IsOpen() || file.IsZombie()) {
-            std::cerr << "Error opening file: " << resultTreeFile << std::endl;
+            LogMIWarn("FILE", Form("failed_to_open path=%s", resultTreeFile.Data()));
             return;
         }
         
         TTree* tree = dynamic_cast<TTree*>(file.Get("result"));
         if (!tree) {
-            std::cerr << "Error: Tree 'result' not found in file: " << resultTreeFile << std::endl;
+            LogMIWarn("FILE", Form("missing_tree tree=result path=%s", resultTreeFile.Data()));
             return;
         }
 
-        cout << "Loading mass independent parameter initial values from file: " << resultTreeFile << std::endl;
+        LogMIInfo("FILE", Form("loading_from_file path=%s", resultTreeFile.Data()));
 
         // Convert targetL to set for faster lookup
         std::set<int> targetLSet(targetL.begin(), targetL.end());
@@ -1038,7 +1145,7 @@ namespace m2pw {
             // Set up branch address for this parameter
             TBranch* branch = tree->GetBranch(parName);
             if (!branch) {
-                std::cerr << "Warning: Could not find branch for parameter " << parName << " in tree" << std::endl;
+                LogMIWarn("FILE", Form("missing_branch branch=%s", parName.Data()));
                 continue;
             }
             
@@ -1069,7 +1176,7 @@ namespace m2pw {
                 
                 // Check if parameter already exists - skip if already added
                 if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
-                    std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                    LogMIInfo("SKIP", Form("param=%s reason=already_exists", name.Data()));
                     continue;
                 }
                 
@@ -1082,8 +1189,8 @@ namespace m2pw {
                 TString l_str = ((TObjString*)parts->At(1))->GetString();
                 int l_value = l_str.Atoi();
                 
-                std::cout << "Added mass-independent parameter for L=" << l_value 
-                         << " (mass bin " << mass_bin_from_file << "): " << name << " = " << value << " (index: " << totalNpars << ")" << std::endl;
+                LogMIInfo("ADD", Form("param=%s l=%d mass_bin=%g index=%d value=%g",
+                    name.Data(), l_value, mass_bin_from_file, totalNpars, value));
                 totalNpars++;
             }
         }
@@ -1101,18 +1208,17 @@ namespace m2pw {
         // Load mass-independent parameters from result tree file
         TFile file(resultTreeFile, "READ");
         if (!file.IsOpen() || file.IsZombie()) {
-            std::cerr << "Error opening file: " << resultTreeFile << std::endl;
+            LogMIWarn("FILE", Form("failed_to_open path=%s", resultTreeFile.Data()));
             return;
         }
         
         TTree* tree = dynamic_cast<TTree*>(file.Get("result"));
         if (!tree) {
-            std::cerr << "Error: Tree 'result' not found in file: " << resultTreeFile << std::endl;
+            LogMIWarn("FILE", Form("missing_tree tree=result path=%s", resultTreeFile.Data()));
             return;
         }
 
-        cout << "Loading mass independent parameter initial values from file: " << resultTreeFile << std::endl;
-        cout << "Selected " << massBins.size() << " mass bins" << std::endl;
+        LogMIInfo("FILE", Form("loading_from_file path=%s selected_mass_bins=%zu", resultTreeFile.Data(), massBins.size()));
 
         // Convert targetL to set for faster lookup
         std::set<int> targetLSet(targetL.begin(), targetL.end());
@@ -1145,7 +1251,7 @@ namespace m2pw {
             // Set up branch address for this parameter
             TBranch* branch = tree->GetBranch(parName);
             if (!branch) {
-                std::cerr << "Warning: Could not find branch for parameter " << parName << " in tree" << std::endl;
+                LogMIWarn("FILE", Form("missing_branch branch=%s", parName.Data()));
                 continue;
             }
             
@@ -1176,7 +1282,7 @@ namespace m2pw {
                 
                 // Check if parameter already exists - skip if already added
                 if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
-                    std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                    LogMIInfo("SKIP", Form("param=%s reason=already_exists", name.Data()));
                     continue;
                 }
                 
@@ -1189,8 +1295,8 @@ namespace m2pw {
                 TString l_str = ((TObjString*)parts->At(1))->GetString();
                 int l_value = l_str.Atoi();
                 
-                std::cout << "Added mass-independent parameter for L=" << l_value 
-                         << " (mass bin " << mass_bin_from_file << "): " << name << " = " << value << " (index: " << totalNpars << ")" << std::endl;
+                LogMIInfo("ADD", Form("param=%s l=%d mass_bin=%g index=%d value=%g",
+                    name.Data(), l_value, mass_bin_from_file, totalNpars, value));
                 totalNpars++;
             }
         }
@@ -1301,6 +1407,9 @@ namespace m2pw {
                 }
 
                 double value = 0.0;
+                if (TLeaf* leaf = tree->GetLeaf(phaseParName)) {
+                    value = leaf->GetValue();
+                }
 
                 parsList[phaseParName] = value;
                 nameToIndex[phaseParName] = totalNpars;
@@ -1371,52 +1480,51 @@ namespace m2pw {
             double chi2_for_bin = EvaluateChi2ForMassBin(mass_bin, const_cast<ParameterHelper&>(pars));
             total_chi2 += chi2_for_bin;
             
-            std::cout << "Mass bin " << mass_bin << " chi2: " << chi2_for_bin << std::endl;
+            LogFitInfo("CHI2", Form("mass_bin=%g chi2=%g", mass_bin, chi2_for_bin));
         }
         
         // Update the cached chi2 value
         const_cast<MassDependentFitter*>(this)->lastChi2_ = total_chi2;
         
-        std::cout << "Total chi2: " << total_chi2 << std::endl;
+        LogFitInfo("CHI2", Form("total=%g", total_chi2));
         return total_chi2;
     }
 
     void MassDependentFitter::PrintIncludedMoments() const {
-        std::cout << "\n=== H(L,M) Configuration ===" << std::endl;
+        LogFitInfo("MOMENTS", "configuration_begin");
         
         if (hMomentsConfig_.includeAll) {
-            std::cout << "Including ALL H(L,M) in chi2 calculation" << std::endl;
+            LogFitInfo("MOMENTS", "include_all=1");
             return;
         }
         
         if (!hMomentsConfig_.includedL.empty()) {
-            std::cout << "Including H(L,M) for L values: ";
+            TString includedValues;
             for (size_t i = 0; i < hMomentsConfig_.includedL.size(); ++i) {
-                std::cout << hMomentsConfig_.includedL[i];
-                if (i < hMomentsConfig_.includedL.size() - 1) std::cout << ", ";
+                includedValues += Form("%d", hMomentsConfig_.includedL[i]);
+                if (i < hMomentsConfig_.includedL.size() - 1) includedValues += ",";
             }
-            std::cout << std::endl;
+            LogFitInfo("MOMENTS", Form("included_L=%s", includedValues.Data()));
         }
         
         if (!hMomentsConfig_.excludedL.empty()) {
-            std::cout << "Excluding H(L,M) for L values: ";
+            TString excludedValues;
             for (size_t i = 0; i < hMomentsConfig_.excludedL.size(); ++i) {
-                std::cout << hMomentsConfig_.excludedL[i];
-                if (i < hMomentsConfig_.excludedL.size() - 1) std::cout << ", ";
+                excludedValues += Form("%d", hMomentsConfig_.excludedL[i]);
+                if (i < hMomentsConfig_.excludedL.size() - 1) excludedValues += ",";
             }
-            std::cout << std::endl;
+            LogFitInfo("MOMENTS", Form("excluded_L=%s", excludedValues.Data()));
         }
         
         // Show which specific moments will be included
-        std::cout << "Specific H(L,M) included in chi2:" << std::endl;
         for (int L = 0; L <= 4; ++L) {
             bool shouldInclude = hMomentsConfig_.ShouldIncludeL(L);
-            std::cout << "  L=" << L << ": " << (shouldInclude ? "YES" : "NO") << std::endl;
+            LogFitInfo("MOMENTS", Form("L=%d include=%d", L, shouldInclude));
         }
     }
 
     int MassDependentFitter::ExtractLFromEquationName(const TString& eqnName) const {
-        // Equation names are typically like "H_alpha_L_M" (e.g., "H_0_0_0", "H_1_2_1", "H_2_4_2")
+        // Equation name format: "H_alpha_L_M"
         // std::cout << "Extracting L from equation name: " << eqnName << std::endl;
         if (!eqnName.BeginsWith("H_")) {
             return -1; // Not an H(L,M) equation
@@ -1424,7 +1532,7 @@ namespace m2pw {
         
         std::unique_ptr<TObjArray> parts(eqnName.Tokenize("_"));
         if (parts->GetEntries() >= 3) {
-            // Format is H_alpha_L_M, so L is at index 2
+            // L is at index 2
             TString L_str = ((TObjString*)parts->At(2))->GetString();
             int L_value = L_str.Atoi();
             // std::cout << "  Parsed L=" << L_value << " from equation " << eqnName << std::endl;
@@ -1479,7 +1587,8 @@ namespace m2pw {
         
         randomSeed = seed;
         TRandom3 rng(seed);
-        
+
+
         for (const TString& parName : parNames) {
             // Parse parameter name to extract l value
             std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
@@ -1490,33 +1599,33 @@ namespace m2pw {
             
             // Check if this l value is in the target list
             if (std::find(targetL.begin(), targetL.end(), l_value) == targetL.end()) {
-                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not in target list)" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=targetL_mismatch l=%d", parName.Data(), l_value));
                 continue;
             }
             
             // Check if this parameter is needed for the H(L,M)s configuration  
             if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
-                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not needed for moments)" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=not_needed_for_selected_moments l=%d", parName.Data(), l_value));
                 continue;
             }
             
             // Only add if this l value should be mass dependent according to config
             if (!config.IsMassDependent(l_value)) {
-                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not configured as mass dependent)" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=l_not_mass_dependent l=%d", parName.Data(), l_value));
                 continue;
             }
 
             // Skip phase parameters if magnitudeOnly is true OR yieldOnly is true
             if ((magnitudeOnly || yieldOnly) && parName.Contains("phi")) {
-                std::cout << "Skipping phase parameter " << parName << " (magnitudeOnly=" << magnitudeOnly 
-                         << ", yieldOnly=" << yieldOnly << ")" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=phase_disabled magnitudeOnly=%d yieldOnly=%d",
+                    parName.Data(), magnitudeOnly, yieldOnly));
                 continue;
             }
 
             // Get waves for this l value
             std::vector<TString> waves = config.GetWavesForL(l_value);
             if (waves.empty()) {
-                std::cout << "No waves defined for l=" << l_value << ", skipping parameter " << parName << std::endl;
+                LogMDWarn("SKIP", Form("param=%s reason=no_waves_defined_for_l l=%d", parName.Data(), l_value));
                 continue;
             }
 
@@ -1524,7 +1633,7 @@ namespace m2pw {
                 // Get function index for this wave
                 int funcIndex = fitter.GetFunctionIndexForWave(waveName);
                 if (funcIndex < 0 || funcIndex >= static_cast<int>(fitter.massDepFuncs_.size())) {
-                    std::cerr << "Warning: No function found for wave " << waveName << ", using defaults" << std::endl;
+                    LogMDWarn("INIT", Form("wave=%s reason=missing_function_index using_defaults=1", waveName.Data()));
                 }
 
                 // Check if this is a conformal polynomial (FuncType=4)
@@ -1546,21 +1655,26 @@ namespace m2pw {
                         paramTypes.push_back(Form("re_%d", i));
                         paramTypes.push_back(Form("im_%d", i));
                     }
-                    std::cout << "Conformal polynomial wave " << waveName << " (order " << polyOrder 
-                              << "): adding " << paramTypes.size() << " parameters" << std::endl;
+                    LogMDInfo("MODE", Form("wave=%s model=conformal order=%d n_params=%zu",
+                        waveName.Data(), polyOrder, paramTypes.size()));
                 } else if (yieldOnly) {
                     paramTypes = {"k"};  // Only coupling parameters
-                    std::cout << "yieldOnly=true: Adding only k parameters for wave " << waveName << std::endl;
+                    LogMDInfo("MODE", Form("wave=%s yieldOnly=1 params=k", waveName.Data()));
                 } else {
                     paramTypes = {"k", "M", "width"};  // All parameters
                 }
 
                 for (const TString& paramType : paramTypes) {
-                    TString name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    TString name;
+                    if ((paramType == "M" || paramType == "width") && !isConformal) {
+                        name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
+                    } else {
+                        name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    }
                     
                     // Check if parameter already exists - skip if already added
                     if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
-                        std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                        LogMDInfo("SKIP", Form("param=%s reason=already_exists", name.Data()));
                         continue;
                     }
 
@@ -1585,19 +1699,21 @@ namespace m2pw {
                         // Get mass from MassDependentFunction
                         if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
                             initialValue = fitter.massDepFuncs_[funcIndex].GetResonanceMass();
-                            std::cout << "Using mass from function " << funcIndex << " for " << waveName << ": " << initialValue << " GeV";
+                            LogMDInfo("INIT", Form("param=%s source=function_%d field=mass value=%g",
+                                name.Data(), funcIndex, initialValue));
                         } else {
                             initialValue = 1.5;  // Fallback default
-                            std::cout << "Using default mass (function not found): " << initialValue << " GeV";
+                            LogMDInfo("INIT", Form("param=%s source=default field=mass value=%g", name.Data(), initialValue));
                         }
                     } else {  // width
                         // Get width from MassDependentFunction
                         if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
                             initialValue = fitter.massDepFuncs_[funcIndex].GetResonanceWidth();
-                            std::cout << "Using width from function " << funcIndex << " for " << waveName << ": " << initialValue << " GeV";
+                            LogMDInfo("INIT", Form("param=%s source=function_%d field=width value=%g",
+                                name.Data(), funcIndex, initialValue));
                         } else {
                             initialValue = 0.1;  // Fallback default
-                            std::cout << "Using default width (function not found): " << initialValue << " GeV";
+                            LogMDInfo("INIT", Form("param=%s source=default field=width value=%g", name.Data(), initialValue));
                         }
                     }
 
@@ -1607,11 +1723,11 @@ namespace m2pw {
                     
                     if (isFixed) {
                         fixedParNames.push_back(name);
-                        std::cout << " -> Added FIXED mass-dependent parameter for L=" << l_value 
-                                 << ": " << name << " (index: " << totalNpars << ") = " << initialValue << std::endl;
+                        LogMDInfo("ADD", Form("scope=L%d param=%s state=FIXED index=%d value=%g",
+                            l_value, name.Data(), totalNpars, initialValue));
                     } else {
-                        std::cout << " -> Added FREE mass-dependent parameter for L=" << l_value 
-                                 << ": " << name << " (index: " << totalNpars << ") = " << initialValue << std::endl;
+                        LogMDInfo("ADD", Form("scope=L%d param=%s state=FREE index=%d value=%g",
+                            l_value, name.Data(), totalNpars, initialValue));
                     }
                     
                     totalNpars++;
@@ -1641,10 +1757,8 @@ namespace m2pw {
                 }
                 totalNpars++;
 
-                std::cout << "Added mass-dependent parameter for l=" << l_value
-                    << ": " << phaseParName
-                    << " (global phase, " << (isFixed ? "FIXED" : "FREE")
-                    << ", index: " << totalNpars-1 << ") = 0" << std::endl;
+                LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase state=%s index=%d value=0",
+                    l_value, phaseParName.Data(), isFixed ? "FIXED" : "FREE", totalNpars - 1));
             }
         }
     }
@@ -1659,22 +1773,23 @@ namespace m2pw {
         auto parNames = MassDependentFitter::GetParNames();
         auto& config = fitter.GetMassDependenceConfig();
         auto& hConfig = fitter.GetMomentsConfig();
-        
+
+
         std::unique_ptr<TFile> file(TFile::Open(filePath, "READ"));
         if (!file || file->IsZombie()) {
-            std::cerr << "Error: Cannot open file " << filePath << std::endl;
+            LogMDWarn("FILE", Form("failed_to_open path=%s", filePath.Data()));
             return;
         }
 
         TTree* tree = nullptr;
         file->GetObject("mass_dependent_params", tree);
         if (!tree) {
-            std::cerr << "Error: Cannot find tree 'mass_dependent_params' in file " << filePath << std::endl;
+            LogMDWarn("FILE", Form("missing_tree tree=mass_dependent_params path=%s", filePath.Data()));
             file->Close();
             return;
         }
 
-        std::cout << "Loading mass-dependent parameters from file: " << filePath << std::endl;
+        LogMDInfo("FILE", Form("loading_from_file path=%s", filePath.Data()));
         
         // Read the tree entry once at the beginning
         if (tree->GetEntries() > 0) {
@@ -1691,33 +1806,33 @@ namespace m2pw {
             
             // Check if this l value is in the target list
             if (std::find(targetL.begin(), targetL.end(), l_value) == targetL.end()) {
-                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not in target list)" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=targetL_mismatch l=%d", parName.Data(), l_value));
                 continue;
             }
             
             // Check if this parameter is needed for the H(L,M)s configuration  
             if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
-                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not needed for moments)" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=not_needed_for_selected_moments l=%d", parName.Data(), l_value));
                 continue;
             }
             
             // Only add if this l value should be mass dependent according to config
             if (!config.IsMassDependent(l_value)) {
-                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not configured as mass dependent)" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=l_not_mass_dependent l=%d", parName.Data(), l_value));
                 continue;
             }
 
             // Skip phase parameters if magnitudeOnly is true OR yieldOnly is true
             if ((magnitudeOnly || yieldOnly) && parName.Contains("phi")) {
-                std::cout << "Skipping phase parameter " << parName << " (magnitudeOnly=" << magnitudeOnly 
-                         << ", yieldOnly=" << yieldOnly << ")" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=phase_disabled magnitudeOnly=%d yieldOnly=%d",
+                    parName.Data(), magnitudeOnly, yieldOnly));
                 continue;
             }
 
             // Get waves for this l value
             std::vector<TString> waves = config.GetWavesForL(l_value);
             if (waves.empty()) {
-                std::cout << "No waves defined for l=" << l_value << ", skipping parameter " << parName << std::endl;
+                LogMDWarn("SKIP", Form("param=%s reason=no_waves_defined_for_l l=%d", parName.Data(), l_value));
                 continue;
             }
 
@@ -1729,48 +1844,59 @@ namespace m2pw {
                 std::vector<TString> paramTypes;
                 if (yieldOnly) {
                     paramTypes = {"k"};  // Only coupling parameters
-                    std::cout << "yieldOnly=true: Adding only k parameters for wave " << waveName << std::endl;
+                    LogMDInfo("MODE", Form("wave=%s yieldOnly=1 params=k", waveName.Data()));
                 } else {
                     paramTypes = {"k", "M", "width"};  // All parameters
                 }
                 
                 for (const TString& paramType : paramTypes) {
-                    TString name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    TString name;
+                    if (paramType == "M" || paramType == "width") {
+                        name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
+                    } else {
+                        name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    }
                     
                     // Check if parameter already exists - skip if already added
                     if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
-                        std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                        LogMDInfo("SKIP", Form("param=%s reason=already_exists", name.Data()));
                         continue;
                     }
 
                     // Try to read the parameter value from the tree using TLeaf
                     double value = 0.0;
                     TLeaf* leaf = tree->GetLeaf(name);
+                    if (!leaf && (paramType == "M" || paramType == "width")) {
+                        TString legacyName = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                        leaf = tree->GetLeaf(legacyName);
+                    }
                     if (leaf) {
                         value = leaf->GetValue();
-                        std::cout << "Read " << name << " = " << value << " from file";
+                        LogMDInfo("LOAD", Form("param=%s source=file value=%g", name.Data(), value));
                     } else {
                         // Parameter not found in file, use values from MassDependentFunction or defaults
                         if (paramType == "k") {
                             value = 0.0;  // Default coupling
-                            std::cout << "Parameter " << name << " not found in file, using default k = " << value;
+                            LogMDInfo("INIT", Form("param=%s source=default field=k value=%g", name.Data(), value));
                         } else if (paramType == "M") {
                             // Get mass from MassDependentFunction
                             if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
                                 value = fitter.massDepFuncs_[funcIndex].GetResonanceMass();
-                                std::cout << "Parameter " << name << " not found in file, using mass from function = " << value << " GeV";
+                                LogMDInfo("INIT", Form("param=%s source=function_%d field=mass value=%g",
+                                    name.Data(), funcIndex, value));
                             } else {
                                 value = 1.5;  // Fallback default
-                                std::cout << "Parameter " << name << " not found in file, using default mass = " << value << " GeV";
+                                LogMDInfo("INIT", Form("param=%s source=default field=mass value=%g", name.Data(), value));
                             }
                         } else {  // width
                             // Get width from MassDependentFunction
                             if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
                                 value = fitter.massDepFuncs_[funcIndex].GetResonanceWidth();
-                                std::cout << "Parameter " << name << " not found in file, using width from function = " << value << " GeV";
+                                LogMDInfo("INIT", Form("param=%s source=function_%d field=width value=%g",
+                                    name.Data(), funcIndex, value));
                             } else {
                                 value = 0.1;  // Fallback default
-                                std::cout << "Parameter " << name << " not found in file, using default width = " << value << " GeV";
+                                LogMDInfo("INIT", Form("param=%s source=default field=width value=%g", name.Data(), value));
                             }
                         }
                     }
@@ -1781,10 +1907,11 @@ namespace m2pw {
                     
                     if (isFixed) {
                         fixedParNames.push_back(name);
-                        std::cout << " (FIXED)";
+                        LogMDInfo("ADD", Form("param=%s state=FIXED index=%d value=%g", name.Data(), totalNpars, value));
+                    } else {
+                        LogMDInfo("ADD", Form("param=%s state=FREE index=%d value=%g", name.Data(), totalNpars, value));
                     }
-                    
-                    std::cout << " (index: " << totalNpars << ")" << std::endl;
+
                     totalNpars++;
                 }
             }
@@ -1805,6 +1932,12 @@ namespace m2pw {
                 }
 
                 double value = 0.0;
+                if (TLeaf* leaf = tree->GetLeaf(phaseParName)) {
+                    value = leaf->GetValue();
+                    LogMDInfo("LOAD", Form("param=%s source=file value=%g", phaseParName.Data(), value));
+                } else {
+                    LogMDInfo("INIT", Form("param=%s source=default field=globalphase value=0", phaseParName.Data()));
+                }
 
                 parsList[phaseParName] = value;
                 nameToIndex[phaseParName] = totalNpars;
@@ -1814,10 +1947,8 @@ namespace m2pw {
                 }
                 totalNpars++;
 
-                std::cout << "Added mass-dependent parameter for l=" << l_value
-                    << ": " << phaseParName
-                    << " (global phase, " << (isFixed ? "FIXED" : "FREE")
-                    << ", index: " << totalNpars-1 << ") = " << value << std::endl;
+                LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase state=%s index=%d value=%g",
+                    l_value, phaseParName.Data(), isFixed ? "FIXED" : "FREE", totalNpars - 1, value));
             }
         }
         
@@ -1862,33 +1993,33 @@ namespace m2pw {
             
             // Check if this amplitude is in the target list
             if (std::find(targetL.begin(), targetL.end(), amplitudeName) == targetL.end()) {
-                std::cout << "Skipping parameter " << parName << " (amplitude " << amplitudeName << " not in target list)" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=targetAmplitude_mismatch amplitude=%s", parName.Data(), amplitudeName.Data()));
                 continue;
             }
             
             // Check if this parameter is needed for the H(L,M)s configuration  
             if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
-                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not needed for moments)" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=not_needed_for_selected_moments l=%d", parName.Data(), l_value));
                 continue;
             }
             
             // Only add if this l value should be mass dependent according to config
             if (!config.IsMassDependent(l_value)) {
-                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not configured as mass dependent)" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=l_not_mass_dependent l=%d", parName.Data(), l_value));
                 continue;
             }
 
             // Skip phase parameters if magnitudeOnly is true OR yieldOnly is true
             if ((magnitudeOnly || yieldOnly) && parName.Contains("phi")) {
-                std::cout << "Skipping phase parameter " << parName << " (magnitudeOnly=" << magnitudeOnly 
-                         << ", yieldOnly=" << yieldOnly << ")" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=phase_disabled magnitudeOnly=%d yieldOnly=%d",
+                    parName.Data(), magnitudeOnly, yieldOnly));
                 continue;
             }
 
             // Get waves for this l value
             std::vector<TString> waves = config.GetWavesForL(l_value);
             if (waves.empty()) {
-                std::cout << "No waves defined for l=" << l_value << ", skipping parameter " << parName << std::endl;
+                LogMDWarn("SKIP", Form("param=%s reason=no_waves_defined_for_l l=%d", parName.Data(), l_value));
                 continue;
             }
 
@@ -1896,24 +2027,29 @@ namespace m2pw {
                 // Get function index for this wave
                 int funcIndex = fitter.GetFunctionIndexForWave(waveName);
                 if (funcIndex < 0 || funcIndex >= static_cast<int>(fitter.massDepFuncs_.size())) {
-                    std::cerr << "Warning: No function found for wave " << waveName << ", using defaults" << std::endl;
+                    LogMDWarn("INIT", Form("wave=%s reason=missing_function_index using_defaults=1", waveName.Data()));
                 }
 
                 // Determine which parameter types to add based on yieldOnly
                 std::vector<TString> paramTypes;
                 if (yieldOnly) {
                     paramTypes = {"k"};  // Only coupling parameters
-                    std::cout << "yieldOnly=true: Adding only k parameters for wave " << waveName << std::endl;
+                    LogMDInfo("MODE", Form("wave=%s yieldOnly=1 params=k", waveName.Data()));
                 } else {
                     paramTypes = {"k", "M", "width"};  // All parameters
                 }
 
                 for (const TString& paramType : paramTypes) {
-                    TString name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    TString name;
+                    if (paramType == "M" || paramType == "width") {
+                        name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
+                    } else {
+                        name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    }
                     
                     // Check if parameter already exists - skip if already added
                     if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
-                        std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                        LogMDInfo("SKIP", Form("param=%s reason=already_exists", name.Data()));
                         continue;
                     }
 
@@ -1924,19 +2060,21 @@ namespace m2pw {
                         // Get mass from MassDependentFunction
                         if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
                             initialValue = fitter.massDepFuncs_[funcIndex].GetResonanceMass();
-                            std::cout << "Using mass from function " << funcIndex << " for " << waveName << ": " << initialValue << " GeV";
+                            LogMDInfo("INIT", Form("param=%s source=function_%d field=mass value=%g",
+                                name.Data(), funcIndex, initialValue));
                         } else {
                             initialValue = 1.5;  // Fallback default
-                            std::cout << "Using default mass (function not found): " << initialValue << " GeV";
+                            LogMDInfo("INIT", Form("param=%s source=default field=mass value=%g", name.Data(), initialValue));
                         }
                     } else {  // width
                         // Get width from MassDependentFunction
                         if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
                             initialValue = fitter.massDepFuncs_[funcIndex].GetResonanceWidth();
-                            std::cout << "Using width from function " << funcIndex << " for " << waveName << ": " << initialValue << " GeV";
+                            LogMDInfo("INIT", Form("param=%s source=function_%d field=width value=%g",
+                                name.Data(), funcIndex, initialValue));
                         } else {
                             initialValue = 0.1;  // Fallback default
-                            std::cout << "Using default width (function not found): " << initialValue << " GeV";
+                            LogMDInfo("INIT", Form("param=%s source=default field=width value=%g", name.Data(), initialValue));
                         }
                     }
 
@@ -1946,11 +2084,11 @@ namespace m2pw {
                     
                     if (isFixed) {
                         fixedParNames.push_back(name);
-                        std::cout << " -> Added FIXED mass-dependent parameter for amplitude " << amplitudeName 
-                                 << ": " << name << " (index: " << totalNpars << ") = " << initialValue << std::endl;
+                        LogMDInfo("ADD", Form("scope=%s param=%s state=FIXED index=%d value=%g",
+                            amplitudeName.Data(), name.Data(), totalNpars, initialValue));
                     } else {
-                        std::cout << " -> Added FREE mass-dependent parameter for amplitude " << amplitudeName 
-                                 << ": " << name << " (index: " << totalNpars << ") = " << initialValue << std::endl;
+                        LogMDInfo("ADD", Form("scope=%s param=%s state=FREE index=%d value=%g",
+                            amplitudeName.Data(), name.Data(), totalNpars, initialValue));
                     }
                     
                     totalNpars++;
@@ -1980,10 +2118,8 @@ namespace m2pw {
                 }
                 totalNpars++;
 
-                std::cout << "Added mass-dependent parameter for l=" << l_value
-                    << ": " << phaseParName
-                    << " (global phase, " << (isFixed ? "FIXED" : "FREE")
-                    << ", index: " << totalNpars-1 << ") = 0" << std::endl;
+                LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase state=%s index=%d value=0",
+                    l_value, phaseParName.Data(), isFixed ? "FIXED" : "FREE", totalNpars - 1));
             }
         }
     }
@@ -1993,10 +2129,8 @@ namespace m2pw {
         const std::vector<double>& massBins,
         const std::map<std::string, std::pair<double,double>>& init_values) {
         
-        cout << "Adding mass-independent parameters for L values from init_values map" << std::endl;
-        cout << "Number of mass bins: " << massBins.size() << std::endl;
-        cout << "Number of target L values: " << targetL.size() << std::endl;
-        cout << "Total init_values provided: " << init_values.size() << std::endl;
+        LogMIInfo("INIT", Form("source=init_values targetL_count=%zu mass_bins=%zu init_entries=%zu",
+            targetL.size(), massBins.size(), init_values.size()));
         
         // Iterate through mass bins
         for (size_t mb_idx = 0; mb_idx < massBins.size(); ++mb_idx) {
@@ -2017,7 +2151,7 @@ namespace m2pw {
                         // Check if this parameter exists in init_values
                         auto it = init_values.find(mag_key);
                         if (it == init_values.end()) {
-                            std::cerr << "Warning: Parameter " << mag_key << " not found in init_values map" << std::endl;
+                            LogMIWarn("SKIP", Form("param_key=%s reason=missing_in_init_values", mag_key.c_str()));
                             continue;
                         }
                         
@@ -2030,7 +2164,7 @@ namespace m2pw {
                         // Check if parameter already exists
                         if (parsList.find(mag_param_name) != parsList.end() || 
                             nameToIndex.find(mag_param_name) != nameToIndex.end()) {
-                            std::cout << "Skipping parameter " << mag_param_name << " (already exists)" << std::endl;
+                            LogMIInfo("SKIP", Form("param=%s reason=already_exists", mag_param_name.Data()));
                             continue;
                         }
                         
@@ -2038,8 +2172,8 @@ namespace m2pw {
                         nameToIndex[mag_param_name] = totalNpars;
                         parIndexNames.push_back(mag_param_name);
                         
-                        std::cout << "Added parameter: " << mag_param_name << " = " << magnitude 
-                                 << " (index: " << totalNpars << ")" << std::endl;
+                        LogMIInfo("ADD", Form("param=%s kind=magnitude index=%d value=%g",
+                            mag_param_name.Data(), totalNpars, magnitude));
                         totalNpars++;
                         
                         // Create phase parameter name
@@ -2048,7 +2182,7 @@ namespace m2pw {
                         // Check if parameter already exists
                         if (parsList.find(phase_param_name) != parsList.end() || 
                             nameToIndex.find(phase_param_name) != nameToIndex.end()) {
-                            std::cout << "Skipping parameter " << phase_param_name << " (already exists)" << std::endl;
+                            LogMIInfo("SKIP", Form("param=%s reason=already_exists", phase_param_name.Data()));
                             continue;
                         }
                         
@@ -2056,15 +2190,15 @@ namespace m2pw {
                         nameToIndex[phase_param_name] = totalNpars;
                         parIndexNames.push_back(phase_param_name);
                         
-                        std::cout << "Added parameter: " << phase_param_name << " = " << phase 
-                                 << " (index: " << totalNpars << ")" << std::endl;
+                        LogMIInfo("ADD", Form("param=%s kind=phase index=%d value=%g",
+                            phase_param_name.Data(), totalNpars, phase));
                         totalNpars++;
                     }
                 }
             }
         }
         
-        std::cout << "Total parameters added: " << totalNpars << std::endl;
+        LogMIInfo("SUMMARY", Form("total_parameters=%d", totalNpars));
     }
 
     void MassDependentFitter::ParameterManager::AddMassIndependentParametersForPhase(
@@ -2085,7 +2219,7 @@ namespace m2pw {
                 }
                 
                 if (!isTargetVariable) {
-                    std::cout << "Skipping parameter " << parName << " (not in target variables list)" << std::endl;
+                    LogMIInfo("SKIP", Form("param=%s reason=not_in_target_variables", parName.Data()));
                     continue;
                 }
 
@@ -2093,7 +2227,7 @@ namespace m2pw {
                 
                 // Check if parameter already exists - skip if already added
                 if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
-                    std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                    LogMIInfo("SKIP", Form("param=%s reason=already_exists", name.Data()));
                     continue;
                 }
                 
@@ -2105,8 +2239,8 @@ namespace m2pw {
                 parIndexNames.push_back(name);
                 totalNpars++;
 
-                std::cout << "Added mass-independent phase parameter: " << name 
-                         << " (index: " << totalNpars-1 << ") = " << initialValue << std::endl;
+                LogMIInfo("ADD", Form("param=%s kind=phase index=%d value=%g",
+                    name.Data(), totalNpars - 1, initialValue));
             }
         }
     }
@@ -2121,19 +2255,19 @@ namespace m2pw {
         // Open the result file and read the result tree
         std::unique_ptr<TFile> file(TFile::Open(resultTreeFile, "READ"));
         if (!file || file->IsZombie()) {
-            std::cerr << "Error: Cannot open file " << resultTreeFile << std::endl;
+            LogMIWarn("FILE", Form("failed_to_open path=%s", resultTreeFile.Data()));
             return;
         }
 
         TTree* tree = nullptr;
         file->GetObject("result", tree);
         if (!tree) {
-            std::cerr << "Error: Cannot find tree 'result' in file " << resultTreeFile << std::endl;
+            LogMIWarn("FILE", Form("missing_tree tree=result path=%s", resultTreeFile.Data()));
             file->Close();
             return;
         }
 
-        std::cout << "Loading mass-independent phase parameters from file: " << resultTreeFile << std::endl;
+        LogMIInfo("FILE", Form("loading_from_file path=%s", resultTreeFile.Data()));
 
         // Set up branch for mass_bin
         double mass_bin_from_file = 0.0;
@@ -2149,7 +2283,7 @@ namespace m2pw {
                 paramValues[targetVar] = 0.0;
                 tree->SetBranchAddress(targetVar, &paramValues[targetVar]);
             } else {
-                std::cerr << "Warning: Branch '" << targetVar << "' not found in tree" << std::endl;
+                LogMIWarn("FILE", Form("missing_branch branch=%s", targetVar.Data()));
             }
         }
 
@@ -2188,7 +2322,7 @@ namespace m2pw {
                 
                 // Check if parameter already exists - skip if already added
                 if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
-                    std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                    LogMIInfo("SKIP", Form("param=%s reason=already_exists", name.Data()));
                     continue;
                 }
                 
@@ -2198,7 +2332,7 @@ namespace m2pw {
                 if (it != paramValues.end()) {
                     value = it->second;
                 } else {
-                    std::cerr << "Warning: Parameter " << parName << " not found in loaded values, using default 0.0" << std::endl;
+                    LogMIWarn("LOAD", Form("param=%s reason=missing_loaded_value using_default=0", parName.Data()));
                 }
 
                 parsList[name] = value;
@@ -2206,8 +2340,8 @@ namespace m2pw {
                 parIndexNames.push_back(name);
                 totalNpars++;
 
-                std::cout << "Added mass-independent phase parameter for mass bin " << mass_bin_from_file 
-                         << ": " << name << " (index: " << totalNpars-1 << ") = " << value << std::endl;
+                LogMIInfo("ADD", Form("mass_bin=%g param=%s kind=phase index=%d value=%g",
+                    mass_bin_from_file, name.Data(), totalNpars - 1, value));
             }
         }
         
@@ -2227,19 +2361,19 @@ namespace m2pw {
         
         std::unique_ptr<TFile> file(TFile::Open(filePath, "READ"));
         if (!file || file->IsZombie()) {
-            std::cerr << "Error: Cannot open file " << filePath << std::endl;
+            LogMDWarn("FILE", Form("failed_to_open path=%s", filePath.Data()));
             return;
         }
 
         TTree* tree = nullptr;
         file->GetObject("mass_dependent_params", tree);
         if (!tree) {
-            std::cerr << "Error: Cannot find tree 'mass_dependent_params' in file " << filePath << std::endl;
+            LogMDWarn("FILE", Form("missing_tree tree=mass_dependent_params path=%s", filePath.Data()));
             file->Close();
             return;
         }
 
-        std::cout << "Loading mass-dependent parameters from file: " << filePath << std::endl;
+        LogMDInfo("FILE", Form("loading_from_file path=%s", filePath.Data()));
         
         // Read the tree entry once at the beginning
         if (tree->GetEntries() > 0) {
@@ -2270,33 +2404,33 @@ namespace m2pw {
             
             // Check if this amplitude is in the target list
             if (std::find(targetL.begin(), targetL.end(), amplitudeName) == targetL.end()) {
-                std::cout << "Skipping parameter " << parName << " (amplitude " << amplitudeName << " not in target list)" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=targetAmplitude_mismatch amplitude=%s", parName.Data(), amplitudeName.Data()));
                 continue;
             }
             
             // Check if this parameter is needed for the H(L,M)s configuration  
             if (!fitter.ParameterNeededForMoments(l_value, hConfig)) {
-                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not needed for moments)" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=not_needed_for_selected_moments l=%d", parName.Data(), l_value));
                 continue;
             }
             
             // Only add if this l value should be mass dependent according to config
             if (!config.IsMassDependent(l_value)) {
-                std::cout << "Skipping parameter " << parName << " (l=" << l_value << " not configured as mass dependent)" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=l_not_mass_dependent l=%d", parName.Data(), l_value));
                 continue;
             }
 
             // Skip phase parameters if magnitudeOnly is true OR yieldOnly is true
             if ((magnitudeOnly || yieldOnly) && parName.Contains("phi")) {
-                std::cout << "Skipping phase parameter " << parName << " (magnitudeOnly=" << magnitudeOnly 
-                         << ", yieldOnly=" << yieldOnly << ")" << std::endl;
+                LogMDInfo("SKIP", Form("param=%s reason=phase_disabled magnitudeOnly=%d yieldOnly=%d",
+                    parName.Data(), magnitudeOnly, yieldOnly));
                 continue;
             }
 
             // Get waves for this l value
             std::vector<TString> waves = config.GetWavesForL(l_value);
             if (waves.empty()) {
-                std::cout << "No waves defined for l=" << l_value << ", skipping parameter " << parName << std::endl;
+                LogMDWarn("SKIP", Form("param=%s reason=no_waves_defined_for_l l=%d", parName.Data(), l_value));
                 continue;
             }
 
@@ -2308,48 +2442,59 @@ namespace m2pw {
                 std::vector<TString> paramTypes;
                 if (yieldOnly) {
                     paramTypes = {"k"};  // Only coupling parameters
-                    std::cout << "yieldOnly=true: Adding only k parameters for wave " << waveName << std::endl;
+                    LogMDInfo("MODE", Form("wave=%s yieldOnly=1 params=k", waveName.Data()));
                 } else {
                     paramTypes = {"k", "M", "width"};  // All parameters
                 }
                 
                 for (const TString& paramType : paramTypes) {
-                    TString name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    TString name;
+                    if (paramType == "M" || paramType == "width") {
+                        name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
+                    } else {
+                        name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    }
                     
                     // Check if parameter already exists - skip if already added
                     if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
-                        std::cout << "Skipping parameter " << name << " (already exists)" << std::endl;
+                        LogMDInfo("SKIP", Form("param=%s reason=already_exists", name.Data()));
                         continue;
                     }
 
                     // Try to read the parameter value from the tree using TLeaf
                     double value = 0.0;
                     TLeaf* leaf = tree->GetLeaf(name);
+                    if (!leaf && (paramType == "M" || paramType == "width")) {
+                        TString legacyName = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                        leaf = tree->GetLeaf(legacyName);
+                    }
                     if (leaf) {
                         value = leaf->GetValue();
-                        std::cout << "Read " << name << " = " << value << " from file";
+                        LogMDInfo("LOAD", Form("param=%s source=file value=%g", name.Data(), value));
                     } else {
                         // Parameter not found in file, use values from MassDependentFunction or defaults
                         if (paramType == "k") {
                             value = 0.0;  // Default coupling
-                            std::cout << "Parameter " << name << " not found in file, using default k = " << value;
+                            LogMDInfo("INIT", Form("param=%s source=default field=k value=%g", name.Data(), value));
                         } else if (paramType == "M") {
                             // Get mass from MassDependentFunction
                             if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
                                 value = fitter.massDepFuncs_[funcIndex].GetResonanceMass();
-                                std::cout << "Parameter " << name << " not found in file, using mass from function = " << value << " GeV";
+                                LogMDInfo("INIT", Form("param=%s source=function_%d field=mass value=%g",
+                                    name.Data(), funcIndex, value));
                             } else {
                                 value = 1.5;  // Fallback default
-                                std::cout << "Parameter " << name << " not found in file, using default mass = " << value << " GeV";
+                                LogMDInfo("INIT", Form("param=%s source=default field=mass value=%g", name.Data(), value));
                             }
                         } else {  // width
                             // Get width from MassDependentFunction
                             if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
                                 value = fitter.massDepFuncs_[funcIndex].GetResonanceWidth();
-                                std::cout << "Parameter " << name << " not found in file, using width from function = " << value << " GeV";
+                                LogMDInfo("INIT", Form("param=%s source=function_%d field=width value=%g",
+                                    name.Data(), funcIndex, value));
                             } else {
                                 value = 0.1;  // Fallback default
-                                std::cout << "Parameter " << name << " not found in file, using default width = " << value << " GeV";
+                                LogMDInfo("INIT", Form("param=%s source=default field=width value=%g", name.Data(), value));
                             }
                         }
                     }
@@ -2360,10 +2505,11 @@ namespace m2pw {
                     
                     if (isFixed) {
                         fixedParNames.push_back(name);
-                        std::cout << " (FIXED)";
+                        LogMDInfo("ADD", Form("param=%s state=FIXED index=%d value=%g", name.Data(), totalNpars, value));
+                    } else {
+                        LogMDInfo("ADD", Form("param=%s state=FREE index=%d value=%g", name.Data(), totalNpars, value));
                     }
-                    
-                    std::cout << " (index: " << totalNpars << ")" << std::endl;
+
                     totalNpars++;
                 }
             }
@@ -2393,10 +2539,8 @@ namespace m2pw {
                 }
                 totalNpars++;
 
-                std::cout << "Added mass-dependent parameter for l=" << l_value
-                    << ": " << phaseParName
-                    << " (global phase, " << (isFixed ? "FIXED" : "FREE")
-                    << ", index: " << totalNpars-1 << ") = " << value << std::endl;
+                LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase state=%s index=%d value=%g",
+                    l_value, phaseParName.Data(), isFixed ? "FIXED" : "FREE", totalNpars - 1, value));
             }
         }
         
@@ -2428,9 +2572,9 @@ namespace m2pw {
                     auto mag_it = parsList.find(mag_param_name);
                     if (mag_it != parsList.end()) {
                         magnitude = mag_it->second;
-                        std::cout << "Found magnitude parameter: " << mag_param_name << " = " << magnitude << std::endl;
+                        LogMIInfo("LOOKUP", Form("param=%s found=1 value=%g", mag_param_name.Data(), magnitude));
                     } else {
-                        std::cerr << "Warning: Could not find magnitude parameter: " << mag_param_name << std::endl;
+                        LogMIWarn("LOOKUP", Form("param=%s found=0 default=0", mag_param_name.Data()));
                     }
                     
                     // Look up phase parameter: MI_<mass_bin>_<refl>phi_<l>_<m>
@@ -2440,16 +2584,16 @@ namespace m2pw {
                     auto phase_it = parsList.find(phase_param_name);
                     if (phase_it != parsList.end()) {
                         phase = phase_it->second;
-                        std::cout << "Found phase parameter: " << phase_param_name << " = " << phase << std::endl;
+                        LogMIInfo("LOOKUP", Form("param=%s found=1 value=%g", phase_param_name.Data(), phase));
                     } else {
-                        std::cerr << "Warning: Could not find phase parameter: " << phase_param_name << std::endl;
+                        LogMIWarn("LOOKUP", Form("param=%s found=0 default=0", phase_param_name.Data()));
                     }
                     
                     // Store the amplitude
                     amplitudes[key] = {magnitude, phase};
                     
-                    std::cout << "Amplitude for " << key << " at mass_bin=" << massBinCenter 
-                             << ": magnitude=" << magnitude << ", phase=" << phase << std::endl;
+                    LogMIInfo("AMPL", Form("key=%s mass_bin=%g magnitude=%g phase=%g",
+                        key.c_str(), massBinCenter, magnitude, phase));
                 }
             }
         }
