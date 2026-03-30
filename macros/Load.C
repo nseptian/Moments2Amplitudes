@@ -1,10 +1,17 @@
 void Load(){
-  gSystem->AddIncludePath("-I../include");
-  gROOT->ProcessLine(".L ../src/ParameterHelper.cpp+");
-  gROOT->ProcessLine(".L ../src/Equation.cpp+");
-  gROOT->ProcessLine(".L ../src/EquationSolver.cpp+");
-  // gROOT->ProcessLine(".L ../include/MomentHelper.h");
-  // gROOT->ProcessLine(".L ../include/MassDependentMoments.h");
-  gROOT->ProcessLine(".L ../src/MassDependentFitter.cpp+");
-  // gROOT->ProcessLine(".L ../include/MassDependentFunction.h");
+  // Get project directory from environment variable
+  TString projectDir = gSystem->Getenv("MOMS2AMPS");
+  if (projectDir == "") {
+    std::cerr << "ERROR: MOMS2AMPS environment variable not set!" << std::endl;
+    return;
+  }
+  
+  TString srcDir = projectDir + "/src";
+  
+  // // Load source files with absolute paths
+  gROOT->ProcessLine(Form(".L %s/ParameterHelper.cpp+", srcDir.Data()));
+  gROOT->ProcessLine(Form(".L %s/Equation.cpp+", srcDir.Data()));
+  gROOT->ProcessLine(Form(".L %s/EquationSolver.cpp+", srcDir.Data()));
+  gROOT->ProcessLine(Form(".L %s/MomentHelper.cpp+", srcDir.Data()));
+  gROOT->ProcessLine(Form(".L %s/MassDependentFitter.cpp+", srcDir.Data()));
 }

@@ -127,6 +127,19 @@ void H_two_model(const Double_t FIRST_MASS_BIN_CENTER, const Int_t N_MASS_BINS, 
     fitter.MakeResultTree(paramManager, result_file);
 
     std::cout << "=== Completed ===" << std::endl;
+
+    // Close all open ROOT files
+    TSeqCollection* files = gROOT->GetListOfFiles();
+    if (files) {
+        TIter next(files);
+        TFile* file;
+        while ((file = (TFile*)next())) {
+            if (file && file->IsOpen()) {
+                file->Close();
+            }
+        }
+    }
+    
 }
 
 void H_two_model_seq_init() {
@@ -136,7 +149,7 @@ void H_two_model_seq_init() {
 
     cout << "Generating first mass bin centers from 1.42 to 0.82 with step -0.04" << endl;
 
-    for (Double_t center = 1.42; center >= 0.82; center -= 0.04) {
+    for (Double_t center = 1.42; center >= 0.80; center -= 0.04) {
         firstMassBinCenters.push_back(center);
         cout << "  " << center << endl;
     }
@@ -161,16 +174,10 @@ void H_two_model_seq_init() {
 
         Double_t firstMassBinCenter = firstMassBinCenters[iMassBin];
         Int_t N_MASS_BINS = TMath::FloorNint((1.58 - firstMassBinCenter)/MASS_BIN_WIDTH) + 1;
-        
-        // Create log file for this batch
-        // TString logFileName = LOG_DIR + TString("H_two_model_seq_init_firstbin_" + std::to_string(firstMassBinCenter) + ".log");
-        
-
 
         std::cout << "\n========== Starting H_two_model_seq_init ==========" << std::endl;
         std::cout << "First Mass Bin Center: " << firstMassBinCenter << std::endl;
         std::cout << "N_MASS_BINS: " << N_MASS_BINS << std::endl;
-        // std::cout << "Log file: " << logFileName << std::endl;
         std::cout << "================================================" << std::endl;
 
         output_file = OUTPUT_DIR + TString("result_tree_H_two_model_seq_init_nominal_t010030_firstbin_" + std::to_string(firstMassBinCenters[iMassBin]) + ".root");
