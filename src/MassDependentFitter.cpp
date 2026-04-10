@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 
 namespace m2pw {
@@ -110,7 +111,13 @@ namespace m2pw {
         waveToFunctionIndex_.clear();
         
         for (const TString& wave : allWaves) {
-            if (wave == "a2_1320") {
+            if (wave == "a2_1320_1700") {
+                massDepFuncs_.emplace_back(static_cast<int>(massBins_.size()),
+                                          massBins_.front(), bin_width, 6);  // a2(1320)+a2(1700)
+                waveToFunctionIndex_[wave] = funcIndex;
+                LogFitInfo("MDFUNC", Form("index=%d wave=%s model=TwoBreitWignerDWave", funcIndex, wave.Data()));
+                funcIndex++;
+            } else if (wave == "a2_1320") {
                 massDepFuncs_.emplace_back(static_cast<int>(massBins_.size()), 
                                           massBins_.front(), bin_width, 0);  // Breit-Wigner for a2(1320)
                 waveToFunctionIndex_[wave] = funcIndex;
@@ -255,14 +262,9 @@ namespace m2pw {
                 if (!param_info->isPhase) {
                     // Handle magnitude parameters
                     if (massDependenceConfig_.IsMassDependent(l_value)) {
-                        // Check if we need coherent sum or single wave
                         std::vector<TString> waves = massDependenceConfig_.GetWavesForL(l_value);
-                        if (waves.size() > 1) {
-                            // Multiple waves: use coherent sum
-                            value = GetCoherentMagnitudeForL(mass_bin, par_name, massDepPars, l_value);
-                        } else if (waves.size() == 1) {
-                            // Single wave: direct evaluation
-                            value = GetSingleWaveMagnitude(mass_bin, par_name, massDepPars, l_value, waves[0]);
+                        if (!waves.empty()) {
+                            value = GetAmplitudeMagnitude(mass_bin, par_name, massDepPars, l_value);
                         }
                     } else {
                         // Use mass-independent parameters
@@ -292,14 +294,9 @@ namespace m2pw {
                     
                     // If no mass-independent phase found, check for mass-dependent
                     if (!hasPhaseInMassIndepPars && massDependenceConfig_.IsMassDependent(l_value)) {
-                        // Check if we need coherent sum or single wave
                         std::vector<TString> waves = massDependenceConfig_.GetWavesForL(l_value);
-                        if (waves.size() > 1) {
-                            // Multiple waves: use coherent sum
-                            value = GetCoherentPhaseForL(mass_bin, base_name, massDepPars, l_value);
-                        } else if (waves.size() == 1) {
-                            // Single wave: direct evaluation
-                            value = GetSingleWavePhase(mass_bin, base_name, massDepPars, l_value, waves[0]);
+                        if (!waves.empty()) {
+                            value = GetAmplitudePhase(mass_bin, base_name, massDepPars, l_value);
                         }
                     }
                     // If hasPhaseInMassIndepPars is true, value is already set above
@@ -444,13 +441,25 @@ namespace m2pw {
         
         const int nMDPars = paramManager.totalNpars;
         std::vector<double> md_par_vals(nMDPars);
+        std::vector<double> md_par_errors(nMDPars);
         int idx = 0;
         for (const auto& [parName, value] : paramManager.parsList) {
             // double currentValue = value;
             if (parName.BeginsWith("MD_")) {  // Only mass-dependent parameters
                 LogFitInfo("RESULT", Form("tree=mass_dependent_params param=%s value=%g", parName.Data(), value));
                 md_par_vals[idx] = value;
+                
+                // Get error from paramManager using nameToIndex
+                double error = 0.0;
+                auto it = paramManager.nameToIndex.find(parName);
+                if (it != paramManager.nameToIndex.end() && it->second < static_cast<int>(paramManager.parErrors.size())) {
+                    error = paramManager.parErrors[it->second];
+                    LogFitInfo("RESULT", Form("tree=mass_dependent_params param=%s error=%g", parName.Data(), error));
+                }
+                md_par_errors[idx] = error;
+                
                 mdTree->Branch(parName, &md_par_vals[idx]);
+                mdTree->Branch(parName + "_error", &md_par_errors[idx]);
                 idx++;
             }
         }
@@ -484,15 +493,80 @@ namespace m2pw {
     }
 
     bool MassDependentFitter::ParameterManager::SetParameterInitialValue(const TString& parName, double value) {
+        auto printRegisteredParameters = [this]() {
+            LogMDWarn("CONFIG", "registered_parameter_list_begin");
+            for (const auto& name : parIndexNames) {
+                LogMDWarn("CONFIG", Form("registered_parameter=%s", name.Data()));
+            }
+            LogMDWarn("CONFIG", "registered_parameter_list_end");
+        };
+
         auto it = parsList.find(parName);
         if (it == parsList.end()) {
+            LogMDWarn("CONFIG", "Parameter is not found in the parameter list!");
             LogMDWarn("CONFIG", Form("set_initial_failed param=%s reason=not_found", parName.Data()));
-            return false;
+            printRegisteredParameters();
+            throw std::runtime_error("Parameter is not found in the parameter list!");
         }
 
         const double oldValue = it->second;
         it->second = value;
         LogMDInfo("CONFIG", Form("set_initial_ok param=%s old=%g new=%g", parName.Data(), oldValue, value));
+        return true;
+    }
+
+    bool MassDependentFitter::ParameterManager::SetInitialValue(const TString& parName, double value, bool isFixed) {
+        auto printRegisteredParameters = [this]() {
+            LogMDWarn("CONFIG", "registered_parameter_list_begin");
+            for (const auto& name : parIndexNames) {
+                LogMDWarn("CONFIG", Form("registered_parameter=%s", name.Data()));
+            }
+            LogMDWarn("CONFIG", "registered_parameter_list_end");
+        };
+
+        auto indexIt = nameToIndex.find(parName);
+        if (indexIt == nameToIndex.end() || indexIt->second < 0 || indexIt->second >= static_cast<int>(parIndexNames.size())) {
+            LogMDWarn("CONFIG", "Parameter is not found in the parameter list!");
+            LogMDWarn("CONFIG", Form("set_initial_failed param=%s reason=not_found_in_added_parameter_list", parName.Data()));
+            printRegisteredParameters();
+            throw std::runtime_error("Parameter is not found in the parameter list!");
+        }
+
+        if (parIndexNames[indexIt->second] != parName) {
+            LogMDWarn("CONFIG", Form("set_initial_failed param=%s reason=index_mapping_mismatch", parName.Data()));
+            printRegisteredParameters();
+            throw std::runtime_error(TString::Format(
+                "Parameter '%s' index mapping mismatch.",
+                parName.Data()).Data());
+        }
+
+        auto valueIt = parsList.find(parName);
+        if (valueIt == parsList.end()) {
+            LogMDWarn("CONFIG", Form("set_initial_failed param=%s reason=missing_in_value_map", parName.Data()));
+            printRegisteredParameters();
+            throw std::runtime_error(TString::Format(
+                "Parameter '%s' is registered but missing in value map.",
+                parName.Data()).Data());
+        }
+
+        const double oldValue = valueIt->second;
+        valueIt->second = value;
+        LogMDInfo("CONFIG", Form("set_initial_update param=%s old=%g new=%g",
+            parName.Data(), oldValue, value));
+
+        const auto fixedIt = std::find(fixedParNames.begin(), fixedParNames.end(), parName);
+        if (isFixed) {
+            if (fixedIt == fixedParNames.end()) {
+                fixedParNames.push_back(parName);
+            }
+            LogMDInfo("CONFIG", Form("set_initial_fix param=%s fixed=1", parName.Data()));
+        } else {
+            if (fixedIt != fixedParNames.end()) {
+                fixedParNames.erase(fixedIt);
+            }
+            LogMDInfo("CONFIG", Form("set_initial_fix param=%s fixed=0", parName.Data()));
+        }
+
         return true;
     }
 
@@ -712,199 +786,130 @@ namespace m2pw {
         paramManager.StoreResults(minimizer.get());
     }
 
-    // Helper method for single wave magnitude (no coherent sum needed)
-    double MassDependentFitter::GetSingleWaveMagnitude(
-        double mass_bin, 
-        const TString& par_name,
-        const std::map<TString, std::vector<double>>& massDepPars,
-        int l_value,
-        const TString& waveName) const {
-        
-        TString key = Form("%s_%s", par_name.Data(), waveName.Data());
-        const auto it = massDepPars.find(key);
-        
-        if (it != massDepPars.end() && !it->second.empty()) {
-            int funcIndex = GetFunctionIndexForWave(waveName);
-            
-            if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
-                std::vector<double> params = it->second;
-                if (params.size() == 1) {
-                    auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
-                    if (sharedIt != massDepPars.end()) {
-                        if (sharedIt->second.size() >= 1) params.push_back(sharedIt->second[0]);
-                        if (sharedIt->second.size() >= 2) params.push_back(sharedIt->second[1]);
-                    }
-                }
-                const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
-                if (includeGlobalPhase) {
-                    const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
-                    const double globalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty()) ? phaseIt->second[0] : 0.0;
-                    params.push_back(globalPhase);
-                }
-
-                double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, params, includeGlobalPhase);
-                
-                // std::cout << "Single wave " << waveName << " magnitude for " << par_name 
-                //          << ": " << magnitude << std::endl;
-                
-                return magnitude;
-            }
-        }
-        
-        return 0.0;
-    }
-
-    // Helper method for single wave phase (no coherent sum needed)
-    double MassDependentFitter::GetSingleWavePhase(
-        double mass_bin, 
-        const TString& base_name,
-        const std::map<TString, std::vector<double>>& massDepPars,
-        int l_value,
-        const TString& waveName) const {
-        
-        TString key = Form("%s_%s", base_name.Data(), waveName.Data());
-        const auto it = massDepPars.find(key);
-        
-        if (it != massDepPars.end() && !it->second.empty()) {
-            int funcIndex = GetFunctionIndexForWave(waveName);
-            
-            if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
-                std::vector<double> params = it->second;
-                if (params.size() == 1) {
-                    auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
-                    if (sharedIt != massDepPars.end()) {
-                        if (sharedIt->second.size() >= 1) params.push_back(sharedIt->second[0]);
-                        if (sharedIt->second.size() >= 2) params.push_back(sharedIt->second[1]);
-                    }
-                }
-                const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
-                if (includeGlobalPhase) {
-                    const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
-                    const double globalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty()) ? phaseIt->second[0] : 0.0;
-                    params.push_back(globalPhase);
-                }
-
-                double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, params, includeGlobalPhase);
-                
-                // std::cout << "Single wave " << waveName << " phase for " << base_name 
-                //          << ": " << phase << std::endl;
-                
-                return phase;
-            }
-        }
-        
-        return 0.0;
-    }
-
-    // Helper method to get coherent magnitude for specific l value
-    double MassDependentFitter::GetCoherentMagnitudeForL(
-        double mass_bin, 
+    // Helper method for amplitude magnitude evaluation (single or coherent waves)
+    double MassDependentFitter::GetAmplitudeMagnitude(
+        double mass_bin,
         const TString& par_name,
         const std::map<TString, std::vector<double>>& massDepPars,
         int l_value) const {
-        
+
         std::complex<double> total_amplitude(0.0, 0.0);
-        
-        // Get wave names for this l value from configuration
         std::vector<TString> waveNames = massDependenceConfig_.GetWavesForL(l_value);
-        
-        std::cout << "Computing coherent magnitude for L=" << l_value << " with " 
-                 << waveNames.size() << " waves" << std::endl;
-        
+
         for (const TString& waveName : waveNames) {
             TString key = Form("%s_%s", par_name.Data(), waveName.Data());
             const auto it = massDepPars.find(key);
-            
-            if (it != massDepPars.end() && !it->second.empty()) {
-                int funcIndex = GetFunctionIndexForWave(waveName);
-                
-                if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
-                    std::vector<double> params = it->second;
-                    if (params.size() == 1) {
-                        auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
-                        if (sharedIt != massDepPars.end()) {
-                            if (sharedIt->second.size() >= 1) params.push_back(sharedIt->second[0]);
-                            if (sharedIt->second.size() >= 2) params.push_back(sharedIt->second[1]);
-                        }
-                    }
-                    const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
-                    if (includeGlobalPhase) {
-                        const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
-                        const double globalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty()) ? phaseIt->second[0] : 0.0;
-                        params.push_back(globalPhase);
-                    }
+            if (it == massDepPars.end() || it->second.empty()) {
+                continue;
+            }
 
-                    double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, params, includeGlobalPhase);
-                    double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, params, includeGlobalPhase);
-                    
-                    // Add complex amplitude
-                    std::complex<double> wave_amplitude = magnitude * std::complex<double>(std::cos(phase), std::sin(phase));
-                    total_amplitude += wave_amplitude;
-                    
-                    std::cout << "  Wave " << waveName << " contribution: |A|=" << magnitude 
-                             << ", phase=" << phase << std::endl;
+            const int funcIndex = GetFunctionIndexForWave(waveName);
+            if (funcIndex < 0 || funcIndex >= static_cast<int>(massDepFuncs_.size())) {
+                continue;
+            }
+
+            std::vector<double> params = it->second;
+            const int funcType = massDepFuncs_[funcIndex].GetFuncType();
+            if (funcType == 6) {
+                const double k1 = (params.size() >= 1) ? params[0] : 0.0;
+                const double k2 = (params.size() >= 2) ? params[1] : 0.0;
+                double M1 = 1.3182;
+                double width1 = 0.107;
+                double M2 = 1.706;
+                double width2 = 0.380;
+
+                auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
+                if (sharedIt != massDepPars.end()) {
+                    if (sharedIt->second.size() >= 1) M1 = sharedIt->second[0];
+                    if (sharedIt->second.size() >= 2) width1 = sharedIt->second[1];
+                    if (sharedIt->second.size() >= 3) M2 = sharedIt->second[2];
+                    if (sharedIt->second.size() >= 4) width2 = sharedIt->second[3];
+                }
+                params = {k1, M1, width1, k2, M2, width2};
+            } else if (params.size() == 1) {
+                auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
+                if (sharedIt != massDepPars.end()) {
+                    if (sharedIt->second.size() >= 1) params.push_back(sharedIt->second[0]);
+                    if (sharedIt->second.size() >= 2) params.push_back(sharedIt->second[1]);
                 }
             }
+
+            const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
+            if (includeGlobalPhase) {
+                const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
+                const double globalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty()) ? phaseIt->second[0] : 0.0;
+                params.push_back(globalPhase);
+            }
+
+            const double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, params, includeGlobalPhase);
+            const double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, params, includeGlobalPhase);
+            total_amplitude += magnitude * std::complex<double>(std::cos(phase), std::sin(phase));
         }
-        
-        double total_magnitude = std::abs(total_amplitude);
-        std::cout << "Total coherent magnitude for L=" << l_value << " " << par_name << ": " << total_magnitude << std::endl;
-        
-        return total_magnitude;
+
+        return std::abs(total_amplitude);
     }
 
-    // Helper method to get coherent phase for specific l value
-    double MassDependentFitter::GetCoherentPhaseForL(
-        double mass_bin, 
+    // Helper method for amplitude phase evaluation (single or coherent waves)
+    double MassDependentFitter::GetAmplitudePhase(
+        double mass_bin,
         const TString& base_name,
         const std::map<TString, std::vector<double>>& massDepPars,
         int l_value) const {
-        
+
         std::complex<double> total_amplitude(0.0, 0.0);
-        
-        // Get wave names for this l value from configuration
         std::vector<TString> waveNames = massDependenceConfig_.GetWavesForL(l_value);
-        
-        std::cout << "Computing coherent phase for L=" << l_value << " with " 
-                 << waveNames.size() << " waves" << std::endl;
-        
+
         for (const TString& waveName : waveNames) {
             TString key = Form("%s_%s", base_name.Data(), waveName.Data());
             const auto it = massDepPars.find(key);
-            
-            if (it != massDepPars.end() && !it->second.empty()) {
-                int funcIndex = GetFunctionIndexForWave(waveName);
-                
-                if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
-                    std::vector<double> params = it->second;
-                    if (params.size() == 1) {
-                        auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
-                        if (sharedIt != massDepPars.end()) {
-                            if (sharedIt->second.size() >= 1) params.push_back(sharedIt->second[0]);
-                            if (sharedIt->second.size() >= 2) params.push_back(sharedIt->second[1]);
-                        }
-                    }
-                    const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
-                    if (includeGlobalPhase) {
-                        const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
-                        const double globalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty()) ? phaseIt->second[0] : 0.0;
-                        params.push_back(globalPhase);
-                    }
+            if (it == massDepPars.end() || it->second.empty()) {
+                continue;
+            }
 
-                    double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, params, includeGlobalPhase);
-                    double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, params, includeGlobalPhase);
-                    
-                    // Add complex amplitude
-                    std::complex<double> wave_amplitude = magnitude * std::complex<double>(std::cos(phase), std::sin(phase));
-                    total_amplitude += wave_amplitude;
+            const int funcIndex = GetFunctionIndexForWave(waveName);
+            if (funcIndex < 0 || funcIndex >= static_cast<int>(massDepFuncs_.size())) {
+                continue;
+            }
+
+            std::vector<double> params = it->second;
+            const int funcType = massDepFuncs_[funcIndex].GetFuncType();
+            if (funcType == 6) {
+                const double k1 = (params.size() >= 1) ? params[0] : 0.0;
+                const double k2 = (params.size() >= 2) ? params[1] : 0.0;
+                double M1 = 1.3182;
+                double width1 = 0.107;
+                double M2 = 1.706;
+                double width2 = 0.380;
+
+                auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
+                if (sharedIt != massDepPars.end()) {
+                    if (sharedIt->second.size() >= 1) M1 = sharedIt->second[0];
+                    if (sharedIt->second.size() >= 2) width1 = sharedIt->second[1];
+                    if (sharedIt->second.size() >= 3) M2 = sharedIt->second[2];
+                    if (sharedIt->second.size() >= 4) width2 = sharedIt->second[3];
+                }
+                params = {k1, M1, width1, k2, M2, width2};
+            } else if (params.size() == 1) {
+                auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
+                if (sharedIt != massDepPars.end()) {
+                    if (sharedIt->second.size() >= 1) params.push_back(sharedIt->second[0]);
+                    if (sharedIt->second.size() >= 2) params.push_back(sharedIt->second[1]);
                 }
             }
+
+            const bool includeGlobalPhase = massDependenceConfig_.UseGlobalPhaseForWave(l_value, waveName);
+            if (includeGlobalPhase) {
+                const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
+                const double globalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty()) ? phaseIt->second[0] : 0.0;
+                params.push_back(globalPhase);
+            }
+
+            const double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, params, includeGlobalPhase);
+            const double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, params, includeGlobalPhase);
+            total_amplitude += magnitude * std::complex<double>(std::cos(phase), std::sin(phase));
         }
-        
-        double total_phase = std::arg(total_amplitude);
-        std::cout << "Total coherent phase for L=" << l_value << " " << base_name << ": " << total_phase << std::endl;
-        
-        return total_phase;
+
+        return std::arg(total_amplitude);
     }
 
     // Helper method to map wave names to function indices
@@ -1360,15 +1365,56 @@ namespace m2pw {
             // Add parameters for each wave that contributes to this l value
             std::vector<TString> waveNames = config.GetWavesForL(l_value);
             for (const TString& waveName : waveNames) {
-                TString name = Form("MD_%s_%s_k", parName.Data(), waveName.Data());
-                // parsList[name] = 10.0;  // Default initial value
-                parsList[name] = TRandom3(seed).Uniform(-50, 50);  // Random initial value
-                nameToIndex[name] = totalNpars;
-                parIndexNames.push_back(name);
-                totalNpars++;
-                
-                std::cout << "Added mass-dependent parameter for l=" << l_value 
-                         << ": " << name << " (index: " << totalNpars-1 << ")" << std::endl;
+                const int funcIndex = fitter.GetFunctionIndexForWave(waveName);
+                const int funcType = (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size()))
+                    ? fitter.massDepFuncs_[funcIndex].GetFuncType()
+                    : -1;
+
+                std::vector<TString> paramTypes;
+                if (funcType == 6) {
+                    paramTypes = {"k1", "M1", "width1", "k2", "M2", "width2"};
+                } else {
+                    paramTypes = {"k", "M", "width"};
+                }
+
+                for (const TString& paramType : paramTypes) {
+                    TString name;
+                    const bool isSharedResonanceParam = paramType.BeginsWith("M") || paramType.BeginsWith("width");
+                    if (isSharedResonanceParam) {
+                        name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
+                    } else {
+                        name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    }
+
+                    if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
+                        continue;
+                    }
+
+                    double initialValue = 0.0;
+                    if (paramType.BeginsWith("k")) {
+                        initialValue = TRandom3(seed).Uniform(-50, 50);
+                    } else if (paramType == "M1") {
+                        initialValue = 1.3182;
+                    } else if (paramType == "width1") {
+                        initialValue = 0.107;
+                    } else if (paramType == "M2") {
+                        initialValue = 1.706;
+                    } else if (paramType == "width2") {
+                        initialValue = 0.380;
+                    } else if (paramType == "M" && funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                        initialValue = fitter.massDepFuncs_[funcIndex].GetResonanceMass();
+                    } else if (paramType == "width" && funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                        initialValue = fitter.massDepFuncs_[funcIndex].GetResonanceWidth();
+                    }
+
+                    parsList[name] = initialValue;
+                    nameToIndex[name] = totalNpars;
+                    parIndexNames.push_back(name);
+                    totalNpars++;
+
+                    std::cout << "Added mass-dependent parameter for l=" << l_value
+                              << ": " << name << " (index: " << totalNpars - 1 << ")" << std::endl;
+                }
             }
         }
     }
@@ -1451,23 +1497,67 @@ namespace m2pw {
             // Add parameters for each wave that contributes to this l value
             std::vector<TString> waveNames = config.GetWavesForL(l_value);
             for (const TString& waveName : waveNames) {
-                TString name = Form("MD_%s_%s_k", parName.Data(), waveName.Data());
-                // parsList[name] = 10.0;  // Default initial value
-                parsList[name] = tree->GetLeaf(name)->GetValue();
-                nameToIndex[name] = totalNpars;
-                parIndexNames.push_back(name);
-                if (isFixed) {
-                    fixedParNames.push_back(name);
-                    cout << "Added fixed mass-dependent parameter for L=" << l_value 
-                         << ": " << name << " (index: " << totalNpars << ") = " << parsList[name] << std::endl;
+                const int funcIndex = fitter.GetFunctionIndexForWave(waveName);
+                const int funcType = (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size()))
+                    ? fitter.massDepFuncs_[funcIndex].GetFuncType()
+                    : -1;
+
+                std::vector<TString> paramTypes;
+                if (funcType == 6) {
+                    paramTypes = {"k1", "M1", "width1", "k2", "M2", "width2"};
+                } else {
+                    paramTypes = {"k", "M", "width"};
                 }
-                else {
-                    std::cout << "Added free mass-dependent parameter for L=" << l_value 
-                         << ": " << name << " (index: " << totalNpars << ") = " << parsList[name] << std::endl;
+
+                for (const TString& paramType : paramTypes) {
+                    TString name;
+                    const bool isSharedResonanceParam = paramType.BeginsWith("M") || paramType.BeginsWith("width");
+                    if (isSharedResonanceParam) {
+                        name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
+                    } else {
+                        name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                    }
+
+                    if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
+                        continue;
+                    }
+
+                    double value = 0.0;
+                    TLeaf* leaf = tree->GetLeaf(name);
+                    if (!leaf && isSharedResonanceParam) {
+                        TString legacyName = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
+                        leaf = tree->GetLeaf(legacyName);
+                    }
+                    if (leaf) {
+                        value = leaf->GetValue();
+                    } else if (paramType == "M1") {
+                        value = 1.3182;
+                    } else if (paramType == "width1") {
+                        value = 0.107;
+                    } else if (paramType == "M2") {
+                        value = 1.706;
+                    } else if (paramType == "width2") {
+                        value = 0.380;
+                    } else if (paramType == "M" && funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                        value = fitter.massDepFuncs_[funcIndex].GetResonanceMass();
+                    } else if (paramType == "width" && funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
+                        value = fitter.massDepFuncs_[funcIndex].GetResonanceWidth();
+                    }
+
+                    parsList[name] = value;
+                    nameToIndex[name] = totalNpars;
+                    parIndexNames.push_back(name);
+                    if (isFixed) {
+                        fixedParNames.push_back(name);
+                        cout << "Added fixed mass-dependent parameter for L=" << l_value
+                             << ": " << name << " (index: " << totalNpars << ") = " << parsList[name] << std::endl;
+                    }
+                    else {
+                        std::cout << "Added free mass-dependent parameter for L=" << l_value
+                             << ": " << name << " (index: " << totalNpars << ") = " << parsList[name] << std::endl;
+                    }
+                    totalNpars++;
                 }
-                totalNpars++;
-                
-                
             }
         }
     }
@@ -1639,8 +1729,10 @@ namespace m2pw {
                 // Check if this is a conformal polynomial (FuncType=4)
                 bool isConformal = false;
                 int polyOrder = 2;
+                int funcType = -1;
                 if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
-                    isConformal = (fitter.massDepFuncs_[funcIndex].GetFuncType() == 4);
+                    funcType = fitter.massDepFuncs_[funcIndex].GetFuncType();
+                    isConformal = (funcType == 4);
                     if (isConformal) {
                         polyOrder = fitter.massDepFuncs_[funcIndex].GetPolyOrder();
                     }
@@ -1658,15 +1750,19 @@ namespace m2pw {
                     LogMDInfo("MODE", Form("wave=%s model=conformal order=%d n_params=%zu",
                         waveName.Data(), polyOrder, paramTypes.size()));
                 } else if (yieldOnly) {
-                    paramTypes = {"k"};  // Only coupling parameters
+                    paramTypes = (funcType == 6) ? std::vector<TString>{"k1", "k2"}
+                                                 : std::vector<TString>{"k"};
                     LogMDInfo("MODE", Form("wave=%s yieldOnly=1 params=k", waveName.Data()));
+                } else if (funcType == 6) {
+                    paramTypes = {"k1", "M1", "width1", "k2", "M2", "width2"};
                 } else {
                     paramTypes = {"k", "M", "width"};  // All parameters
                 }
 
                 for (const TString& paramType : paramTypes) {
                     TString name;
-                    if ((paramType == "M" || paramType == "width") && !isConformal) {
+                    const bool isSharedResonanceParam = paramType.BeginsWith("M") || paramType.BeginsWith("width");
+                    if (isSharedResonanceParam && !isConformal) {
                         name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
                     } else {
                         name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
@@ -1693,8 +1789,20 @@ namespace m2pw {
                         } else {
                             initialValue = 0.0;
                         }
-                    } else if (paramType == "k") {
+                    } else if (paramType.BeginsWith("k")) {
                         initialValue = rng.Uniform(-30, 30);  // Random for coupling strength
+                    } else if (paramType == "M1") {
+                        initialValue = 1.3182;
+                        LogMDInfo("INIT", Form("param=%s source=default field=mass1 value=%g", name.Data(), initialValue));
+                    } else if (paramType == "width1") {
+                        initialValue = 0.107;
+                        LogMDInfo("INIT", Form("param=%s source=default field=width1 value=%g", name.Data(), initialValue));
+                    } else if (paramType == "M2") {
+                        initialValue = 1.706;
+                        LogMDInfo("INIT", Form("param=%s source=default field=mass2 value=%g", name.Data(), initialValue));
+                    } else if (paramType == "width2") {
+                        initialValue = 0.380;
+                        LogMDInfo("INIT", Form("param=%s source=default field=width2 value=%g", name.Data(), initialValue));
                     } else if (paramType == "M") {
                         // Get mass from MassDependentFunction
                         if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
@@ -1839,19 +1947,26 @@ namespace m2pw {
             for (const TString& waveName : waves) {
                 // Get function index for this wave
                 int funcIndex = fitter.GetFunctionIndexForWave(waveName);
+                int funcType = (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size()))
+                    ? fitter.massDepFuncs_[funcIndex].GetFuncType()
+                    : -1;
                 
                 // Determine which parameter types to add based on yieldOnly
                 std::vector<TString> paramTypes;
                 if (yieldOnly) {
-                    paramTypes = {"k"};  // Only coupling parameters
+                    paramTypes = (funcType == 6) ? std::vector<TString>{"k1", "k2"}
+                                                 : std::vector<TString>{"k"};
                     LogMDInfo("MODE", Form("wave=%s yieldOnly=1 params=k", waveName.Data()));
+                } else if (funcType == 6) {
+                    paramTypes = {"k1", "M1", "width1", "k2", "M2", "width2"};
                 } else {
                     paramTypes = {"k", "M", "width"};  // All parameters
                 }
                 
                 for (const TString& paramType : paramTypes) {
                     TString name;
-                    if (paramType == "M" || paramType == "width") {
+                    const bool isSharedResonanceParam = paramType.BeginsWith("M") || paramType.BeginsWith("width");
+                    if (isSharedResonanceParam) {
                         name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
                     } else {
                         name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
@@ -1866,7 +1981,7 @@ namespace m2pw {
                     // Try to read the parameter value from the tree using TLeaf
                     double value = 0.0;
                     TLeaf* leaf = tree->GetLeaf(name);
-                    if (!leaf && (paramType == "M" || paramType == "width")) {
+                    if (!leaf && isSharedResonanceParam) {
                         TString legacyName = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
                         leaf = tree->GetLeaf(legacyName);
                     }
@@ -1875,9 +1990,21 @@ namespace m2pw {
                         LogMDInfo("LOAD", Form("param=%s source=file value=%g", name.Data(), value));
                     } else {
                         // Parameter not found in file, use values from MassDependentFunction or defaults
-                        if (paramType == "k") {
+                        if (paramType.BeginsWith("k")) {
                             value = 0.0;  // Default coupling
                             LogMDInfo("INIT", Form("param=%s source=default field=k value=%g", name.Data(), value));
+                        } else if (paramType == "M1") {
+                            value = 1.3182;
+                            LogMDInfo("INIT", Form("param=%s source=default field=mass1 value=%g", name.Data(), value));
+                        } else if (paramType == "width1") {
+                            value = 0.107;
+                            LogMDInfo("INIT", Form("param=%s source=default field=width1 value=%g", name.Data(), value));
+                        } else if (paramType == "M2") {
+                            value = 1.706;
+                            LogMDInfo("INIT", Form("param=%s source=default field=mass2 value=%g", name.Data(), value));
+                        } else if (paramType == "width2") {
+                            value = 0.380;
+                            LogMDInfo("INIT", Form("param=%s source=default field=width2 value=%g", name.Data(), value));
                         } else if (paramType == "M") {
                             // Get mass from MassDependentFunction
                             if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
@@ -2029,19 +2156,26 @@ namespace m2pw {
                 if (funcIndex < 0 || funcIndex >= static_cast<int>(fitter.massDepFuncs_.size())) {
                     LogMDWarn("INIT", Form("wave=%s reason=missing_function_index using_defaults=1", waveName.Data()));
                 }
+                int funcType = (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size()))
+                    ? fitter.massDepFuncs_[funcIndex].GetFuncType()
+                    : -1;
 
                 // Determine which parameter types to add based on yieldOnly
                 std::vector<TString> paramTypes;
                 if (yieldOnly) {
-                    paramTypes = {"k"};  // Only coupling parameters
+                    paramTypes = (funcType == 6) ? std::vector<TString>{"k1", "k2"}
+                                                 : std::vector<TString>{"k"};
                     LogMDInfo("MODE", Form("wave=%s yieldOnly=1 params=k", waveName.Data()));
+                } else if (funcType == 6) {
+                    paramTypes = {"k1", "M1", "width1", "k2", "M2", "width2"};
                 } else {
                     paramTypes = {"k", "M", "width"};  // All parameters
                 }
 
                 for (const TString& paramType : paramTypes) {
                     TString name;
-                    if (paramType == "M" || paramType == "width") {
+                    const bool isSharedResonanceParam = paramType.BeginsWith("M") || paramType.BeginsWith("width");
+                    if (isSharedResonanceParam) {
                         name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
                     } else {
                         name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
@@ -2054,8 +2188,20 @@ namespace m2pw {
                     }
 
                     double initialValue;
-                    if (paramType == "k") {
+                    if (paramType.BeginsWith("k")) {
                         initialValue = rng.Uniform(-30, 30);  // Random for coupling strength
+                    } else if (paramType == "M1") {
+                        initialValue = 1.3182;
+                        LogMDInfo("INIT", Form("param=%s source=default field=mass1 value=%g", name.Data(), initialValue));
+                    } else if (paramType == "width1") {
+                        initialValue = 0.107;
+                        LogMDInfo("INIT", Form("param=%s source=default field=width1 value=%g", name.Data(), initialValue));
+                    } else if (paramType == "M2") {
+                        initialValue = 1.706;
+                        LogMDInfo("INIT", Form("param=%s source=default field=mass2 value=%g", name.Data(), initialValue));
+                    } else if (paramType == "width2") {
+                        initialValue = 0.380;
+                        LogMDInfo("INIT", Form("param=%s source=default field=width2 value=%g", name.Data(), initialValue));
                     } else if (paramType == "M") {
                         // Get mass from MassDependentFunction
                         if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
@@ -2437,19 +2583,26 @@ namespace m2pw {
             for (const TString& waveName : waves) {
                 // Get function index for this wave
                 int funcIndex = fitter.GetFunctionIndexForWave(waveName);
+                int funcType = (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size()))
+                    ? fitter.massDepFuncs_[funcIndex].GetFuncType()
+                    : -1;
                 
                 // Determine which parameter types to add based on yieldOnly
                 std::vector<TString> paramTypes;
                 if (yieldOnly) {
-                    paramTypes = {"k"};  // Only coupling parameters
+                    paramTypes = (funcType == 6) ? std::vector<TString>{"k1", "k2"}
+                                                 : std::vector<TString>{"k"};
                     LogMDInfo("MODE", Form("wave=%s yieldOnly=1 params=k", waveName.Data()));
+                } else if (funcType == 6) {
+                    paramTypes = {"k1", "M1", "width1", "k2", "M2", "width2"};
                 } else {
                     paramTypes = {"k", "M", "width"};  // All parameters
                 }
                 
                 for (const TString& paramType : paramTypes) {
                     TString name;
-                    if (paramType == "M" || paramType == "width") {
+                    const bool isSharedResonanceParam = paramType.BeginsWith("M") || paramType.BeginsWith("width");
+                    if (isSharedResonanceParam) {
                         name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
                     } else {
                         name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
@@ -2464,7 +2617,7 @@ namespace m2pw {
                     // Try to read the parameter value from the tree using TLeaf
                     double value = 0.0;
                     TLeaf* leaf = tree->GetLeaf(name);
-                    if (!leaf && (paramType == "M" || paramType == "width")) {
+                    if (!leaf && isSharedResonanceParam) {
                         TString legacyName = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
                         leaf = tree->GetLeaf(legacyName);
                     }
@@ -2473,9 +2626,21 @@ namespace m2pw {
                         LogMDInfo("LOAD", Form("param=%s source=file value=%g", name.Data(), value));
                     } else {
                         // Parameter not found in file, use values from MassDependentFunction or defaults
-                        if (paramType == "k") {
+                        if (paramType.BeginsWith("k")) {
                             value = 0.0;  // Default coupling
                             LogMDInfo("INIT", Form("param=%s source=default field=k value=%g", name.Data(), value));
+                        } else if (paramType == "M1") {
+                            value = 1.3182;
+                            LogMDInfo("INIT", Form("param=%s source=default field=mass1 value=%g", name.Data(), value));
+                        } else if (paramType == "width1") {
+                            value = 0.107;
+                            LogMDInfo("INIT", Form("param=%s source=default field=width1 value=%g", name.Data(), value));
+                        } else if (paramType == "M2") {
+                            value = 1.706;
+                            LogMDInfo("INIT", Form("param=%s source=default field=mass2 value=%g", name.Data(), value));
+                        } else if (paramType == "width2") {
+                            value = 0.380;
+                            LogMDInfo("INIT", Form("param=%s source=default field=width2 value=%g", name.Data(), value));
                         } else if (paramType == "M") {
                             // Get mass from MassDependentFunction
                             if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {

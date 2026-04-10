@@ -198,19 +198,13 @@ namespace m2pw {
         static MassDependenceConfig CreateDefaultConfig() {
             return MassDependenceConfig(); // l=2 mass dependent with a2_1320, l=0,1 mass independent
         }
-        
-        static MassDependenceConfig CreateMultipleA2Config() {
+
+        static MassDependenceConfig CreateDWaveTwoBreitWignerConfig() {
             MassDependenceConfig config;
-            config.massDependentWaves[2] = {"a2_1320", "a2_1700"};
+            // Single D-wave model with two resonances: a2(1320) + a2(1700).
+            // Only one global phase is introduced and it rotates the a2(1700) term.
+            config.massDependentWaves[2] = {"a2_1320_a2_1700_phase"};
             config.massIndependentL = {0, 1};
-            return config;
-        }
-        
-        static MassDependenceConfig CreateL0L2Config() {
-            MassDependenceConfig config;
-            config.massDependentWaves[0] = {"a0_980"};
-            config.massDependentWaves[2] = {"a2_1320", "a2_1700"};
-            config.massIndependentL = {1};
             return config;
         }
         
@@ -317,6 +311,7 @@ namespace m2pw {
                                           const bool yieldOnly = false);
 
             bool SetParameterInitialValue(const TString& parName, double value);
+            bool SetInitialValue(const TString& parName, double value, bool isFixed);
             bool SetParameterLimits(const TString& parName, double lower, double upper);
             void SetParameterInitialValues(const std::map<TString, double>& values);
             void SetParameterLimitsBatch(const std::map<TString, std::pair<double, double>>& limits);
@@ -386,29 +381,16 @@ private:
     // Chi2 calculation
     double EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const;
 
-    // Helper methods for single wave evaluation (no coherent sum)
-    double GetSingleWaveMagnitude(double mass_bin, 
+    // Helper methods for amplitude-level evaluation (single or multiple waves)
+    double GetAmplitudeMagnitude(double mass_bin,
                                 const TString& par_name,
                                 const std::map<TString, std::vector<double>>& massDepPars,
-                                int l_value,
-                                const TString& waveName) const;
+                                int l_value) const;
 
-    double GetSingleWavePhase(double mass_bin, 
+    double GetAmplitudePhase(double mass_bin,
                             const TString& base_name,
                             const std::map<TString, std::vector<double>>& massDepPars,
-                            int l_value,
-                            const TString& waveName) const;
-
-    // Helper methods for coherent amplitude combination (multiple waves)
-    double GetCoherentMagnitudeForL(double mass_bin, 
-                                   const TString& par_name,
-                                   const std::map<TString, std::vector<double>>& massDepPars,
-                                   int l_value) const;
-
-    double GetCoherentPhaseForL(double mass_bin, 
-                               const TString& base_name,
-                               const std::map<TString, std::vector<double>>& massDepPars,
-                               int l_value) const;
+                            int l_value) const;
 
     // Helper method to map wave names to function indices
     int GetFunctionIndexForWave(const TString& waveName) const;

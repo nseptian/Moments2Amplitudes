@@ -58,6 +58,8 @@ namespace m2pw{
                 return 3 + 2*(_PolyOrder + 1);  // scale, g_etapi, g_KK + polynomial coeffs
             } else if (_FuncType == 2) {  // Flatté
                 return 3;  // g1, g2, M0
+            } else if (_FuncType == 6) {  // Coherent sum of two Breit-Wigners
+                return 6; // k1, M1, width1, k2, M2, width2 (global phase handled separately)
             } else {  // Breit-Wigner
                 return 3;  // k, M, width
             }
@@ -115,22 +117,46 @@ namespace m2pw{
                 return complex<double>(0.0, 0.0);
             }
 
-            double k = coreParams[0];  // Coupling parameter always first
-            
             switch (_FuncType) {
                 case 0:  // a2(1320) - Breit-Wigner
                 case 1:  // a2(1700) - Breit-Wigner  
                 case 3:  // pi1(1400) - Breit-Wigner
+                    {
+                    double k = coreParams[0];
                     return GetBreitWignerAmplitude(mass, k, coreParams)*exp(complex<double>(0, phase));
+                    }
                     
                 case 2:  // a0(980) - Flatté
+                    {
+                    double k = coreParams[0];
                     return GetFlatteAmplitude(mass, k, coreParams)*exp(complex<double>(0, phase));
+                    }
                     
                 case 4:  // Conformal polynomial
                     return GetConformalPolynomialAmplitude(mass, coreParams)*exp(complex<double>(0, phase));
                     
                 case 5:  // Flatté + conformal polynomial
                     return GetFlattePlusConformalAmplitude(mass, coreParams)*exp(complex<double>(0, phase));
+
+                case 6: // a2(1320) + a2(1700) coherent sum
+                    {
+                        const double k1 = (coreParams.size() >= 1) ? coreParams[0] : 0.0;
+                        const double M1 = (coreParams.size() >= 2) ? coreParams[1] : 1.3182;
+                        const double w1 = (coreParams.size() >= 3) ? coreParams[2] : 0.107;
+
+                        const double k2 = (coreParams.size() >= 4) ? coreParams[3] : 0.0;
+                        const double M2 = (coreParams.size() >= 5) ? coreParams[4] : 1.706;
+                        const double w2 = (coreParams.size() >= 6) ? coreParams[5] : 0.380;
+
+                        const double s = mass * mass;
+                        const complex<double> denom1(M1 * M1 - s, -M1 * w1);
+                        const complex<double> denom2(M2 * M2 - s, -M2 * w2);
+
+                        // a2(1320) phase is fixed to 0; optional global phase rotates only a2(1700).
+                        complex<double> amp_1320 = k1 / denom1;
+                        complex<double> amp_1700 = (k2 / denom2) * exp(complex<double>(0, phase));
+                        return amp_1320 + amp_1700;
+                    }
                     
                 default:
                     return complex<double>(0.0, 0.0);
