@@ -39,10 +39,17 @@ void H_two_model(int seed=0){
     std::vector<double> massBins = massDepMoments.GetMassBins();
 
     using namespace m2pw;
+    using MDModel = MassDependentFitter::MassDependenceConfig::ModelType;
+    using WaveModelConfig = MassDependentFitter::MassDependenceConfig::WaveModelConfig;
     
     // auto a2_1320_config = MassDependentFitter::CreateDefaultConfig();
-    // auto a0_flatte_a2_1320_config = MassDependentFitter::CreateCustomConfig({{0, {"a0_980"}}, {2, {"a2_1320"}}}, {});
-    auto S_waves_conformalPol_a2_1320_config = MassDependentFitter::CreateCustomConfig({{0, {"conformal_poly_order3"}}, {2, {"a2_1320"}}}, {});
+    // auto a0_flatte_a2_1320_config = MassDependentFitter::CreateCustomConfig({{0, {WaveModelConfig{"a0_980", MDModel::Flatte}}}, {2, {WaveModelConfig{"a2_1320", MDModel::BreitWigner}}}}, {});
+    auto S_waves_conformalPol_a2_1320_config = MassDependentFitter::CreateCustomConfig(
+        {
+            {0, {WaveModelConfig{"conformal_S0", MDModel::Polynomial, 3}}},
+            {2, {WaveModelConfig{"a2_1320", MDModel::BreitWigner}}}
+        },
+        {});
     // auto H24_config = MassDependentFitter::CreateL2L4OnlyConfig();
     auto H024_config = MassDependentFitter::CreateL0L2L4OnlyConfig();
     // auto allMoments_config = MassDependentFitter::CreateIncludeAllConfig();
@@ -60,17 +67,8 @@ void H_two_model(int seed=0){
 
     m2pw::MassDependentFitter::ParameterManager paramManager(fitter);
 
-    paramManager.AddMassDependentParametersForL(std::vector<int>{2}, 
-                                      D_waves_model_file, 
-                                      false,
-                                      false,
-                                      true);
-
-    paramManager.AddMassDependentParametersForL(std::vector<int>{0}, 
-                                  seed, 
-                                  false,
-                                  false,
-                                  true);
+    paramManager.AddMassDependentParameter(std::vector<int>{2}, D_waves_model_file, 0);
+    paramManager.AddMassDependentParameter(std::vector<int>{0}, seed, 0);
 
     std::vector<int> fixedL = {1};
     std::map<int, double> fixedValues;

@@ -11,7 +11,7 @@
 // Struct to hold seed task parameters
 struct SeedTask {
     int seed;
-    Double_t firstMassBinCenter;
+    Double_t lastMassBinCenter;
     Int_t nMassBins;
 };
 
@@ -22,8 +22,8 @@ const Double_t MASS_BIN_WIDTH = 0.04;
 // const TString FIT_RESULTS_DIR = "/d/home/septian/EtaPi0Analysis/run_Phase2/fitMoment_2019_11_polALL_sPlot_t010100_m080200_MCMC_R6.34/";
 // const TString FIT_RESULTS_DIR = "/d/home/septian/EtaPi0Analysis/fitMoment_Phase2_MomentsFit_t010020_Mpi0eta080200_800000_mandelstam_t010020_100200_MCMC_R6.34/";
 const TString FIT_RESULTS_DIR = "/d/home/septian/EtaPi0Analysis/FitMoments/fitMoment_Phase1_Phase2_MomentsFit_t010030_Mpi0eta080200_800000_mandelstam_t010030_100300_MCMC_R6.34/";
-const TString OUTPUT_DIR = "/d/home/septian/Moments2Amplitudes/run/Mom2Amps_H_two_model_seq_init/";
-const TString LOG_DIR = "/d/home/septian/Moments2Amplitudes/run/Mom2Amps_H_two_model_seq_init/logs/";
+const TString OUTPUT_DIR = "/d/home/septian/Moments2Amplitudes/run/Mom2Amps_H_two_model_seq_init_forward/";
+const TString LOG_DIR = "/d/home/septian/Moments2Amplitudes/run/Mom2Amps_H_two_model_seq_init_forward/logs/";
 
 void H_two_model(const Double_t FIRST_MASS_BIN_CENTER, const Int_t N_MASS_BINS, const TString init_model_file="", const TString result_file="") {
     auto& setup = ConfigureAmpsNoValues(2, 2, 2); // (Lmax, MMax, Nref)
@@ -52,9 +52,10 @@ void H_two_model(const Double_t FIRST_MASS_BIN_CENTER, const Int_t N_MASS_BINS, 
     std::vector<double> loadedMassBins;
 
     for (int iMassBin = 0; iMassBin < massBins.size(); ++iMassBin) {
-        if (iMassBin == 0) {
+        if (iMassBin == massBins.size()-1) {
             initializedMassBins.push_back(massBins[iMassBin]);
         } else {
+            cout << "Added Loaded Mass bin " << iMassBin << " center: " << massBins[iMassBin] << endl;
             loadedMassBins.push_back(massBins[iMassBin]);
         }
     }
@@ -104,6 +105,8 @@ void H_two_model(const Double_t FIRST_MASS_BIN_CENTER, const Int_t N_MASS_BINS, 
     //                                                   false);
 
     std::vector<int> initializedMassIndependentL = {0};
+
+
     paramManager.AddMassIndependentParameter(initializedMassIndependentL, init_model_file);
 
     // std::cout << "\n=== Running H_two_model ===" << std::endl;
@@ -133,15 +136,14 @@ void H_two_model(const Double_t FIRST_MASS_BIN_CENTER, const Int_t N_MASS_BINS, 
     
 }
 
-void H_two_model_seq_init() {
-    // const std::vector<Double_t> firstMassBinCenters = {1.42, 1.38};
+void H_two_model_seq_init_forward() {
 
-    std::vector<Double_t> firstMassBinCenters;
+    std::vector<Double_t> lastMassBinCenters;
 
-    cout << "Generating first mass bin centers from 1.42 to 0.82 with step -0.04" << endl;
+    cout << "Generating last mass bin centers from 1.3 to 1.58 with step 0.04" << endl;
 
-    for (Double_t center = 1.42; center >= 0.80; center -= 0.04) {
-        firstMassBinCenters.push_back(center);
+    for (Double_t center = 1.34; center <= 1.6; center += 0.04) {
+        lastMassBinCenters.push_back(center);
         cout << "  " << center << endl;
     }
     // Create log directory
@@ -149,7 +151,7 @@ void H_two_model_seq_init() {
     //     gSystem->Exec(Form("mkdir -p %s", LOG_DIR.Data()));
     // }
 
-    TString init_model_file = "/d/home/septian/Moments2Amplitudes/run/H2_model_BWa2_freeSWaves_ZeroPWaves/result_tree_BWa2_freeSWaves_ZeroPWaves_322_nominal_t010030.root";
+    TString init_model_file = "/d/home/septian/Moments2Amplitudes/run/Mom2Amps_H_two_model_seq_init/result_tree_H_two_model_seq_init_nominal_t010030_firstbin_0.860000.root";
 
     if (gSystem->AccessPathName(OUTPUT_DIR)) {
         gSystem->Exec(Form("mkdir -p %s", OUTPUT_DIR.Data()));
@@ -157,23 +159,23 @@ void H_two_model_seq_init() {
 
     TString output_file = "";
 
-    for (Int_t iMassBin = 0; iMassBin < firstMassBinCenters.size(); ++iMassBin) {
+    for (Int_t iMassBin = 0; iMassBin < lastMassBinCenters.size(); ++iMassBin) {
         
         if (iMassBin > 0) {
             init_model_file = output_file;
         }
 
-        Double_t firstMassBinCenter = firstMassBinCenters[iMassBin];
-        Int_t N_MASS_BINS = TMath::FloorNint((1.58 - firstMassBinCenter)/MASS_BIN_WIDTH) + 1;
+        Double_t lastMassBinCenter = lastMassBinCenters[iMassBin];
+        Int_t N_MASS_BINS = TMath::FloorNint((lastMassBinCenter - 0.86)/MASS_BIN_WIDTH) + 1;
 
         std::cout << "\n========== Starting H_two_model_seq_init ==========" << std::endl;
-        std::cout << "First Mass Bin Center: " << firstMassBinCenter << std::endl;
+        std::cout << "Last Mass Bin Center: " << lastMassBinCenter << std::endl;
         std::cout << "N_MASS_BINS: " << N_MASS_BINS << std::endl;
         std::cout << "================================================" << std::endl;
 
-        output_file = OUTPUT_DIR + TString("result_tree_H_two_model_seq_init_nominal_t010030_firstbin_" + std::to_string(firstMassBinCenters[iMassBin]) + ".root");
+        output_file = OUTPUT_DIR + TString("result_tree_H_two_model_seq_init_forward_nominal_t010030_lastbin_" + std::to_string(lastMassBinCenters[iMassBin]) + ".root");
         
-        H_two_model(firstMassBinCenter, N_MASS_BINS, init_model_file, output_file);
+        H_two_model(0.86, N_MASS_BINS, init_model_file, output_file);
         
     }
 }
