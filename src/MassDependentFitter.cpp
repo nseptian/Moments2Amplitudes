@@ -241,6 +241,9 @@ namespace m2pw {
         }
 
         BuildEquationLCache();
+        BuildParameterInfoCache();
+        BuildMassDependenceLookupCache();
+        BuildParameterEvalPlanCache();
     }
 
     void MassDependentFitter::BuildEquationLCache() {
@@ -253,6 +256,86 @@ namespace m2pw {
             }
             equationLCache_[mass_bin] = std::move(lValues);
         }
+    }
+
+    void MassDependentFitter::BuildParameterInfoCache() {
+        parameterInfoCache_.clear();
+        for (const auto& [mass_bin, pars] : pars_) {
+            std::vector<ParameterInfo> infos;
+            infos.reserve(pars.Nvars());
+
+            for (int j = 0; j < pars.Nvars(); ++j) {
+                infos.emplace_back(pars.GetParName(j));
+            }
+
+            parameterInfoCache_[mass_bin] = std::move(infos);
+        }
+    }
+
+    void MassDependentFitter::BuildMassDependenceLookupCache() {
+        massDependentEllCache_.clear();
+        massDependentWaveNamesCache_.clear();
+
+        for (const auto& [ell_value, waveConfigs] : massDependenceConfig_.massDependentWaves) {
+            massDependentEllCache_[ell_value] = true;
+
+            std::vector<TString> waveNames;
+            waveNames.reserve(waveConfigs.size());
+            for (const auto& waveConfig : waveConfigs) {
+                waveNames.push_back(waveConfig.waveName);
+            }
+
+            massDependentWaveNamesCache_[ell_value] = std::move(waveNames);
+        }
+    }
+
+    void MassDependentFitter::BuildParameterEvalPlanCache() {
+        parameterEvalPlanCache_.clear();
+
+        for (const auto& [mass_bin, pars] : pars_) {
+            std::vector<ParameterEvalPlan> plans;
+            plans.reserve(pars.Nvars());
+
+            const auto infoCacheIt = parameterInfoCache_.find(mass_bin);
+            for (int j = 0; j < pars.Nvars(); ++j) {
+                const ParameterInfo* info = nullptr;
+                std::unique_ptr<ParameterInfo> fallbackInfo;
+
+                if (infoCacheIt != parameterInfoCache_.end() && j < static_cast<int>(infoCacheIt->second.size())) {
+                    info = &infoCacheIt->second[j];
+                } else {
+                    fallbackInfo = ParseParameterName(pars.GetParName(j));
+                    if (!fallbackInfo) {
+                        continue;
+                    }
+                    info = fallbackInfo.get();
+                }
+
+                ParameterEvalPlan plan;
+                plan.par_name = info->name;
+                plan.base_name = info->base_name;
+                plan.ell_value = info->ell_value;
+                plan.isPhase = info->isPhase;
+                plan.isMassDependent = IsMassDependentEll(info->ell_value);
+                plans.push_back(std::move(plan));
+            }
+
+            parameterEvalPlanCache_[mass_bin] = std::move(plans);
+        }
+    }
+
+    bool MassDependentFitter::IsMassDependentEll(int ell_value) const {
+        return massDependentEllCache_.find(ell_value) != massDependentEllCache_.end();
+    }
+
+    const std::vector<TString>& MassDependentFitter::GetMassDependentWaveNames(int ell_value) const {
+        static const std::vector<TString> empty;
+        const auto it = massDependentWaveNamesCache_.find(ell_value);
+        if (it == massDependentWaveNamesCache_.end()) {
+            return empty;
+        }
+
+        return it->second;
     }
 
     void MassDependentFitter::InitializeMassBins(const std::vector<double>& mass_bins) {
@@ -322,6 +405,8 @@ namespace m2pw {
 
     void MassDependentFitter::SetMassDependenceConfig(const MassDependenceConfig& config) {
         massDependenceConfig_ = config;
+        BuildMassDependenceLookupCache();
+        BuildParameterEvalPlanCache();
      }
 
     void MassDependentFitter::SetMomentsConfig(const MomentsConfig& config) {
@@ -408,6 +493,9 @@ namespace m2pw {
             const double mass_bin = massBins_[i];
             const TString mass_bin_str = TString::Format("%1.2f", mass_bin);
             auto& pars = pars_.at(mass_bin);
+            const auto planCacheIt = parameterEvalPlanCache_.find(mass_bin);
+            const auto massIndepBinIt = massIndepPars.find(mass_bin_str);
+            const auto* massIndepBin = (massIndepBinIt != massIndepPars.end()) ? &massIndepBinIt->second : nullptr;
             std::map<TString, std::complex<double>> amplitudeCache;
 
             auto getCachedAmplitude = [&](const TString& base_name, int ell_value) -> const std::complex<double>& {
@@ -425,41 +513,49 @@ namespace m2pw {
             
             // Set parameter values
             for (int j = 0; j < pars.Nvars(); ++j) {
-                const TString par_name = pars.GetParName(j);
-                const auto param_info = ParseParameterName(par_name);
-                
-                if (!param_info) continue;
+                const ParameterEvalPlan* param_plan = nullptr;
+                ParameterEvalPlan fallbackPlan;
+                if (planCacheIt != parameterEvalPlanCache_.end() && j < static_cast<int>(planCacheIt->second.size())) {
+                    param_plan = &planCacheIt->second[j];
+                } else {
+                    auto fallbackInfo = ParseParameterName(pars.GetParName(j));
+                    if (!fallbackInfo) continue;
 
-                // l value already parsed by ParameterInfo
-                int ell_value = param_info->l_str.Atoi();
+                    fallbackPlan.par_name = fallbackInfo->name;
+                    fallbackPlan.base_name = fallbackInfo->base_name;
+                    fallbackPlan.ell_value = fallbackInfo->ell_value;
+                    fallbackPlan.isPhase = fallbackInfo->isPhase;
+                    fallbackPlan.isMassDependent = IsMassDependentEll(fallbackInfo->ell_value);
+                    param_plan = &fallbackPlan;
+                }
+
+                const TString& par_name = param_plan->par_name;
+                const int ell_value = param_plan->ell_value;
+                const bool isMassDependent = param_plan->isMassDependent;
                 
                 double value = 0.0;
-                if (!param_info->isPhase) {
+                if (!param_plan->isPhase) {
                     // Handle magnitude parameters
-                    if (const auto* waveConfigs = massDependenceConfig_.GetWaveModel(ell_value);
-                        waveConfigs && !waveConfigs->empty()) {
-                            value = std::abs(getCachedAmplitude(par_name, ell_value));
+                    if (isMassDependent) {
+                        value = std::abs(getCachedAmplitude(par_name, ell_value));
                     } else {
                         // Use mass-independent parameters
-                        const auto bin_it = massIndepPars.find(mass_bin_str);
-                        if (bin_it != massIndepPars.end()) {
-                            const auto par_it = bin_it->second.find(par_name);
-                            if (par_it != bin_it->second.end() && !par_it->second.empty()) {
+                        if (massIndepBin) {
+                            const auto par_it = massIndepBin->find(par_name);
+                            if (par_it != massIndepBin->end() && !par_it->second.empty()) {
                                 value = par_it->second[0];
                             }
                         }
                     }
                 } else {
                     // Handle phase parameters - check mass-independent first
-                    TString base_name = param_info->name;
-                    base_name.ReplaceAll("phi", "");
+                    const TString& base_name = param_plan->base_name;
                     
                     // First check if we have mass-independent phase parameters for this parameter
                     bool hasPhaseInMassIndepPars = false;
-                    const auto bin_it = massIndepPars.find(mass_bin_str);
-                    if (bin_it != massIndepPars.end()) {
-                        const auto par_it = bin_it->second.find(par_name);
-                        if (par_it != bin_it->second.end() && !par_it->second.empty()) {
+                    if (massIndepBin) {
+                        const auto par_it = massIndepBin->find(par_name);
+                        if (par_it != massIndepBin->end() && !par_it->second.empty()) {
                             hasPhaseInMassIndepPars = true;
                             value = par_it->second[0];
                         }
@@ -467,8 +563,7 @@ namespace m2pw {
                     
                     // If no mass-independent phase found, check for mass-dependent
                     if (!hasPhaseInMassIndepPars) {
-                        if (const auto* waveConfigs = massDependenceConfig_.GetWaveModel(ell_value);
-                            waveConfigs && !waveConfigs->empty()) {
+                        if (isMassDependent) {
                             value = std::arg(getCachedAmplitude(base_name, ell_value));
                         }
                     }
@@ -1035,7 +1130,7 @@ namespace m2pw {
         int ell_value) const {
 
         std::complex<double> total_amplitude(0.0, 0.0);
-        const std::vector<TString> waveNames = massDependenceConfig_.GetWaves(ell_value);
+        const std::vector<TString>& waveNames = GetMassDependentWaveNames(ell_value);
 
         for (const TString& waveName : waveNames) {
             const TString key = Form("%s_%s", par_name.Data(), waveName.Data());
@@ -1224,7 +1319,6 @@ namespace m2pw {
             for (const auto& [parName, value] : paramValues) {
                 // Create mass-independent parameter name with mass bin
                 TString name = Form("MI_%1.6f_%s", mass_bin_from_file, parName.Data());
-                
                 // Check if parameter already exists - skip if already added
                 if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
                     LogMIInfo("SKIP", Form("param=%s reason=already_exists", name.Data()));

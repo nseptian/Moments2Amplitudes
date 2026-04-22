@@ -133,9 +133,19 @@ namespace m2pw {
             TString refl_str;
             TString l_str;
             TString m_str;
+            TString base_name;
+            int ell_value = -1;
             bool isPhase;
             
             ParameterInfo(const TString& parName);
+        };
+
+        struct ParameterEvalPlan {
+            TString par_name;
+            TString base_name;
+            int ell_value = -1;
+            bool isPhase = false;
+            bool isMassDependent = false;
         };
         
         // Constructor with both mass dependence and moments configuration
@@ -325,6 +335,10 @@ private:
     MomentsConfig hMomentsConfig_;  // Configuration for moment selection
     std::map<TString, int> waveToFunctionIndex_;  // Maps wave names to function indices
     std::map<double, std::vector<int>> equationLCache_;  // Parsed L for each equation, per mass bin
+    std::map<double, std::vector<ParameterInfo>> parameterInfoCache_;  // Parsed parameter metadata per mass bin
+    std::map<double, std::vector<ParameterEvalPlan>> parameterEvalPlanCache_;  // Preclassified parameter evaluation plan per mass bin
+    std::map<int, bool> massDependentEllCache_;  // Fast lookup for mass-dependent ell values
+    std::map<int, std::vector<TString>> massDependentWaveNamesCache_;  // Fast lookup for wave names by ell
 
     // Caching for performance
     mutable double lastChi2_ = 0.0;
@@ -342,6 +356,12 @@ private:
     void InitializeMassBins(const std::vector<double>& mass_bins);
     void InitializeMDFunctions();
     void BuildEquationLCache();
+    void BuildParameterInfoCache();
+    void BuildMassDependenceLookupCache();
+    void BuildParameterEvalPlanCache();
+
+    bool IsMassDependentEll(int ell_value) const;
+    const std::vector<TString>& GetMassDependentWaveNames(int ell_value) const;
 
     std::unique_ptr<ParameterInfo> ParseParameterName(const TString& parName) const;
 
@@ -372,8 +392,12 @@ private:
             refl_str = ((TObjString*)parts->At(0))->GetString();
             l_str = ((TObjString*)parts->At(1))->GetString();
             m_str = ((TObjString*)parts->At(2))->GetString();
+            ell_value = l_str.Atoi();
             isPhase = (refl_str == "aphi" || refl_str == "bphi");
         }
+
+        base_name = name;
+        base_name.ReplaceAll("phi", "");
     }
    
 }
