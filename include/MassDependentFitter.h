@@ -146,6 +146,7 @@ namespace m2pw {
             int ell_value = -1;
             bool isPhase = false;
             bool isMassDependent = false;
+            bool isSharedResonance = false;  // true for g_etapi, g_KK (same value across all mass bins)
         };
         
         // Constructor with both mass dependence and moments configuration
@@ -189,6 +190,9 @@ namespace m2pw {
         void SetMomentsConfig(const MomentsConfig& config);
         void SetMinimizerPrintLevel(int level);
         void SetMaxFunctionCalls(int maxCalls);
+        void SetMinimizerStrategy(int strategy);
+        void SetMinimizerTolerance(double tolerance);
+        void SetMaxIterations(int maxIterations);
         
         // Get current configuration
         const MassDependenceConfig& GetMassDependenceConfig() const { return massDependenceConfig_; }
@@ -351,6 +355,9 @@ private:
     int minimizerStatus_ = -1;
     int minimizerPrintLevel_ = 0;
     int maxFunctionCalls_ = 1000000;
+    int minimizerStrategy_ = 1;
+    double minimizerTolerance_ = 1e-3;
+    int maxIterations_ = 100000;
 
     // Helper methods
     void InitializeMassBins(const std::vector<double>& mass_bins);

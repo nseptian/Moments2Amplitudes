@@ -317,6 +317,11 @@ namespace m2pw {
                 plan.ell_value = info->ell_value;
                 plan.isPhase = info->isPhase;
                 plan.isMassDependent = IsMassDependentEll(info->ell_value);
+                
+                // Detect shared resonance parameters (same value across all mass bins)
+                plan.isSharedResonance = (plan.par_name.Contains("g_etapi") || 
+                                        plan.par_name.Contains("g_KK"));
+                
                 plans.push_back(std::move(plan));
             }
 
@@ -428,6 +433,36 @@ namespace m2pw {
         LogFitInfo("MIN", Form("set_max_function_calls=%d", maxFunctionCalls_));
     }
 
+    void MassDependentFitter::SetMinimizerStrategy(int strategy) {
+        if (strategy < 0 || strategy > 2) {
+            LogFitWarn("MIN", Form("set_strategy_failed value=%d reason=out_of_range_expected_0_to_2", strategy));
+            return;
+        }
+
+        minimizerStrategy_ = strategy;
+        LogFitInfo("MIN", Form("set_strategy=%d", minimizerStrategy_));
+    }
+
+    void MassDependentFitter::SetMinimizerTolerance(double tolerance) {
+        if (tolerance <= 0.0) {
+            LogFitWarn("MIN", Form("set_tolerance_failed value=%g reason=non_positive", tolerance));
+            return;
+        }
+
+        minimizerTolerance_ = tolerance;
+        LogFitInfo("MIN", Form("set_tolerance=%g", minimizerTolerance_));
+    }
+
+    void MassDependentFitter::SetMaxIterations(int maxIterations) {
+        if (maxIterations <= 0) {
+            LogFitWarn("MIN", Form("set_max_iterations_failed value=%d reason=non_positive", maxIterations));
+            return;
+        }
+
+        maxIterations_ = maxIterations;
+        LogFitInfo("MIN", Form("set_max_iterations=%d", maxIterations_));
+    }
+
     unsigned int MassDependentFitter::NDim() const {
         if (pars_.empty()) return 0;
         
@@ -488,6 +523,7 @@ namespace m2pw {
         const std::map<TString, std::map<TString, std::vector<double>>>& massIndepPars) {
         
         double total_chi2 = 0.0;
+        std::map<TString, double> sharedResonanceValues;  // Cache shared resonance param values
         
         for (size_t i = 0; i < massBins_.size(); ++i) {
             const double mass_bin = massBins_[i];
@@ -526,12 +562,21 @@ namespace m2pw {
                     fallbackPlan.ell_value = fallbackInfo->ell_value;
                     fallbackPlan.isPhase = fallbackInfo->isPhase;
                     fallbackPlan.isMassDependent = IsMassDependentEll(fallbackInfo->ell_value);
+                    fallbackPlan.isSharedResonance = (fallbackPlan.par_name.Contains("g_etapi") || 
+                                                    fallbackPlan.par_name.Contains("g_KK"));
                     param_plan = &fallbackPlan;
                 }
 
                 const TString& par_name = param_plan->par_name;
                 const int ell_value = param_plan->ell_value;
                 const bool isMassDependent = param_plan->isMassDependent;
+                const bool isSharedResonance = param_plan->isSharedResonance;
+                
+                // Skip shared resonance parameters after first mass bin
+                // (they have the same value across all mass bins)
+                if (isSharedResonance && i > 0) {
+                    continue;  // Reuse cached value from first mass bin
+                }
                 
                 double value = 0.0;
                 if (!param_plan->isPhase) {
@@ -568,6 +613,11 @@ namespace m2pw {
                         }
                     }
                     // If hasPhaseInMassIndepPars is true, value is already set above
+                }
+                
+                // Cache shared resonance values for reuse across mass bins
+                if (isSharedResonance) {
+                    sharedResonanceValues[par_name] = value;
                 }
                 
                 pars.SetCurrentVal(par_name, value);
@@ -1068,6 +1118,12 @@ namespace m2pw {
         LogFitInfo("MIN", Form("minuit_print_level=%d", minimizerPrintLevel_));
         minimizer->SetMaxFunctionCalls(maxFunctionCalls_);
         LogFitInfo("MIN", Form("max_function_calls=%d", maxFunctionCalls_));
+        minimizer->SetMaxIterations(maxIterations_);
+        LogFitInfo("MIN", Form("max_iterations=%d", maxIterations_));
+        minimizer->SetStrategy(minimizerStrategy_);
+        LogFitInfo("MIN", Form("strategy=%d", minimizerStrategy_));
+        minimizer->SetTolerance(minimizerTolerance_);
+        LogFitInfo("MIN", Form("tolerance=%g", minimizerTolerance_));
 
         Chi2Function chi2Function(*this, paramManager.parIndexNames);
         ROOT::Math::Functor functor(chi2Function, paramManager.totalNpars);
@@ -1133,7 +1189,7 @@ namespace m2pw {
         const std::vector<TString>& waveNames = GetMassDependentWaveNames(ell_value);
 
         for (const TString& waveName : waveNames) {
-            const TString key = Form("%s_%s", par_name.Data(), waveName.Data());
+            const TString key = Form("%s_%s", MassDependentBaseKey(par_name).Data(), waveName.Data());
             const auto it = massDepPars.find(key);
             if (it == massDepPars.end() || it->second.empty()) {
                 continue;
@@ -1554,7 +1610,8 @@ namespace m2pw {
 
                 for (const TString& paramType : paramTypes) {
                     TString name;
-                    const bool isSharedResonanceParam = paramType.BeginsWith("Mass") || paramType.BeginsWith("Width");
+                    // vector<TString> sharedResonanceParamTypes = {"Mass", "Width", "g_etapi", "g_KK"};
+                    const bool isSharedResonanceParam = paramType.BeginsWith("Mass") || paramType.BeginsWith("Width") || paramType == "g_etapi" || paramType == "g_KK";
                     if (isSharedResonanceParam && !isConformal) {
                         name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
                     } else {

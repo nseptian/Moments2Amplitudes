@@ -59,7 +59,7 @@ namespace m2pw{
             if (_FuncType == 3) {  // Polynomial
                 return 2 + 2*(_PolyOrder + 1);  // m_threshold, m_expansion, (re_i, im_i) for i=0 to N
             } else if (_FuncType == 4) {  // Flatte + polynomial
-                return 6 + 2*(_PolyOrder + 1);  // k, g_etapi, g_KK, m_threshold, m_expansion, Mass + polynomial coeffs
+                return 6 + 2*(_PolyOrder + 1);  // k, m_threshold, m_expansion, poly coeffs, g_etapi, g_KK, Mass
             } else if (_FuncType == 2) {  // Flatté
                 return 4;
             } else if (_FuncType == 1) {  // Coherent sum of two Breit-Wigners
@@ -129,22 +129,28 @@ namespace m2pw{
                     
                 case 4:  // Flatte + polynomial
                     {
-                        const size_t requiredParams = static_cast<size_t>(GetNParameters());
-                        if (coreParams.size() < requiredParams) {
+                        // Layout is dynamic but always ends with [g_etapi, g_KK, Mass].
+                        // The polynomial block sits between the first three parameters and the shared tail.
+                        if (coreParams.size() < 6) {
                             return complex<double>(0.0, 0.0);
                         }
 
+                        const size_t sharedTailSize = 3;
+                        const size_t sharedTailStart = coreParams.size() - sharedTailSize;
+
                         // Parameter layout for FuncType=4:
-                        // [0]=k, [1]=g_etapi, [2]=g_KK, [3]=m_threshold, [4]=m_expansion, [5...end-1]=conformal polynomial coeffs, [end]=Mass
+                        // [0]=k, [1]=m_threshold, [2]=m_expansion,
+                        // [3...sharedTailStart-1]=conformal polynomial coeffs,
+                        // [sharedTailStart]=g_etapi, [sharedTailStart+1]=g_KK, [sharedTailStart+2]=Mass
                         const double k = coreParams[0];
-                        const double g_etapi = coreParams[1];
-                        const double g_KK = coreParams[2];
-                        const double m_threshold = coreParams[3];
-                        const double m_expansion = coreParams[4];
+                        const double m_threshold = coreParams[1];
+                        const double m_expansion = coreParams[2];
 
                         const double s = mass * mass;
-                        // For FuncType=4, Mass is always the last core parameter.
-                        // If global phase is enabled, it has already been stripped above.
+                        const double g_etapi = coreParams[sharedTailStart];
+                        const double g_KK = coreParams[sharedTailStart + 1];
+                        // Mass is always the last core parameter. If global phase is enabled,
+                        // it has already been stripped above.
                         const double m0 = coreParams.back();
                         const double m0_sq = m0 * m0;
                         const complex<double> rho_etapi = GetComplexPhaseSpaceFactor(mass, 0.547853, 0.13957);
@@ -154,7 +160,7 @@ namespace m2pw{
                         denominator -= complex<double>(0.0, 1.0) * width_term;
 
                         complex<double> flatteAmp = k / denominator;
-                        vector<double> polyParams(coreParams.begin() + 5, coreParams.end() - 1);  // Exclude Mass at end
+                        vector<double> polyParams(coreParams.begin() + 3, coreParams.end() - sharedTailSize);
 
                         complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
                         complex<double> flatteTerm = flatteAmp * exp(complex<double>(0, phase));
