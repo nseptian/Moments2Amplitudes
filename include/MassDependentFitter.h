@@ -324,6 +324,7 @@ private:
     MassDependenceConfig massDependenceConfig_;
     MomentsConfig hMomentsConfig_;  // Configuration for moment selection
     std::map<TString, int> waveToFunctionIndex_;  // Maps wave names to function indices
+    std::map<double, std::vector<int>> equationLCache_;  // Parsed L for each equation, per mass bin
 
     // Caching for performance
     mutable double lastChi2_ = 0.0;
@@ -332,6 +333,7 @@ private:
 
     // Minimizer status and validity
     bool minimizerIsValid_ = false;
+    bool minimizerHasValidErrors_ = false;
     int minimizerStatus_ = -1;
     int minimizerPrintLevel_ = 0;
     int maxFunctionCalls_ = 1000000;
@@ -339,6 +341,7 @@ private:
     // Helper methods
     void InitializeMassBins(const std::vector<double>& mass_bins);
     void InitializeMDFunctions();
+    void BuildEquationLCache();
 
     std::unique_ptr<ParameterInfo> ParseParameterName(const TString& parName) const;
 
@@ -346,15 +349,10 @@ private:
     double EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const;
 
     // Helper methods for amplitude-level evaluation (single or multiple waves)
-    double GetAmplitudeMagnitude(double mass_bin,
-                                const TString& par_name,
-                                const std::map<TString, std::vector<double>>& massDepPars,
-                                int ell_value) const;
-
-    double GetAmplitudePhase(double mass_bin,
-                            const TString& base_name,
-                            const std::map<TString, std::vector<double>>& massDepPars,
-                            int ell_value) const;
+    std::complex<double> GetCombinedAmplitude(double mass_bin,
+                                              const TString& par_name,
+                                              const std::map<TString, std::vector<double>>& massDepPars,
+                                              int ell_value) const;
 
     // Helper method to map wave names to function indices
     int GetFunctionIndexForWave(const TString& waveName) const;

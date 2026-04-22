@@ -239,6 +239,20 @@ namespace m2pw {
                 eqn.DoEval(pars_[mass_bin].CurrentVals());
             }
         }
+
+        BuildEquationLCache();
+    }
+
+    void MassDependentFitter::BuildEquationLCache() {
+        equationLCache_.clear();
+        for (const auto& [mass_bin, equations] : eqns_) {
+            std::vector<int> lValues;
+            lValues.reserve(equations.size());
+            for (const auto& eqn : equations) {
+                lValues.push_back(ExtractLFromEquationName(eqn.GetName()));
+            }
+            equationLCache_[mass_bin] = std::move(lValues);
+        }
     }
 
     void MassDependentFitter::InitializeMassBins(const std::vector<double>& mass_bins) {
@@ -342,13 +356,19 @@ namespace m2pw {
     double MassDependentFitter::EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const {
         double chi2 = 0.0;
         const auto current_vals = pars.CurrentVals();
-        
-        int includedEquations = 0;
-        int excludedEquations = 0;
-        
-        for (auto& eqn : eqns_.at(massBin)) {
-            // Extract L value from equation name to check if it should be included
-            int L_value = ExtractLFromEquationName(eqn.GetName());
+
+        auto& equations = eqns_.at(massBin);
+        const auto cacheIt = equationLCache_.find(massBin);
+
+        for (size_t idx = 0; idx < equations.size(); ++idx) {
+            auto& eqn = equations[idx];
+            int L_value = -1;
+            if (cacheIt != equationLCache_.end() && idx < cacheIt->second.size()) {
+                L_value = cacheIt->second[idx];
+            } else {
+                // Fallback when cache is missing/out-of-sync.
+                L_value = ExtractLFromEquationName(eqn.GetName());
+            }
             
             // Apply H(L,M)s filtering
             bool shouldInclude = true;
@@ -360,20 +380,9 @@ namespace m2pw {
                 eqn.SetNeedsRecalc();
                 double eqn_chi2 = eqn.DoEvalSq(current_vals);
                 chi2 += eqn_chi2;
-                includedEquations++;
-                
-                // Optional: detailed output for debugging
-                // std::cout << "  Including " << eqn.GetName() << " (L=" << L_value << "): chi2 = " << eqn_chi2 << std::endl;
-            } else {
-                excludedEquations++;
-                // std::cout << "  Excluding " << eqn.GetName() << " (L=" << L_value << ")" << std::endl;
             }
         }
-        
-        // Print summary for this mass bin
-        // std::cout << "  Mass bin " << massBin << ": included " << includedEquations 
-        //           << " equations, excluded " << excludedEquations << " equations" << std::endl;
-        
+
         return chi2;
     }
 
@@ -399,6 +408,20 @@ namespace m2pw {
             const double mass_bin = massBins_[i];
             const TString mass_bin_str = TString::Format("%1.2f", mass_bin);
             auto& pars = pars_.at(mass_bin);
+            std::map<TString, std::complex<double>> amplitudeCache;
+
+            auto getCachedAmplitude = [&](const TString& base_name, int ell_value) -> const std::complex<double>& {
+                const TString cacheKey = MassDependentBaseKey(base_name);
+                const auto cacheIt = amplitudeCache.find(cacheKey);
+                if (cacheIt != amplitudeCache.end()) {
+                    return cacheIt->second;
+                }
+
+                auto [insertedIt, _] = amplitudeCache.emplace(
+                    cacheKey,
+                    GetCombinedAmplitude(mass_bin, base_name, massDepPars, ell_value));
+                return insertedIt->second;
+            };
             
             // Set parameter values
             for (int j = 0; j < pars.Nvars(); ++j) {
@@ -406,22 +429,16 @@ namespace m2pw {
                 const auto param_info = ParseParameterName(par_name);
                 
                 if (!param_info) continue;
-                
-                // Extract l value from parameter name
-                std::unique_ptr<TObjArray> parts(par_name.Tokenize("_"));
-                if (parts->GetEntries() < 3) continue;
-                
-                TString l_str = ((TObjString*)parts->At(1))->GetString();
-                int ell_value = l_str.Atoi();
+
+                // l value already parsed by ParameterInfo
+                int ell_value = param_info->l_str.Atoi();
                 
                 double value = 0.0;
                 if (!param_info->isPhase) {
                     // Handle magnitude parameters
-                    if (massDependenceConfig_.IsMassDependent(ell_value)) {
-                        std::vector<TString> waves = massDependenceConfig_.GetWaves(ell_value);
-                        if (!waves.empty()) {
-                            value = GetAmplitudeMagnitude(mass_bin, par_name, massDepPars, ell_value);
-                        }
+                    if (const auto* waveConfigs = massDependenceConfig_.GetWaveModel(ell_value);
+                        waveConfigs && !waveConfigs->empty()) {
+                            value = std::abs(getCachedAmplitude(par_name, ell_value));
                     } else {
                         // Use mass-independent parameters
                         const auto bin_it = massIndepPars.find(mass_bin_str);
@@ -449,10 +466,10 @@ namespace m2pw {
                     }
                     
                     // If no mass-independent phase found, check for mass-dependent
-                    if (!hasPhaseInMassIndepPars && massDependenceConfig_.IsMassDependent(ell_value)) {
-                        std::vector<TString> waves = massDependenceConfig_.GetWaves(ell_value);
-                        if (!waves.empty()) {
-                            value = GetAmplitudePhase(mass_bin, base_name, massDepPars, ell_value);
+                    if (!hasPhaseInMassIndepPars) {
+                        if (const auto* waveConfigs = massDependenceConfig_.GetWaveModel(ell_value);
+                            waveConfigs && !waveConfigs->empty()) {
+                            value = std::arg(getCachedAmplitude(base_name, ell_value));
                         }
                     }
                     // If hasPhaseInMassIndepPars is true, value is already set above
@@ -626,11 +643,13 @@ namespace m2pw {
         chi2_tree->Branch("chi2", &chi2);
         int seed_val = paramManager.randomSeed;
         bool isValid = minimizerIsValid_;
+        bool isValidError = minimizerHasValidErrors_;
         int status = minimizerStatus_;
 
-        LogFitInfo("MIN", Form("seed=%d is_valid=%d status=%d", seed_val, isValid, status));
+        LogFitInfo("MIN", Form("seed=%d is_valid=%d is_valid_error=%d status=%d", seed_val, isValid, isValidError, status));
 
         chi2_tree->Branch("isValid", &isValid);
+        chi2_tree->Branch("isValidError", &isValidError);
         chi2_tree->Branch("Status", &status);
         chi2_tree->Fill();
 
@@ -799,8 +818,8 @@ namespace m2pw {
         }
 
         bool updated = false;
-        const TString sharedMassName = Form("MD_%s_M", SharedResonanceKeyForWave(waveName).Data());
-        const TString sharedWidthName = Form("MD_%s_width", SharedResonanceKeyForWave(waveName).Data());
+        const TString sharedMassName = Form("MD_%s_Mass", SharedResonanceKeyForWave(waveName).Data());
+        const TString sharedWidthName = Form("MD_%s_Width", SharedResonanceKeyForWave(waveName).Data());
 
         auto itM = parsList.find(sharedMassName);
         if (itM != parsList.end()) {
@@ -945,6 +964,7 @@ namespace m2pw {
         if (!minimizer) {
             LogFitWarn("MIN", "reason=minuit2_creation_failed");
             minimizerIsValid_ = false;
+            minimizerHasValidErrors_ = false;
             minimizerStatus_ = -1;
             return;
         }
@@ -985,9 +1005,11 @@ namespace m2pw {
             }
         }
 
-        minimizer->Minimize();
+        const bool minimizerConverged = minimizer->Minimize();
 
-        minimizerIsValid_ = minimizer->IsValidError();
+        // isValid should represent minimization success, not covariance validity.
+        minimizerIsValid_ = minimizerConverged && (minimizer->Status() == 0);
+        minimizerHasValidErrors_ = minimizer->IsValidError();
         minimizerStatus_ = minimizer->Status();
         lastChi2_ = minimizer->MinValue();
 
@@ -1006,7 +1028,7 @@ namespace m2pw {
     }
 
     // Helper method for amplitude magnitude evaluation (single or coherent waves)
-    double MassDependentFitter::GetAmplitudeMagnitude(
+    std::complex<double> MassDependentFitter::GetCombinedAmplitude(
         double mass_bin,
         const TString& par_name,
         const std::map<TString, std::vector<double>>& massDepPars,
@@ -1044,60 +1066,13 @@ namespace m2pw {
                 params.push_back(phaseIt->second[0]);
             }
 
-            const double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, params, includeGlobalPhase);
-            const double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, params, includeGlobalPhase);
-            total_amplitude += magnitude * std::complex<double>(std::cos(phase), std::sin(phase));
+            total_amplitude += massDepFuncs_[funcIndex].GetAmplitude(mass_bin, params, includeGlobalPhase);
         }
 
-        return std::abs(total_amplitude);
+        return total_amplitude;
     }
 
-    // Helper method for amplitude phase evaluation (single or coherent waves)
-    double MassDependentFitter::GetAmplitudePhase(
-        double mass_bin,
-        const TString& base_name,
-        const std::map<TString, std::vector<double>>& massDepPars,
-        int ell_value) const {
 
-        std::complex<double> total_amplitude(0.0, 0.0);
-        const std::vector<TString> waveNames = massDependenceConfig_.GetWaves(ell_value);
-
-        for (const TString& waveName : waveNames) {
-            const TString key = Form("%s_%s", base_name.Data(), waveName.Data());
-            const auto it = massDepPars.find(key);
-            if (it == massDepPars.end() || it->second.empty()) {
-                continue;
-            }
-
-            const int funcIndex = GetFunctionIndexForWave(waveName);
-            if (funcIndex < 0 || funcIndex >= static_cast<int>(massDepFuncs_.size())) {
-                continue;
-            }
-
-            std::vector<double> params;
-            const int funcType = massDepFuncs_[funcIndex].GetFuncType();
-            if (!BuildWaveParameters(base_name, waveName, funcType, massDepPars, params)) {
-                continue;
-            }
-
-            const TString reflTag = ReflectivityTagFromParameterName(base_name);
-            auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName, reflTag));
-            if (phaseIt == massDepPars.end() && reflTag.Length() > 0) {
-                phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
-            }
-
-            const bool includeGlobalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty());
-            if (includeGlobalPhase) {
-                params.push_back(phaseIt->second[0]);
-            }
-
-            const double magnitude = massDepFuncs_[funcIndex].GetPWMagnitude(mass_bin, params, includeGlobalPhase);
-            const double phase = massDepFuncs_[funcIndex].GetPWPhase(mass_bin, params, includeGlobalPhase);
-            total_amplitude += magnitude * std::complex<double>(std::cos(phase), std::sin(phase));
-        }
-
-        return std::arg(total_amplitude);
-    }
 
     // Helper method to map wave names to function indices
     int MassDependentFitter::GetFunctionIndexForWave(const TString& waveName) const {
@@ -1286,7 +1261,7 @@ namespace m2pw {
         }
         
         // Update the cached chi2 value
-        const_cast<MassDependentFitter*>(this)->lastChi2_ = total_chi2;
+        lastChi2_ = total_chi2;
         
         LogFitInfo("CHI2", Form("total=%g", total_chi2));
         return total_chi2;
@@ -1715,6 +1690,7 @@ namespace m2pw {
                         paramTypes.push_back(Form("re_%d", i));
                         paramTypes.push_back(Form("im_%d", i));
                     }
+                    paramTypes.push_back("Mass");
                 } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::Flatte)) {
                     paramTypes = {"k", "g_etapi", "g_KK", "Mass"};
                 } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBreitWigner)) {
