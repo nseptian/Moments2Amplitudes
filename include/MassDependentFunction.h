@@ -34,6 +34,10 @@ namespace m2pw{
         }
 
         // Vector parameter version (main implementation)
+        complex<double> GetAmplitude(double mass, const vector<double>& params, bool include_globalphase = false) const {
+            return ComputeAmplitude(mass, params, include_globalphase);
+        }
+
         double GetPWMagnitude(double mass, const vector<double>& params, bool include_globalphase = false) const {
             complex<double> amp = GetAmplitude(mass, params, include_globalphase);
             return abs(amp);
@@ -77,7 +81,7 @@ namespace m2pw{
         int _PolyOrder = 2;  // Polynomial order for conformal polynomial (FuncType=4)
 
         // Core amplitude calculation
-        complex<double> GetAmplitude(double mass, const vector<double>& params, bool include_globalphase) const {
+        complex<double> ComputeAmplitude(double mass, const vector<double>& params, bool include_globalphase) const {
             if (params.empty()) {
                 return complex<double>(0.0, 0.0);
             }
@@ -139,19 +143,21 @@ namespace m2pw{
                         const double m_expansion = coreParams[4];
 
                         const double s = mass * mass;
-                        const double m0 = (coreParams.size() > 5) ? coreParams.back() : 0.98;  // Use passed Mass or default
-                        const double m0_poly_sq = m_expansion * m_expansion;
+                        // For FuncType=4, Mass is always the last core parameter.
+                        // If global phase is enabled, it has already been stripped above.
+                        const double m0 = coreParams.back();
+                        const double m0_sq = m0 * m0;
                         const complex<double> rho_etapi = GetComplexPhaseSpaceFactor(mass, 0.547853, 0.13957);
                         const complex<double> rho_KK = GetComplexPhaseSpaceFactor(mass, 0.493677, 0.493677);
                         const complex<double> width_term = m0 * (g_etapi * g_etapi * rho_etapi + g_KK * g_KK * rho_KK);
-                        complex<double> denominator(m0_poly_sq - s, 0.0);
+                        complex<double> denominator(m0_sq - s, 0.0);
                         denominator -= complex<double>(0.0, 1.0) * width_term;
 
-                        complex<double> flatteAmp = 1.0 / denominator;
+                        complex<double> flatteAmp = k / denominator;
                         vector<double> polyParams(coreParams.begin() + 5, coreParams.end() - 1);  // Exclude Mass at end
 
                         complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
-                        complex<double> flatteTerm = k * flatteAmp * exp(complex<double>(0, phase));
+                        complex<double> flatteTerm = flatteAmp * exp(complex<double>(0, phase));
                         return flatteTerm + polyAmp;
                     }
 
@@ -204,6 +210,10 @@ namespace m2pw{
 
         // Flatté amplitude for case 2
         complex<double> GetFlatteAmplitude(double mass, double k, const vector<double>& params) const {
+            if (params.size() < 4) {
+                return complex<double>(0.0, 0.0);
+            }
+
             double g_etapi = params[1];
             double g_KK = params[2];
             double M0 = params[3];
