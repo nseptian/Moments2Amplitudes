@@ -11,17 +11,16 @@ namespace m2pw {
 
     namespace {
         TString ModelTypeName(int funcType) {
-            using ModelType = MassDependentFitter::MassDependenceConfig::ModelType;
-            switch (static_cast<ModelType>(funcType)) {
-                case ModelType::BreitWigner:
+            switch (funcType) {
+                case 0:
                     return "breitwigner";
-                case ModelType::TwoBreitWigner:
+                case 1:
                     return "two_breitwigner";
-                case ModelType::Flatte:
+                case 2:
                     return "flatte";
-                case ModelType::Polynomial:
+                case 3:
                     return "polynomial";
-                case ModelType::FlattePlusPolynomial:
+                case 4:
                     return "flatte_plus_polynomial";
                 default:
                     return Form("unknown_%d", funcType);
@@ -59,8 +58,148 @@ namespace m2pw {
             return waveName;
         }
 
+        TString GlobalPhaseKeyForWave(const TString& waveName, const TString& reflTag) {
+            if (reflTag.Length() == 0) {
+                return GlobalPhaseKeyForWave(waveName);
+            }
+
+            return Form("shared%s_%s", reflTag.Data(), waveName.Data());
+        }
+
+        TString ReflectivityTagFromParameterName(const TString& parName) {
+            std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
+            if (parts->GetEntries() < 1) {
+                return TString();
+            }
+
+            const TString refl = ((TObjString*)parts->At(0))->GetString();
+            if (refl == "a" || refl == "b") {
+                return refl;
+            }
+
+            return TString();
+        }
+
         TString SharedResonanceKeyForWave(const TString& waveName) {
             return Form("shared_%s", waveName.Data());
+        }
+
+        TString MassDependentBaseKey(const TString& parName) {
+            const TString prefix = "MD_";
+            if (!parName.BeginsWith(prefix)) {
+                return parName;
+            }
+
+            if (parName.Contains("_re_")) {
+                const int suffixPos = parName.Index("_re_");
+                return parName(prefix.Length(), suffixPos - prefix.Length());
+            }
+
+            if (parName.Contains("_im_")) {
+                const int suffixPos = parName.Index("_im_");
+                return parName(prefix.Length(), suffixPos - prefix.Length());
+            }
+
+            const std::vector<TString> suffixes = {
+                "_globalphase",
+                "_m_threshold",
+                "_m_expansion",
+                "_g_etapi",
+                "_g_KK",
+                "_Mass1",
+                "_Width1",
+                "_Mass2",
+                "_Width2",
+                "_Mass",
+                "_Width",
+                "_k1",
+                "_k2",
+                "_k"
+            };
+
+            for (const auto& suffix : suffixes) {
+                if (parName.EndsWith(suffix)) {
+                    return parName(prefix.Length(), parName.Length() - prefix.Length() - suffix.Length());
+                }
+            }
+
+            return parName(prefix.Length(), parName.Length() - prefix.Length());
+        }
+
+        bool BuildWaveParameters(
+            const TString& baseName,
+            const TString& waveName,
+            int funcType,
+            const std::map<TString, std::vector<double>>& massDepPars,
+            std::vector<double>& params) {
+
+            TString key = Form("%s_%s", baseName.Data(), waveName.Data());
+            const auto it = massDepPars.find(key);
+            if (it == massDepPars.end() || it->second.empty()) {
+                return false;
+            }
+
+            params = it->second;
+
+            if (funcType == 4) {
+                if (params.size() < 5) {
+                    return false;
+                }
+                TString sharedKey = SharedResonanceKeyForWave(waveName);
+                auto sharedIt = massDepPars.find(sharedKey);
+                if (sharedIt == massDepPars.end()) {
+                    return false;
+                }
+                params.push_back(sharedIt->second[0]);
+                return true;
+            }
+
+            if (funcType == 2) {
+                if (params.size() < 3) {
+                    return false;
+                }
+
+                TString sharedKey = SharedResonanceKeyForWave(waveName);
+                auto sharedIt = massDepPars.find(sharedKey);
+                if (sharedIt == massDepPars.end()) {
+                    return false;
+                }
+
+                params.push_back(sharedIt->second[0]);
+                return true;
+            }
+
+            if (funcType == 1) {
+                if (params.size() < 2) {
+                    return false;
+                }
+
+                auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
+                if (sharedIt == massDepPars.end() || sharedIt->second.size() < 4) {
+                    return false;
+                }
+
+                const double M1 = sharedIt->second[0];
+                const double width1 = sharedIt->second[1];
+                const double M2 = sharedIt->second[2];
+                const double width2 = sharedIt->second[3];
+                const double k1 = params[0];
+                const double k2 = params[1];
+                params = {k1, M1, width1, k2, M2, width2};
+                return true;
+            }
+
+            if (params.size() == 1) {
+                auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
+                if (sharedIt == massDepPars.end() || sharedIt->second.size() < 2) {
+                    return false;
+                }
+
+                params.push_back(sharedIt->second[0]);
+                params.push_back(sharedIt->second[1]);
+            }
+
+            return true;
         }
     }
 
@@ -122,17 +261,17 @@ namespace m2pw {
         // Collect all unique wave model configs from the configuration.
         std::map<TString, MassDependenceConfig::WaveModelConfig> uniqueWaveConfigs;
         for (const auto& [ell_value, waveConfigs] : massDependenceConfig_.massDependentWaves) {
-            for (const auto& waveConfig : waveConfigs) {
-                auto [it, inserted] = uniqueWaveConfigs.emplace(waveConfig.waveName, waveConfig);
-                if (!inserted) {
-                    const bool sameModel = (it->second.modelType == waveConfig.modelType);
-                    const bool sameOrder = (it->second.polyOrder == waveConfig.polyOrder);
-                    if (!sameModel || !sameOrder) {
-                        LogFitWarn("MDFUNC", Form("wave=%s reason=conflicting_model_config keep_first=1",
-                                                    waveConfig.waveName.Data()));
+                for (const auto& waveConfig : waveConfigs) {
+                    auto [it, inserted] = uniqueWaveConfigs.emplace(waveConfig.waveName, waveConfig);
+                    if (!inserted) {
+                        const bool sameModel = (it->second.modelType == waveConfig.modelType);
+                        const bool sameOrder = (it->second.polyOrder == waveConfig.polyOrder);
+                        if (!sameModel || !sameOrder) {
+                            LogFitWarn("MDFUNC", Form("wave=%s reason=conflicting_model_config keep_first=1",
+                                                        waveConfig.waveName.Data()));
+                        }
                     }
                 }
-            }
         }
 
         // Initialize functions for each unique wave config
@@ -169,15 +308,25 @@ namespace m2pw {
 
     void MassDependentFitter::SetMassDependenceConfig(const MassDependenceConfig& config) {
         massDependenceConfig_ = config;
-    }
+     }
 
     void MassDependentFitter::SetMomentsConfig(const MomentsConfig& config) {
         hMomentsConfig_ = config;
-    }
+     }
 
     void MassDependentFitter::SetMinimizerPrintLevel(int level) {
         minimizerPrintLevel_ = level;
-        LogFitInfo("MIN", Form("set_print_level=%d", minimizerPrintLevel_));
+            LogFitInfo("MIN", Form("set_print_level=%d", minimizerPrintLevel_));
+    }
+
+    void MassDependentFitter::SetMaxFunctionCalls(int maxCalls) {
+        if (maxCalls <= 0) {
+            LogFitWarn("MIN", Form("set_max_function_calls_failed value=%d reason=non_positive", maxCalls));
+            return;
+        }
+
+        maxFunctionCalls_ = maxCalls;
+        LogFitInfo("MIN", Form("set_max_function_calls=%d", maxFunctionCalls_));
     }
 
     unsigned int MassDependentFitter::NDim() const {
@@ -766,8 +915,7 @@ namespace m2pw {
     void MassDependentFitter::Chi2Function::MapMassDependentParameter(
         const TString& parName, double value) const {
 
-        int lastUnderscore = parName.Last('_');
-        TString parKey = parName(3, lastUnderscore - 3);
+        TString parKey = MassDependentBaseKey(parName);
         massDepPars_[parKey].push_back(value);
     }
 
@@ -803,6 +951,8 @@ namespace m2pw {
 
         minimizer->SetPrintLevel(minimizerPrintLevel_);
         LogFitInfo("MIN", Form("minuit_print_level=%d", minimizerPrintLevel_));
+        minimizer->SetMaxFunctionCalls(maxFunctionCalls_);
+        LogFitInfo("MIN", Form("max_function_calls=%d", maxFunctionCalls_));
 
         Chi2Function chi2Function(*this, paramManager.parIndexNames);
         ROOT::Math::Functor functor(chi2Function, paramManager.totalNpars);
@@ -814,6 +964,9 @@ namespace m2pw {
                                          paramManager.fixedParNames.end(),
                                          parName) != paramManager.fixedParNames.end();
             const double value = initialValues[i];
+
+            // cout << "Setting parameter " << parName << " (index " << i << ") to initial value " << value 
+            //      << (fixed ? " [fixed]" : "") << endl;
 
             if (fixed) {
                 minimizer->SetFixedVariable(i, parName.Data(), value);
@@ -860,10 +1013,10 @@ namespace m2pw {
         int ell_value) const {
 
         std::complex<double> total_amplitude(0.0, 0.0);
-        std::vector<TString> waveNames = massDependenceConfig_.GetWaves(ell_value);
+        const std::vector<TString> waveNames = massDependenceConfig_.GetWaves(ell_value);
 
         for (const TString& waveName : waveNames) {
-            TString key = Form("%s_%s", par_name.Data(), waveName.Data());
+            const TString key = Form("%s_%s", par_name.Data(), waveName.Data());
             const auto it = massDepPars.find(key);
             if (it == massDepPars.end() || it->second.empty()) {
                 continue;
@@ -874,37 +1027,18 @@ namespace m2pw {
                 continue;
             }
 
-            std::vector<double> params = it->second;
+            std::vector<double> params;
             const int funcType = massDepFuncs_[funcIndex].GetFuncType();
-            if (funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBreitWigner)) {
-                if (params.size() < 2) {
-                    continue;
-                }
-
-                const double k1 = params[0];
-                const double k2 = params[1];
-
-                auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
-                if (sharedIt == massDepPars.end() || sharedIt->second.size() < 4) {
-                    continue;
-                }
-
-                const double M1 = sharedIt->second[0];
-                const double width1 = sharedIt->second[1];
-                const double M2 = sharedIt->second[2];
-                const double width2 = sharedIt->second[3];
-                params = {k1, M1, width1, k2, M2, width2};
-            } else if (params.size() == 1) {
-                auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
-                if (sharedIt == massDepPars.end() || sharedIt->second.size() < 2) {
-                    continue;
-                }
-
-                params.push_back(sharedIt->second[0]);
-                params.push_back(sharedIt->second[1]);
+            if (!BuildWaveParameters(par_name, waveName, funcType, massDepPars, params)) {
+                continue;
             }
 
-            const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
+            const TString reflTag = ReflectivityTagFromParameterName(par_name);
+            auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName, reflTag));
+            if (phaseIt == massDepPars.end() && reflTag.Length() > 0) {
+                phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
+            }
+
             const bool includeGlobalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty());
             if (includeGlobalPhase) {
                 params.push_back(phaseIt->second[0]);
@@ -926,10 +1060,10 @@ namespace m2pw {
         int ell_value) const {
 
         std::complex<double> total_amplitude(0.0, 0.0);
-        std::vector<TString> waveNames = massDependenceConfig_.GetWaves(ell_value);
+        const std::vector<TString> waveNames = massDependenceConfig_.GetWaves(ell_value);
 
         for (const TString& waveName : waveNames) {
-            TString key = Form("%s_%s", base_name.Data(), waveName.Data());
+            const TString key = Form("%s_%s", base_name.Data(), waveName.Data());
             const auto it = massDepPars.find(key);
             if (it == massDepPars.end() || it->second.empty()) {
                 continue;
@@ -940,37 +1074,18 @@ namespace m2pw {
                 continue;
             }
 
-            std::vector<double> params = it->second;
+            std::vector<double> params;
             const int funcType = massDepFuncs_[funcIndex].GetFuncType();
-            if (funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBreitWigner)) {
-                if (params.size() < 2) {
-                    continue;
-                }
-
-                const double k1 = params[0];
-                const double k2 = params[1];
-
-                auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
-                if (sharedIt == massDepPars.end() || sharedIt->second.size() < 4) {
-                    continue;
-                }
-
-                const double M1 = sharedIt->second[0];
-                const double width1 = sharedIt->second[1];
-                const double M2 = sharedIt->second[2];
-                const double width2 = sharedIt->second[3];
-                params = {k1, M1, width1, k2, M2, width2};
-            } else if (params.size() == 1) {
-                auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
-                if (sharedIt == massDepPars.end() || sharedIt->second.size() < 2) {
-                    continue;
-                }
-
-                params.push_back(sharedIt->second[0]);
-                params.push_back(sharedIt->second[1]);
+            if (!BuildWaveParameters(base_name, waveName, funcType, massDepPars, params)) {
+                continue;
             }
 
-            const auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
+            const TString reflTag = ReflectivityTagFromParameterName(base_name);
+            auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName, reflTag));
+            if (phaseIt == massDepPars.end() && reflTag.Length() > 0) {
+                phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
+            }
+
             const bool includeGlobalPhase = (phaseIt != massDepPars.end() && !phaseIt->second.empty());
             if (includeGlobalPhase) {
                 params.push_back(phaseIt->second[0]);
@@ -1015,14 +1130,22 @@ namespace m2pw {
                 TString l_str = ((TObjString*)parts->At(1))->GetString();
                 int ell_value = l_str.Atoi();
 
-                if (std::find(targetELL.begin(), targetELL.end(), ell_value) == targetELL.end()) {
+                const bool targetRequested =
+                    std::find(targetELL.begin(), targetELL.end(), ell_value) != targetELL.end();
+                const bool forceFixedZero = targetRequested && ell_value == 1;
+
+                if (!targetRequested) {
+                    continue;
+                }
+
+                const bool neededForMoments = fitter.ParameterNeededForMoments(ell_value, hConfig);
+                if (!neededForMoments && !forceFixedZero) {
                     continue;
                 }
                 
                 // Check if this parameter is needed for the H(L,M)s configuration  
-                if (!fitter.ParameterNeededForMoments(ell_value, hConfig)) {
+                if (!neededForMoments) {
                     LogMIInfo("SKIP", Form("param=%s reason=not_needed_for_selected_moments l=%d", parName.Data(), ell_value));
-                    continue;
                 }
                 
                 // Only add if this l value should be mass independent
@@ -1036,11 +1159,14 @@ namespace m2pw {
                     continue;
                 }
                 
-                double initialValue = name.Contains("phi") ? 0.0 : rng.Uniform(-200, 200);
+                double initialValue = forceFixedZero ? 0.0 : (name.Contains("phi") ? 0.0 : rng.Uniform(-200, 200));
 
                 parsList[name] = initialValue;
                 nameToIndex[name] = totalNpars;
                 parIndexNames.push_back(name);
+                if (forceFixedZero) {
+                    fixedParNames.push_back(name);
+                }
                 totalNpars++;
 
                 LogMIInfo("ADD", Form("param=%s l=%d index=%d value=%g",
@@ -1310,14 +1436,17 @@ namespace m2pw {
                     LogMDWarn("INIT", Form("wave=%s reason=missing_function_index using_defaults=1", waveName.Data()));
                 }
 
-                // Check if this is a polynomial model (ModelType::Polynomial)
+                // Check if this wave uses conformal polynomial coefficients.
                 bool isConformal = false;
+                bool isFlattePlusConformal = false;
                 int polyOrder = 2;
                 int funcType = -1;
                 if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
                     funcType = fitter.massDepFuncs_[funcIndex].GetFuncType();
                     isConformal = (funcType == static_cast<int>(MassDependenceConfig::ModelType::Polynomial));
-                    if (isConformal) {
+                    isFlattePlusConformal =
+                        (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial));
+                    if (isConformal || isFlattePlusConformal) {
                         polyOrder = fitter.massDepFuncs_[funcIndex].GetPolyOrder();
                     }
                 }
@@ -1326,16 +1455,31 @@ namespace m2pw {
                 std::vector<TString> paramTypes;
                 if (isConformal) {
                     // Conformal polynomial: add re_i and im_i for i=0 to polyOrder
-                    // No k parameter needed - re_0 and im_0 provide the overall scale
+                    // Parameters: m_threshold, m_expansion, re_i, im_i
+                    paramTypes = {"m_threshold", "m_expansion"};
                     for (int i = 0; i <= polyOrder; ++i) {
                         paramTypes.push_back(Form("re_%d", i));
                         paramTypes.push_back(Form("im_%d", i));
                     }
                     LogMDInfo("MODE", Form("wave=%s model=conformal order=%d n_params=%zu",
                         waveName.Data(), polyOrder, paramTypes.size()));
+                } else if (isFlattePlusConformal) {
+                    // Flatte + conformal polynomial:
+                    // [k, g_etapi, g_KK, m_threshold, m_expansion, re_0, im_0, ..., re_N, im_N, Mass]
+                    paramTypes = {"k", "g_etapi", "g_KK", "m_threshold", "m_expansion"};
+                    for (int i = 0; i <= polyOrder; ++i) {
+                        paramTypes.push_back(Form("re_%d", i));
+                        paramTypes.push_back(Form("im_%d", i));
+                    }
+                    paramTypes.push_back("Mass");
+                    LogMDInfo("MODE", Form("wave=%s model=flatte_plus_conformal order=%d n_params=%zu",
+                        waveName.Data(), polyOrder, paramTypes.size()));
                 } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBreitWigner)) {
                     paramTypes = {"k1", "Mass1", "Width1", "k2", "Mass2", "Width2"};
-                } else {
+                } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::Flatte)) {
+                    paramTypes = {"k", "g_etapi", "g_KK", "Mass"};
+                }
+                else {
                     paramTypes = {"k", "Mass", "Width"};  // All parameters
                 }
 
@@ -1355,7 +1499,7 @@ namespace m2pw {
                     }
 
                     double initialValue;
-                    if (isConformal) {
+                    if (isConformal || isFlattePlusConformal) {
                         // Conformal polynomial parameters
                         if (paramType.BeginsWith("re_") || paramType.BeginsWith("im_")) {
                             // Extract coefficient index
@@ -1366,9 +1510,23 @@ namespace m2pw {
                             // Scale down higher order terms
                             double scale = TMath::Power(0.5, coeffIndex);
                             initialValue = rng.Uniform(-50, 50) * scale;
+                        } else if (paramType == "k") {
+                            initialValue = rng.Uniform(-30, 30);
+                        } else if (paramType == "g_etapi") {
+                            initialValue = 0.5;
+                        } else if (paramType == "g_KK") {
+                            initialValue = 0.3;
+                        } else if (paramType == "m_threshold") {
+                            initialValue = 0.683;
+                        } else if (paramType == "m_expansion") {
+                            initialValue = 0.98;
                         } else {
                             initialValue = 0.0;
                         }
+                    } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::Flatte) && paramType == "g_etapi") {
+                        initialValue = 0.5;
+                    } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::Flatte) && paramType == "g_KK") {
+                        initialValue = 0.3;
                     } else if (paramType.BeginsWith("k")) {
                         initialValue = rng.Uniform(-30, 30);  // Random for coupling strength
                     } else if (paramType == "Mass1") {
@@ -1426,18 +1584,38 @@ namespace m2pw {
 
                 const std::vector<TString> waves = config.GetWaves(ell_value);
                 for (const TString& waveName : waves) {
-                    TString phaseParName = Form("MD_%s_globalphase", waveName.Data());
-                    if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
+                    if (option == 1) {
+                        TString phaseParName = Form("MD_%s_globalphase", waveName.Data());
+                        if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
+                            continue;
+                        }
+
+                        parsList[phaseParName] = 0.0;
+                        nameToIndex[phaseParName] = totalNpars;
+                        parIndexNames.push_back(phaseParName);
+                        SetParameterLimits(phaseParName, -TMath::Pi(), TMath::Pi());
+                        totalNpars++;
+
+                        LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase option=%d state=FREE index=%d value=0",
+                            ell_value, phaseParName.Data(), option, totalNpars - 1));
                         continue;
                     }
 
-                    parsList[phaseParName] = 0.0;
-                    nameToIndex[phaseParName] = totalNpars;
-                    parIndexNames.push_back(phaseParName);
-                    totalNpars++;
+                    for (const TString& reflTag : {TString("a"), TString("b")}) {
+                        TString phaseParName = Form("MD_shared%s_%s_globalphase", reflTag.Data(), waveName.Data());
+                        if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
+                            continue;
+                        }
 
-                    LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase option=%d state=FREE index=%d value=0",
-                        ell_value, phaseParName.Data(), option, totalNpars - 1));
+                        parsList[phaseParName] = 0.0;
+                        nameToIndex[phaseParName] = totalNpars;
+                        parIndexNames.push_back(phaseParName);
+                        SetParameterLimits(phaseParName, -TMath::Pi(), TMath::Pi());
+                        totalNpars++;
+
+                        LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase reflectivity=%s option=%d state=FREE index=%d value=0",
+                            ell_value, phaseParName.Data(), reflTag.Data(), option, totalNpars - 1));
+                    }
                 }
             }
         }
@@ -1523,7 +1701,23 @@ namespace m2pw {
                 
                 // Determine which parameter types to add from option.
                 std::vector<TString> paramTypes;
-                if (funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBreitWigner)) {
+                if (funcType == static_cast<int>(MassDependenceConfig::ModelType::Polynomial)) {
+                    int polyOrder = fitter.massDepFuncs_[funcIndex].GetPolyOrder();
+                    paramTypes = {"m_threshold", "m_expansion"};
+                    for (int i = 0; i <= polyOrder; ++i) {
+                        paramTypes.push_back(Form("re_%d", i));
+                        paramTypes.push_back(Form("im_%d", i));
+                    }
+                } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial)) {
+                    int polyOrder = fitter.massDepFuncs_[funcIndex].GetPolyOrder();
+                    paramTypes = {"k", "g_etapi", "g_KK", "m_threshold", "m_expansion"};
+                    for (int i = 0; i <= polyOrder; ++i) {
+                        paramTypes.push_back(Form("re_%d", i));
+                        paramTypes.push_back(Form("im_%d", i));
+                    }
+                } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::Flatte)) {
+                    paramTypes = {"k", "g_etapi", "g_KK", "Mass"};
+                } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBreitWigner)) {
                     paramTypes = {"k1", "Mass1", "Width1", "k2", "Mass2", "Width2"};
                 } else {
                     paramTypes = {"k", "Mass", "Width"};  // All parameters
@@ -1532,7 +1726,8 @@ namespace m2pw {
                 for (const TString& paramType : paramTypes) {
                     TString name;
                     const bool isSharedResonanceParam = paramType.BeginsWith("Mass") || paramType.BeginsWith("Width");
-                    if (isSharedResonanceParam) {
+                    if (isSharedResonanceParam && 
+                        funcType != static_cast<int>(MassDependenceConfig::ModelType::Polynomial)) {
                         name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
                     } else {
                         name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
@@ -1559,7 +1754,25 @@ namespace m2pw {
                         LogMDInfo("LOAD", Form("param=%s source=file value=%g", name.Data(), value));
                     } else {
                         // Parameter not found in file, use values from MassDependentFunction or defaults
-                        if (paramType.BeginsWith("k")) {
+                        if (paramType == "k") {
+                            value = 1.0;
+                            LogMDInfo("INIT", Form("param=%s source=default field=k value=%g", name.Data(), value));
+                        } else if (paramType == "g_etapi") {
+                            value = 0.5;
+                            LogMDInfo("INIT", Form("param=%s source=default field=g_etapi value=%g", name.Data(), value));
+                        } else if (paramType == "g_KK") {
+                            value = 0.3;
+                            LogMDInfo("INIT", Form("param=%s source=default field=g_KK value=%g", name.Data(), value));
+                        } else if (paramType == "m_threshold") {
+                            value = 0.683;
+                            LogMDInfo("INIT", Form("param=%s source=default field=m_threshold value=%g", name.Data(), value));
+                        } else if (paramType == "m_expansion") {
+                            value = 0.98;
+                            LogMDInfo("INIT", Form("param=%s source=default field=m_expansion value=%g", name.Data(), value));
+                        } else if (paramType.BeginsWith("re_") || paramType.BeginsWith("im_")) {
+                            value = 0.0;
+                            LogMDInfo("INIT", Form("param=%s source=default field=conformal_coeff value=%g", name.Data(), value));
+                        } else if (paramType.BeginsWith("k")) {
                             value = 0.0;  // Default coupling
                             LogMDInfo("INIT", Form("param=%s source=default field=k value=%g", name.Data(), value));
                         } else if (paramType == "Mass1") {
@@ -1617,26 +1830,54 @@ namespace m2pw {
 
                 const std::vector<TString> waves = config.GetWaves(ell_value);
                 for (const TString& waveName : waves) {
-                    TString phaseParName = Form("MD_%s_globalphase", waveName.Data());
-                    if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
+                    if (option == 1) {
+                        TString phaseParName = Form("MD_%s_globalphase", waveName.Data());
+                        if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
+                            continue;
+                        }
+
+                        double value = 0.0;
+                        if (TLeaf* leaf = tree->GetLeaf(phaseParName)) {
+                            value = leaf->GetValue();
+                            LogMDInfo("LOAD", Form("param=%s source=file value=%g", phaseParName.Data(), value));
+                        } else {
+                            LogMDInfo("INIT", Form("param=%s source=default field=globalphase value=0", phaseParName.Data()));
+                        }
+
+                        parsList[phaseParName] = value;
+                        nameToIndex[phaseParName] = totalNpars;
+                        parIndexNames.push_back(phaseParName);
+                        SetParameterLimits(phaseParName, -TMath::Pi(), TMath::Pi());
+                        totalNpars++;
+
+                        LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase option=%d state=FREE index=%d value=%g",
+                            ell_value, phaseParName.Data(), option, totalNpars - 1, value));
                         continue;
                     }
 
-                    double value = 0.0;
-                    if (TLeaf* leaf = tree->GetLeaf(phaseParName)) {
-                        value = leaf->GetValue();
-                        LogMDInfo("LOAD", Form("param=%s source=file value=%g", phaseParName.Data(), value));
-                    } else {
-                        LogMDInfo("INIT", Form("param=%s source=default field=globalphase value=0", phaseParName.Data()));
+                    for (const TString& reflTag : {TString("a"), TString("b")}) {
+                        TString phaseParName = Form("MD_shared%s_%s_globalphase", reflTag.Data(), waveName.Data());
+                        if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
+                            continue;
+                        }
+
+                        double value = 0.0;
+                        if (TLeaf* leaf = tree->GetLeaf(phaseParName)) {
+                            value = leaf->GetValue();
+                            LogMDInfo("LOAD", Form("param=%s source=file value=%g", phaseParName.Data(), value));
+                        } else {
+                            LogMDInfo("INIT", Form("param=%s source=default field=globalphase value=0", phaseParName.Data()));
+                        }
+
+                        parsList[phaseParName] = value;
+                        nameToIndex[phaseParName] = totalNpars;
+                        parIndexNames.push_back(phaseParName);
+                        SetParameterLimits(phaseParName, -TMath::Pi(), TMath::Pi());
+                        totalNpars++;
+
+                        LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase reflectivity=%s option=%d state=FREE index=%d value=%g",
+                            ell_value, phaseParName.Data(), reflTag.Data(), option, totalNpars - 1, value));
                     }
-
-                    parsList[phaseParName] = value;
-                    nameToIndex[phaseParName] = totalNpars;
-                    parIndexNames.push_back(phaseParName);
-                    totalNpars++;
-
-                    LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase option=%d state=FREE index=%d value=%g",
-                        ell_value, phaseParName.Data(), option, totalNpars - 1, value));
                 }
             }
         }

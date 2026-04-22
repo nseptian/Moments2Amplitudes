@@ -178,6 +178,7 @@ namespace m2pw {
         void SetMassDependenceConfig(const MassDependenceConfig& config);
         void SetMomentsConfig(const MomentsConfig& config);
         void SetMinimizerPrintLevel(int level);
+        void SetMaxFunctionCalls(int maxCalls);
         
         // Get current configuration
         const MassDependenceConfig& GetMassDependenceConfig() const { return massDependenceConfig_; }
@@ -248,7 +249,7 @@ namespace m2pw {
             // Add mass dependent parameters for specific waves with random initialization, options:
             // option = 0: add coupling + shared resonance mass/width parameters (default)
             // option = 1: option 0 + add shared global phase for all waves in the same L (e.g., "2+")
-            // option = 2: option 0 + add shared global phase for all waves in the same reflectivity
+            // option = 2: option 0 + add shared global phase for all waves in the same L with the same reflectivity
             // option = 3: legacy alias of option 0
             void AddMassDependentParameter(const std::vector<int>& targetELL,
                                           const int seed,
@@ -257,7 +258,7 @@ namespace m2pw {
             // Add mass dependent parameters for specific waves with initialization from result tree, options:
             // option = 0: add coupling + shared resonance mass/width parameters (default)
             // option = 1: option 0 + add shared global phase for all waves in the same L (e.g., "2+")
-            // option = 2: option 0 + add shared global phase for all waves in the same reflectivity
+            // option = 2: option 0 + add shared global phase for all waves in the same L with the same reflectivity
             // option = 3: legacy alias of option 0
     
             void AddMassDependentParameter(const std::vector<int>& targetELL,
@@ -333,6 +334,7 @@ private:
     bool minimizerIsValid_ = false;
     int minimizerStatus_ = -1;
     int minimizerPrintLevel_ = 0;
+    int maxFunctionCalls_ = 1000000;
 
     // Helper methods
     void InitializeMassBins(const std::vector<double>& mass_bins);
