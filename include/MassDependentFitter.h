@@ -194,6 +194,15 @@ namespace m2pw {
         void SetMinimizerTolerance(double tolerance);
         void SetMaxIterations(int maxIterations);
         
+        // Parallel execution control
+        void SetEnableParallelization(bool enable) { enableParallelization_ = enable; }
+        bool GetEnableParallelization() const { return enableParallelization_; }
+        void SetParallelDuringMinimization(bool enable) { parallelDuringMinimization_ = enable; }
+        bool GetParallelDuringMinimization() const { return parallelDuringMinimization_; }
+        
+        void SetNumThreads(int nthreads);  // Implementation in .cpp
+        int GetNumThreads() const { return numThreads_; }
+        
         // Get current configuration
         const MassDependenceConfig& GetMassDependenceConfig() const { return massDependenceConfig_; }
         const MomentsConfig& GetMomentsConfig() const { return hMomentsConfig_; }
@@ -358,6 +367,12 @@ private:
     int minimizerStrategy_ = 1;
     double minimizerTolerance_ = 1e-3;
     int maxIterations_ = 100000;
+    
+    // Parallel execution control
+    bool enableParallelization_ = true;  // Enable/disable parallel chi2 evaluation
+    int numThreads_ = 0;  // Number of threads (0 = auto policy, >0 = explicit count)
+    bool parallelDuringMinimization_ = false;  // Default off: minimizer gradients are usually faster sequentially
+    mutable bool inMinimization_ = false;  // Internal state flag for DoEval behavior
 
     // Helper methods
     void InitializeMassBins(const std::vector<double>& mass_bins);
