@@ -56,7 +56,7 @@ void H_four_model(int seed = 0) {
     fitter.PrintIncludedMoments();
 
     m2pw::MassDependentFitter::ParameterManager paramManager(fitter);
-    paramManager.AddMassDependentParameters(seed);
+    paramManager.AddMassDependentParameter(std::vector<int>{2}, seed, 3);
 
     fitter.MinimizeChi2(paramManager);
 

@@ -9,12 +9,10 @@
 const Double_t FIRST_MASS_BIN_CENTER = 0.82; // in GeV
 const Double_t MASS_BIN_WIDTH = 0.04;
 const Int_t N_MASS_BINS = 20;
-// const TString FIT_RESULTS_DIR = "/d/home/septian/EtaPi0Analysis/run_merged/fitMoment_GlueX1_2019_11_t010100_m080200_MCMCN6000BI1000S08WCOV_R6.34/";
-// const TString FIT_RESULTS_DIR = "/d/home/septian/EtaPi0Analysis/run_Phase2/fitMoment_2019_11_polALL_sPlot_t010100_m080200_MCMC_R6.34/";
-// const TString FIT_RESULTS_DIR = "/d/home/septian/EtaPi0Analysis/fitMoment_Phase2_MomentsFit_t010020_Mpi0eta080200_800000_mandelstam_t010020_100200_MCMC_R6.34/";
-const TString FIT_RESULTS_DIR = "/d/home/septian/EtaPi0Analysis/fitMoment_Phase1_Phase2_MomentsFit_t010030_Mpi0eta080200_800000_mandelstam_t010030_100300_MCMC_R6.34/";
 
-void H_odd_model(int seed=0){
+TString FIT_RESULTS_DIR = "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200/t010020/";
+
+void Mom2Amp_SFlatteDBreitWigner(int seed=0){
     auto& setup = ConfigureAmpsNoValues(2, 2, 2); // (Lmax, MMax, Nref)
     
     // Load moments data with error handling
@@ -25,8 +23,7 @@ void H_odd_model(int seed=0){
                                             FIRST_MASS_BIN_CENTER, 
                                             FIT_RESULTS_DIR,
                                             "ResultsBruMcmcCovariance.root", 
-                                            "Mpi0eta",
-                                            "mandelstam_t0.200000");
+                                            "Mpi0eta");
     } catch (const std::exception& e) {
         std::cerr << "\n=== ERROR ===" << std::endl;
         std::cerr << "Failed to load moments data: " << e.what() << std::endl;
@@ -42,35 +39,79 @@ void H_odd_model(int seed=0){
     using MDModel = MassDependentFitter::MassDependenceConfig::ModelType;
     using WaveModelConfig = MassDependentFitter::MassDependenceConfig::WaveModelConfig;
     
-    // auto a2_1320_config = MassDependentFitter::CreateDefaultConfig();
-    auto pi1_1400_a2_1320_config = MassDependentFitter::CreateCustomConfig(
+    auto a0_980_a2_1320_config = MassDependentFitter::CreateCustomConfig(
         {
-            {1, {WaveModelConfig{"pi1_1400", MDModel::BreitWigner}}},
+            {0, {WaveModelConfig{"a0_980", MDModel::Flatte}}},
             {2, {WaveModelConfig{"a2_1320", MDModel::BreitWigner}}}
         },
-        {0});
+        {1}
+    );
+    // auto pi1_1400_a2_1320_config = MassDependentFitter::CreateCustomConfig(
+    //     {
+    //         {1, {WaveModelConfig{"pi1_1400", MDModel::BreitWigner}}},
+    //         {2, {WaveModelConfig{"a2_1320", MDModel::BreitWigner}}}
+    //     },
+    //     {0});
+    // auto H4_config = MassDependentFitter::CreateL4OnlyConfig();
     // auto H24_config = MassDependentFitter::CreateL2L4OnlyConfig();
-    // auto H024_config = MassDependentFitter::CreateL0L2L4OnlyConfig();
-    auto allMoments_config = MassDependentFitter::CreateIncludeAllConfig();
+    auto H024_config = MassDependentFitter::CreateL0L2L4OnlyConfig();
+    // auto allMoments_config = MassDependentFitter::CreateIncludeAllConfig();
 
-    MassDependentFitter fitter{setup, massBins, 2, 0.0, {"H_3"}, pi1_1400_a2_1320_config, allMoments_config};
+    MassDependentFitter fitter{setup, massBins, 2, 0.0, {"H_3"}, a0_980_a2_1320_config, H024_config};
     fitter.SetEquationValues(massDepMoments);
     
     fitter.PrintIncludedMoments();
 
     // const TString D_waves_model_file = "/d/home/septian/Moments2Amplitudes/macros/result_tree_L4_only_0_sPlot.root";
     // const TString D_waves_model_file = "/d/home/septian/Moments2Amplitudes/macros/result_tree_L4_only_0_nominal_t010030.root";
-    const TString D_waves_model_file = "/d/home/septian/Moments2Amplitudes/macros/result_tree_BWa2_freeSWaves_ZeroPWaves_322_nominal_t010030.root";
+    // const TString D_waves_model_file = "/d/home/septian/Moments2Amplitudes/macros/result_tree_BWa2_freeSWaves_ZeroPWaves_322_nominal_t010030.root";
 
     m2pw::MassDependentFitter::ParameterManager paramManager(fitter);
+
+    paramManager.AddMassIndependentParameter(std::vector<int>{1}, seed);
+
+    // Keep the ell=1 mass-independent parameters in the list, but fix them to zero.
+    for (const double massBin : massBins) {
+        for (const TString& parName : m2pw::MassDependentFitter::GetParNames()) {
+            if (!parName.BeginsWith("a_1_") && !parName.BeginsWith("b_1_") &&
+                !parName.BeginsWith("aphi_1_") && !parName.BeginsWith("bphi_1_")) {
+                continue;
+            }
+
+            TString fixedName = Form("MI_%1.6f_%s", massBin, parName.Data());
+            if (paramManager.SetInitialValue(fixedName, 0.0, true)) {
+                continue;
+            }
+        }
+    }
+    
+    paramManager.AddMassDependentParameter(std::vector<int>{2}, 0, 0);
+    paramManager.AddMassDependentParameter(std::vector<int>{0}, 0, 1);
+    // paramManager.SetInitialValue("MD_a_2_-2_a2_1320_k", 0.0, true);
+    // paramManager.SetInitialValue("MD_a_2_-1_a2_1320_k", 0.0, true);
+    // paramManager.SetInitialValue("MD_a_2_0_a2_1320_k", 0.0, true);
+    // paramManager.SetInitialValue("MD_a_2_1_a2_1320_k", 0.0, true);
+    // paramManager.SetInitialValue("MD_a_2_2_a2_1320_k", 0.0, true);
+    // paramManager.SetInitialValue("MD_b_2_-2_a2_1320_k", 0.0, true);
+    // paramManager.SetInitialValue("MD_b_2_-1_a2_1320_k", 0.0, true);
+    // paramManager.SetInitialValue("MD_b_2_0_a2_1320_k", 0.0, true);
+    // paramManager.SetInitialValue("MD_b_2_1_a2_1320_k", 0.0, true);
+    // paramManager.SetInitialValue("MD_b_2_2_a2_1320_k", 0.0, true);
+    paramManager.SetInitialValue("MD_shared_a2_1320_Mass", 1.318, true);
+    paramManager.SetInitialValue("MD_shared_a2_1320_Width", 0.107, true);
+    paramManager.SetInitialValue("MD_shared_a0_980_Mass", 0.980, true);
+    paramManager.SetInitialValue("MD_a_0_0_a0_980_g_etapi", 0.353, false);
+    paramManager.SetInitialValue("MD_a_0_0_a0_980_g_KK", 0.311, false);
+    paramManager.SetInitialValue("MD_b_0_0_a0_980_g_etapi", 0.353, false);
+    paramManager.SetInitialValue("MD_b_0_0_a0_980_g_KK", 0.311, false);
 
     // TString a_1_m1_file = "/d/home/septian/Moments2Amplitudes/macros/result_tree_allMoments_BWa2_initializedSWaves_Pi1BWPWaves_139_nominal_t010030.root";
 
     // paramManager.AddMassIndependentParametersForPhase(a_1_m1_file,
     //                                             std::vector<TString>{"aphi_1_-1"});
 
-    paramManager.AddMassDependentParameter(std::vector<int>{2}, D_waves_model_file, 0);
-    paramManager.AddMassDependentParameter(std::vector<int>{1}, seed, 0);
+    // paramManager.AddMassDependentParameter(std::vector<int>{2}, D_waves_model_file, 0);
+    // paramManager.AddMassDependentParameter(std::vector<int>{1}, seed, 0);
 
     // paramManager.AddMassIndependentParametersForPhase(fitter.GetMassBins(),
                                                 // fitter.GetParNames(),
@@ -104,9 +145,9 @@ void H_odd_model(int seed=0){
     //                                                   fitter,
     //                                                   false);
     
-    std::vector<int> initializedL = {0};
-    const TString S_waves_file = "/d/home/septian/Moments2Amplitudes/macros/result_tree_BWa2_freeSWaves_ZeroPWaves_322_nominal_t010030.root";
-    paramManager.AddMassIndependentParameter(initializedL, S_waves_file);
+    // std::vector<int> initializedL = {0};
+    // const TString S_waves_file = "/d/home/septian/Moments2Amplitudes/macros/result_tree_BWa2_freeSWaves_ZeroPWaves_322_nominal_t010030.root";
+    // paramManager.AddMassIndependentParameter(initializedL, S_waves_file);
 
     // paramManager.AddMassIndependentParameters(fitter.GetMassBins(), 
     //                                           fitter.GetParNames(), 
@@ -116,11 +157,13 @@ void H_odd_model(int seed=0){
     //                                           fitter);                                                      
 
 
-    fitter.PrintParNameIndices();
-    fitter.PrintIncludedMoments();
+    // fitter.PrintParNameIndices();
+    // fitter.PrintIncludedMoments();
 
+    paramManager.PrintParameters();
+    fitter.SetMinimizerPrintLevel(2);
     fitter.MinimizeChi2(paramManager);
 
-    fitter.MakeResultTree(paramManager, "result_tree_allMoments_BWa2_initializedSWaves_Fit_AllBWPi1_"+std::to_string(seed)+"_nominal_t010030.root");
+    fitter.MakeResultTree(paramManager, "result_tree_SFlatteDBreitWigner_0.root");
 
 }
