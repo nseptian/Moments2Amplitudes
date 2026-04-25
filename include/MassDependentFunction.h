@@ -269,11 +269,15 @@ namespace m2pw{
             double m_expansion = expansionMass;   // expansion point mass
             double s_0 = m_expansion * m_expansion;    // expansion point in s
             
-            // Compute conformal variable z
+            // Compute canonical conformal variable z using threshold-shifted sqrt(s - s_min)
             double s = mass * mass;
-            double sqrt_s = mass;
+            double sqrt_s_minus_smin = 0.0;
+            if (s > s_min) {
+                sqrt_s_minus_smin = TMath::Sqrt(s - s_min);
+            }
             double sqrt_s0_minus_smin = TMath::Sqrt(s_0 - s_min);
-            double z = (sqrt_s - sqrt_s0_minus_smin) / (sqrt_s + sqrt_s0_minus_smin);
+            double z = (sqrt_s_minus_smin - sqrt_s0_minus_smin) /
+                       (sqrt_s_minus_smin + sqrt_s0_minus_smin);
             
             // Build polynomial: sum_{i=0}^{N} (re_i + i*im_i) * z^i
             complex<double> amplitude(0.0, 0.0);
