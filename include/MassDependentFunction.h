@@ -34,6 +34,10 @@ namespace m2pw{
         }
 
         // Vector parameter version (main implementation)
+        complex<double> GetAmplitude(double mass, const vector<double>& params, bool include_globalphase = false) const {
+            return ComputeAmplitude(mass, params, include_globalphase);
+        }
+
         double GetPWMagnitude(double mass, const vector<double>& params, bool include_globalphase = false) const {
             complex<double> amp = GetAmplitude(mass, params, include_globalphase);
             return abs(amp);
@@ -55,7 +59,7 @@ namespace m2pw{
             if (_FuncType == 3) {  // Polynomial
                 return 2 + 2*(_PolyOrder + 1);  // m_threshold, m_expansion, (re_i, im_i) for i=0 to N
             } else if (_FuncType == 4) {  // Flatte + polynomial
-                return 6 + 2*(_PolyOrder + 1);  // k, g_etapi, g_KK, m_threshold, m_expansion, Mass + polynomial coeffs
+                return 6 + 2*(_PolyOrder + 1);  // k, m_threshold, m_expansion, poly coeffs, g_etapi, g_KK, Mass
             } else if (_FuncType == 2) {  // Flatté
                 return 4;
             } else if (_FuncType == 1) {  // Coherent sum of two Breit-Wigners
@@ -77,7 +81,7 @@ namespace m2pw{
         int _PolyOrder = 2;  // Polynomial order for conformal polynomial (FuncType=4)
 
         // Core amplitude calculation
-        complex<double> GetAmplitude(double mass, const vector<double>& params, bool include_globalphase) const {
+        complex<double> ComputeAmplitude(double mass, const vector<double>& params, bool include_globalphase) const {
             if (params.empty()) {
                 return complex<double>(0.0, 0.0);
             }
@@ -125,33 +129,41 @@ namespace m2pw{
                     
                 case 4:  // Flatte + polynomial
                     {
-                        const size_t requiredParams = static_cast<size_t>(GetNParameters());
-                        if (coreParams.size() < requiredParams) {
+                        // Layout is dynamic but always ends with [g_etapi, g_KK, Mass].
+                        // The polynomial block sits between the first three parameters and the shared tail.
+                        if (coreParams.size() < 6) {
                             return complex<double>(0.0, 0.0);
                         }
 
+                        const size_t sharedTailSize = 3;
+                        const size_t sharedTailStart = coreParams.size() - sharedTailSize;
+
                         // Parameter layout for FuncType=4:
-                        // [0]=k, [1]=g_etapi, [2]=g_KK, [3]=m_threshold, [4]=m_expansion, [5...end-1]=conformal polynomial coeffs, [end]=Mass
+                        // [0]=k, [1]=m_threshold, [2]=m_expansion,
+                        // [3...sharedTailStart-1]=conformal polynomial coeffs,
+                        // [sharedTailStart]=g_etapi, [sharedTailStart+1]=g_KK, [sharedTailStart+2]=Mass
                         const double k = coreParams[0];
-                        const double g_etapi = coreParams[1];
-                        const double g_KK = coreParams[2];
-                        const double m_threshold = coreParams[3];
-                        const double m_expansion = coreParams[4];
+                        const double m_threshold = coreParams[1];
+                        const double m_expansion = coreParams[2];
 
                         const double s = mass * mass;
-                        const double m0 = (coreParams.size() > 5) ? coreParams.back() : 0.98;  // Use passed Mass or default
-                        const double m0_poly_sq = m_expansion * m_expansion;
+                        const double g_etapi = coreParams[sharedTailStart];
+                        const double g_KK = coreParams[sharedTailStart + 1];
+                        // Mass is always the last core parameter. If global phase is enabled,
+                        // it has already been stripped above.
+                        const double m0 = coreParams.back();
+                        const double m0_sq = m0 * m0;
                         const complex<double> rho_etapi = GetComplexPhaseSpaceFactor(mass, 0.547853, 0.13957);
                         const complex<double> rho_KK = GetComplexPhaseSpaceFactor(mass, 0.493677, 0.493677);
                         const complex<double> width_term = m0 * (g_etapi * g_etapi * rho_etapi + g_KK * g_KK * rho_KK);
-                        complex<double> denominator(m0_poly_sq - s, 0.0);
+                        complex<double> denominator(m0_sq - s, 0.0);
                         denominator -= complex<double>(0.0, 1.0) * width_term;
 
-                        complex<double> flatteAmp = 1.0 / denominator;
-                        vector<double> polyParams(coreParams.begin() + 5, coreParams.end() - 1);  // Exclude Mass at end
+                        complex<double> flatteAmp = k / denominator;
+                        vector<double> polyParams(coreParams.begin() + 3, coreParams.end() - sharedTailSize);
 
                         complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
-                        complex<double> flatteTerm = k * flatteAmp * exp(complex<double>(0, phase));
+                        complex<double> flatteTerm = flatteAmp * exp(complex<double>(0, phase));
                         return flatteTerm + polyAmp;
                     }
 
@@ -204,6 +216,10 @@ namespace m2pw{
 
         // Flatté amplitude for case 2
         complex<double> GetFlatteAmplitude(double mass, double k, const vector<double>& params) const {
+            if (params.size() < 4) {
+                return complex<double>(0.0, 0.0);
+            }
+
             double g_etapi = params[1];
             double g_KK = params[2];
             double M0 = params[3];
@@ -253,11 +269,15 @@ namespace m2pw{
             double m_expansion = expansionMass;   // expansion point mass
             double s_0 = m_expansion * m_expansion;    // expansion point in s
             
-            // Compute conformal variable z
+            // Compute canonical conformal variable z using threshold-shifted sqrt(s - s_min)
             double s = mass * mass;
-            double sqrt_s = mass;
+            double sqrt_s_minus_smin = 0.0;
+            if (s > s_min) {
+                sqrt_s_minus_smin = TMath::Sqrt(s - s_min);
+            }
             double sqrt_s0_minus_smin = TMath::Sqrt(s_0 - s_min);
-            double z = (sqrt_s - sqrt_s0_minus_smin) / (sqrt_s + sqrt_s0_minus_smin);
+            double z = (sqrt_s_minus_smin - sqrt_s0_minus_smin) /
+                       (sqrt_s_minus_smin + sqrt_s0_minus_smin);
             
             // Build polynomial: sum_{i=0}^{N} (re_i + i*im_i) * z^i
             complex<double> amplitude(0.0, 0.0);

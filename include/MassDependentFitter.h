@@ -133,9 +133,20 @@ namespace m2pw {
             TString refl_str;
             TString l_str;
             TString m_str;
+            TString base_name;
+            int ell_value = -1;
             bool isPhase;
             
             ParameterInfo(const TString& parName);
+        };
+
+        struct ParameterEvalPlan {
+            TString par_name;
+            TString base_name;
+            int ell_value = -1;
+            bool isPhase = false;
+            bool isMassDependent = false;
+            bool isSharedResonance = false;  // true for g_etapi, g_KK (same value across all mass bins)
         };
         
         // Constructor with both mass dependence and moments configuration
@@ -179,6 +190,18 @@ namespace m2pw {
         void SetMomentsConfig(const MomentsConfig& config);
         void SetMinimizerPrintLevel(int level);
         void SetMaxFunctionCalls(int maxCalls);
+        void SetMinimizerStrategy(int strategy);
+        void SetMinimizerTolerance(double tolerance);
+        void SetMaxIterations(int maxIterations);
+        
+        // Parallel execution control
+        void SetEnableParallelization(bool enable) { enableParallelization_ = enable; }
+        bool GetEnableParallelization() const { return enableParallelization_; }
+        void SetParallelDuringMinimization(bool enable) { parallelDuringMinimization_ = enable; }
+        bool GetParallelDuringMinimization() const { return parallelDuringMinimization_; }
+        
+        void SetNumThreads(int nthreads);  // Implementation in .cpp
+        int GetNumThreads() const { return numThreads_; }
         
         // Get current configuration
         const MassDependenceConfig& GetMassDependenceConfig() const { return massDependenceConfig_; }
@@ -324,6 +347,11 @@ private:
     MassDependenceConfig massDependenceConfig_;
     MomentsConfig hMomentsConfig_;  // Configuration for moment selection
     std::map<TString, int> waveToFunctionIndex_;  // Maps wave names to function indices
+    std::map<double, std::vector<int>> equationLCache_;  // Parsed L for each equation, per mass bin
+    std::map<double, std::vector<ParameterInfo>> parameterInfoCache_;  // Parsed parameter metadata per mass bin
+    std::map<double, std::vector<ParameterEvalPlan>> parameterEvalPlanCache_;  // Preclassified parameter evaluation plan per mass bin
+    std::map<int, bool> massDependentEllCache_;  // Fast lookup for mass-dependent ell values
+    std::map<int, std::vector<TString>> massDependentWaveNamesCache_;  // Fast lookup for wave names by ell
 
     // Caching for performance
     mutable double lastChi2_ = 0.0;
@@ -332,13 +360,30 @@ private:
 
     // Minimizer status and validity
     bool minimizerIsValid_ = false;
+    bool minimizerHasValidErrors_ = false;
     int minimizerStatus_ = -1;
     int minimizerPrintLevel_ = 0;
     int maxFunctionCalls_ = 1000000;
+    int minimizerStrategy_ = 1;
+    double minimizerTolerance_ = 1e-3;
+    int maxIterations_ = 100000;
+    
+    // Parallel execution control
+    bool enableParallelization_ = true;  // Enable/disable parallel chi2 evaluation
+    int numThreads_ = 0;  // Number of threads (0 = auto policy, >0 = explicit count)
+    bool parallelDuringMinimization_ = false;  // Default off: minimizer gradients are usually faster sequentially
+    mutable bool inMinimization_ = false;  // Internal state flag for DoEval behavior
 
     // Helper methods
     void InitializeMassBins(const std::vector<double>& mass_bins);
     void InitializeMDFunctions();
+    void BuildEquationLCache();
+    void BuildParameterInfoCache();
+    void BuildMassDependenceLookupCache();
+    void BuildParameterEvalPlanCache();
+
+    bool IsMassDependentEll(int ell_value) const;
+    const std::vector<TString>& GetMassDependentWaveNames(int ell_value) const;
 
     std::unique_ptr<ParameterInfo> ParseParameterName(const TString& parName) const;
 
@@ -346,15 +391,10 @@ private:
     double EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const;
 
     // Helper methods for amplitude-level evaluation (single or multiple waves)
-    double GetAmplitudeMagnitude(double mass_bin,
-                                const TString& par_name,
-                                const std::map<TString, std::vector<double>>& massDepPars,
-                                int ell_value) const;
-
-    double GetAmplitudePhase(double mass_bin,
-                            const TString& base_name,
-                            const std::map<TString, std::vector<double>>& massDepPars,
-                            int ell_value) const;
+    std::complex<double> GetCombinedAmplitude(double mass_bin,
+                                              const TString& par_name,
+                                              const std::map<TString, std::vector<double>>& massDepPars,
+                                              int ell_value) const;
 
     // Helper method to map wave names to function indices
     int GetFunctionIndexForWave(const TString& waveName) const;
@@ -374,8 +414,12 @@ private:
             refl_str = ((TObjString*)parts->At(0))->GetString();
             l_str = ((TObjString*)parts->At(1))->GetString();
             m_str = ((TObjString*)parts->At(2))->GetString();
+            ell_value = l_str.Atoi();
             isPhase = (refl_str == "aphi" || refl_str == "bphi");
         }
+
+        base_name = name;
+        base_name.ReplaceAll("phi", "");
     }
    
 }

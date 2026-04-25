@@ -86,7 +86,7 @@ void Mom2Amp_SFlatteDBreitWigner(int seed=0){
     }
     
     paramManager.AddMassDependentParameter(std::vector<int>{2}, 0, 0);
-    paramManager.AddMassDependentParameter(std::vector<int>{0}, 0, 1);
+    paramManager.AddMassDependentParameter(std::vector<int>{0}, 0, 2);
     // paramManager.SetInitialValue("MD_a_2_-2_a2_1320_k", 0.0, true);
     // paramManager.SetInitialValue("MD_a_2_-1_a2_1320_k", 0.0, true);
     // paramManager.SetInitialValue("MD_a_2_0_a2_1320_k", 0.0, true);
@@ -100,10 +100,8 @@ void Mom2Amp_SFlatteDBreitWigner(int seed=0){
     paramManager.SetInitialValue("MD_shared_a2_1320_Mass", 1.318, true);
     paramManager.SetInitialValue("MD_shared_a2_1320_Width", 0.107, true);
     paramManager.SetInitialValue("MD_shared_a0_980_Mass", 0.980, true);
-    paramManager.SetInitialValue("MD_a_0_0_a0_980_g_etapi", 0.353, false);
-    paramManager.SetInitialValue("MD_a_0_0_a0_980_g_KK", 0.311, false);
-    paramManager.SetInitialValue("MD_b_0_0_a0_980_g_etapi", 0.353, false);
-    paramManager.SetInitialValue("MD_b_0_0_a0_980_g_KK", 0.311, false);
+    paramManager.SetInitialValue("MD_shared_a0_980_g_etapi", 0.353, false);
+    paramManager.SetInitialValue("MD_shared_a0_980_g_KK", 0.0, true);
 
     // TString a_1_m1_file = "/d/home/septian/Moments2Amplitudes/macros/result_tree_allMoments_BWa2_initializedSWaves_Pi1BWPWaves_139_nominal_t010030.root";
 
@@ -160,6 +158,9 @@ void Mom2Amp_SFlatteDBreitWigner(int seed=0){
     // fitter.PrintParNameIndices();
     // fitter.PrintIncludedMoments();
 
+    fitter.SetMinimizerPrintLevel(2);
+    fitter.SetEnableParallelization(true);
+    fitter.SetNumThreads(4);  // Set to desired number of threads or -1 for auto-detect
     paramManager.PrintParameters();
     fitter.SetMinimizerPrintLevel(2);
     fitter.MinimizeChi2(paramManager);
