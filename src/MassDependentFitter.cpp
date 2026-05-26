@@ -1858,7 +1858,6 @@ namespace m2pw {
                         parsList[phaseParName] = 0.0;
                         nameToIndex[phaseParName] = totalNpars;
                         parIndexNames.push_back(phaseParName);
-                        SetParameterLimits(phaseParName, -TMath::Pi(), TMath::Pi());
                         totalNpars++;
 
                         LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase option=%d state=FREE index=%d value=0",
@@ -1875,7 +1874,6 @@ namespace m2pw {
                         parsList[phaseParName] = 0.0;
                         nameToIndex[phaseParName] = totalNpars;
                         parIndexNames.push_back(phaseParName);
-                        SetParameterLimits(phaseParName, -TMath::Pi(), TMath::Pi());
                         totalNpars++;
 
                         LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase reflectivity=%s option=%d state=FREE index=%d value=0",
@@ -2115,7 +2113,6 @@ namespace m2pw {
                         parsList[phaseParName] = value;
                         nameToIndex[phaseParName] = totalNpars;
                         parIndexNames.push_back(phaseParName);
-                        SetParameterLimits(phaseParName, -TMath::Pi(), TMath::Pi());
                         totalNpars++;
 
                         LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase option=%d state=FREE index=%d value=%g",
@@ -2140,7 +2137,6 @@ namespace m2pw {
                         parsList[phaseParName] = value;
                         nameToIndex[phaseParName] = totalNpars;
                         parIndexNames.push_back(phaseParName);
-                        SetParameterLimits(phaseParName, -TMath::Pi(), TMath::Pi());
                         totalNpars++;
 
                         LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase reflectivity=%s option=%d state=FREE index=%d value=%g",

@@ -155,7 +155,7 @@ namespace m2pw{
                         const double m0_sq = m0 * m0;
                         const complex<double> rho_etapi = GetComplexPhaseSpaceFactor(mass, 0.547853, 0.13957);
                         const complex<double> rho_KK = GetComplexPhaseSpaceFactor(mass, 0.493677, 0.493677);
-                        const complex<double> width_term = m0 * (g_etapi * g_etapi * rho_etapi + g_KK * g_KK * rho_KK);
+                        const complex<double> width_term = (g_etapi * g_etapi * rho_etapi + g_KK * g_KK * rho_KK);
                         complex<double> denominator(m0_sq - s, 0.0);
                         denominator -= complex<double>(0.0, 1.0) * width_term;
 
