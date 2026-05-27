@@ -34,16 +34,15 @@ namespace m2pw {
          */
         struct MassDependenceConfig {
             enum class ModelType {
-                BreitWigner = 0,
-                TwoBreitWigner = 1,
-                Flatte = 2,
-                Polynomial = 3,
-                FlattePlusPolynomial = 4
+                Polynomial = 0,
+                FlattePlusPolynomial = 1,
+                BreitWignerPlusPolynomial = 2,
+                TwoBreitWignerPlusPolynomial = 3
             };
 
             struct WaveModelConfig {
                 TString waveName;
-                ModelType modelType = ModelType::BreitWigner;
+                ModelType modelType = ModelType::BreitWignerPlusPolynomial;
                 int polyOrder = 2;
 
                 WaveModelConfig() = default;
@@ -56,7 +55,7 @@ namespace m2pw {
             
             // Constructor with default behavior
             MassDependenceConfig() {
-                massDependentWaves[2] = {{"a2_1320", ModelType::BreitWigner}};  // Default: only ELL=2 with single wave
+                massDependentWaves[2] = {{"a2_1320", ModelType::BreitWignerPlusPolynomial}};  // Default: only ELL=2 with single wave
                 massIndependentL = {0, 1};            // ELL=0,1 mass independent
             }
             
@@ -216,7 +215,7 @@ namespace m2pw {
         static MassDependenceConfig CreateDWaveTwoBreitWignerConfig() {
             MassDependenceConfig config;
             // Single D-wave model with two resonances: a2(1320) + a2(1700).
-            config.massDependentWaves[2] = {{"a2_1320_1700", MassDependenceConfig::ModelType::TwoBreitWigner}};
+            config.massDependentWaves[2] = {{"a2_1320_1700", MassDependenceConfig::ModelType::TwoBreitWignerPlusPolynomial}};
             config.massIndependentL = {0, 1};
             return config;
         }
@@ -253,9 +252,11 @@ namespace m2pw {
             std::vector<TString> fixedParNames;  // For fixed parameters
             std::map<TString, int> nameToIndex;
             std::map<TString, std::pair<double, double>> parameterLimits;  // Optional per-parameter limits
+            std::map<TString, std::pair<double, double>> gaussianConstraints; // per-parameter gaussian constraint: mean,sigma
             std::vector<double> parErrors;  // Store parameter errors
             int totalNpars = 0;
             int randomSeed = -1;
+            TRandom3 rng{0};
             MassDependentFitter& fitter;  // Reference to parent fitter
 
             // Constructor
@@ -288,11 +289,15 @@ namespace m2pw {
                                           const TString filePath,
                                           const int option);
 
+            // Build list of parameter type names for a given function type/index
+            std::vector<TString> BuildParamTypesForWave(int funcType, int funcIndex) const;
+
             bool SetParameterInitialValue(const TString& parName, double value);
             bool SetInitialValue(const TString& parName, double value, bool isFixed);
             bool SetParameterLimits(const TString& parName, double lower, double upper);
             void SetParameterInitialValues(const std::map<TString, double>& values);
             void SetParameterLimitsBatch(const std::map<TString, std::pair<double, double>>& limits);
+            bool SetGaussianConstraint(const TString& parName, double mean, double sigma);
 
             // Configure generalized Breit-Wigner reference values used when M/width are not supplied explicitly.
             bool ConfigureBreitWignerDefaultsForWave(const TString& waveName, double mass, double width);
@@ -318,13 +323,16 @@ namespace m2pw {
         private:
             MassDependentFitter& fitter_;
             const std::vector<TString>& parIndexNames_;
+            const ParameterManager* paramManager_ = nullptr;
             mutable std::map<TString, std::vector<double>> massDepPars_;
             mutable std::map<TString, std::map<TString, std::vector<double>>> massIndepPars_;
+            mutable std::map<TString, double> currentValues_;
 
         public:
             Chi2Function(MassDependentFitter& fitter, 
-                        const std::vector<TString>& parIndexNames)
-                : fitter_(fitter), parIndexNames_(parIndexNames) {}
+                        const std::vector<TString>& parIndexNames,
+                        const ParameterManager& paramManager)
+                : fitter_(fitter), parIndexNames_(parIndexNames), paramManager_(&paramManager) {}
 
             double operator()(const double* mass_dep_pars) const;
 
