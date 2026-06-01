@@ -37,7 +37,8 @@ namespace m2pw {
                 Polynomial = 0,
                 FlattePlusPolynomial = 1,
                 BreitWignerPlusPolynomial = 2,
-                TwoBreitWignerPlusPolynomial = 3
+                TwoBreitWignerPlusPolynomial = 3,
+                FlatteBreitWignerPlusPolynomial = 4
             };
 
             struct WaveModelConfig {

@@ -71,6 +71,9 @@ namespace m2pw{
                 case 3: // Two Breit-Wigner + polynomial
                     base = 6; // k1, M1, width1, k2, M2, width2
                     break;
+                case 4: // Flatte + Breit-Wigner + polynomial
+                    base = 7; // k_fl, g_etapi, g_KK, M_fl, k_bw, M_bw, width_bw
+                    break;
                 default:
                     base = 3;
                     break;
@@ -114,9 +117,19 @@ namespace m2pw{
 
             vector<double> coreParams = params;
             double phase = 0.0;
+            double phase_flatte = 0.0;
+            double phase_bw = 0.0;
             if (include_globalphase && params.size() > 1) {
-                phase = params.back();
-                coreParams.pop_back();
+                if (_FuncType == 4 && params.size() > 2) {
+                    // case-4 uses two independent phases appended in order: [phase_flatte, phase_bw]
+                    phase_bw = coreParams.back();
+                    coreParams.pop_back();
+                    phase_flatte = coreParams.back();
+                    coreParams.pop_back();
+                } else {
+                    phase = coreParams.back();
+                    coreParams.pop_back();
+                }
             }
 
             if (coreParams.empty()) {
@@ -240,6 +253,33 @@ namespace m2pw{
 
                         // If polynomial block present, it is expected appended after base params
                         const size_t baseReq = 6;
+                        if (coreParams.size() < static_cast<size_t>(baseReq + polyBlockSize)) return baseAmp;
+                        double m_threshold = coreParams[baseReq];
+                        double m_expansion = coreParams[baseReq + 1];
+                        vector<double> polyParams(coreParams.begin() + baseReq + 2, coreParams.begin() + baseReq + polyBlockSize);
+                        complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
+                        return baseAmp + polyAmp;
+                    }
+
+                case 4: // Coherent sum of Flatté + Breit-Wigner + optional polynomial
+                    {
+                        // Flatté part expects [k, g_etapi, g_KK, Mass], BW part expects [k, M, width], then optional poly block appended
+                        const int flatteReq = 4;
+                        const int bwReq = 3;
+                        if (coreParams.size() < static_cast<size_t>(flatteReq + bwReq)) return complex<double>(0.0, 0.0);
+
+                        double k_fl = coreParams[0];
+                        vector<double> flatteParams(coreParams.begin(), coreParams.begin() + flatteReq);
+                        complex<double> flatteAmp = GetFlatteAmplitude(mass, k_fl, flatteParams) * exp(complex<double>(0, phase_flatte));
+
+                        double k_bw = coreParams[flatteReq];
+                        vector<double> bwParams(coreParams.begin() + flatteReq, coreParams.begin() + flatteReq + bwReq);
+                        complex<double> bwAmp = GetBreitWignerAmplitude(mass, k_bw, bwParams) * exp(complex<double>(0, phase_bw));
+
+                        complex<double> baseAmp = flatteAmp + bwAmp;
+
+                        // If polynomial block present, it is expected appended after base params
+                        const size_t baseReq = flatteReq + bwReq;
                         if (coreParams.size() < static_cast<size_t>(baseReq + polyBlockSize)) return baseAmp;
                         double m_threshold = coreParams[baseReq];
                         double m_expansion = coreParams[baseReq + 1];
