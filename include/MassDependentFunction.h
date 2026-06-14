@@ -63,7 +63,7 @@ namespace m2pw{
                     base = 0;
                     break;
                 case 1: // Flatté + polynomial
-                    base = 4; // k, g_etapi, g_KK, Mass
+                    base = 5; // k,  Mass, g_etapi, g_KK, g_etaprimepi
                     break;
                 case 2: // Breit-Wigner + polynomial
                     base = 3; // k, M, width
@@ -72,10 +72,7 @@ namespace m2pw{
                     base = 6; // k1, M1, width1, k2, M2, width2
                     break;
                 case 4: // Flatte + Breit-Wigner + polynomial
-                    base = 7; // k_fl, g_etapi, g_KK, M_fl, k_bw, M_bw, width_bw
-                    break;
-                default:
-                    base = 3;
+                    base = 8; // k_fl, g_etapi, g_KK, g_etaprimepi, M_fl, k_bw, M_bw, width_bw
                     break;
             }
 
@@ -93,9 +90,9 @@ namespace m2pw{
         }
 
     private:
-        static constexpr double kDefaultFlatteMass = 1.001;
-        static constexpr double kPolynomialThresholdMass = 0.683;
-        static constexpr double kPolynomialExpansionMass = 0.98;
+        // static constexpr double kDefaultFlatteMass = 1.001;
+        // static constexpr double kPolynomialThresholdMass = 0.683;
+        // static constexpr double kPolynomialExpansionMass = 0.98;
 
         int _NMassBins = 0;
         double _FirstMassBinCenter = 0.0;
@@ -139,6 +136,10 @@ namespace m2pw{
             const bool hasPoly = (_PolyOrder >= 0);
             const int polyBlockSize = hasPoly ? (2 + 2*(_PolyOrder + 1)) : 0; // threshold, expansion, coeffs
 
+            // cout << "Computing amplitude for mass = " << mass << ", funcType = " << _FuncType 
+            //      << ", hasPoly = " << hasPoly << ", polyOrder = " << _PolyOrder 
+            //      << ", total params = " << params.size() << ", coreParams = " << coreParams.size() << endl;
+
             switch (_FuncType) {
                 case 0:  // Polynomial (pure conformal polynomial)
                     {
@@ -154,54 +155,27 @@ namespace m2pw{
 
                 case 1: // Flatté + optional polynomial
                     {
-                        // Flatté base layout without polynomial: [k, g_etapi, g_KK, Mass]
-                        const int baseReq = 4; // k + tail (g_etapi,g_KK,Mass)
+                        // Flatté base layout without polynomial: [k, Mass, g_etapi, g_KK, g_etaprimepi]
+                        const int baseReq = 5; // k + tail (Mass,g_etapi,g_KK,g_etaprimepi)
+                        // cout << "FuncType 1: baseReq = " << baseReq << ", coreParams size = " << coreParams.size() << endl;
+
                         if (coreParams.size() < static_cast<size_t>(baseReq)) return complex<double>(0.0, 0.0);
 
                         double k = coreParams[0];
-                        // If no polynomial block, behave as pure Flatté
-                        if (!hasPoly) {
-                            vector<double> flatteParams(coreParams.begin(), coreParams.begin() + baseReq);
-                            return GetFlatteAmplitude(mass, k, flatteParams) * exp(complex<double>(0, phase));
-                        }
-
-                        // Try to detect polynomial block placement.
-                        // Pattern A: k, m_threshold, m_expansion, polyCoeffs..., g_etapi,g_KK,Mass
-                        const size_t sharedTailSize = 3;
-                        if (coreParams.size() >= static_cast<size_t>(3 + polyBlockSize + sharedTailSize)) {
-                            const size_t sharedTailStart = coreParams.size() - sharedTailSize;
-                            double m_threshold = coreParams[1];
-                            double m_expansion = coreParams[2];
-                            vector<double> polyParams(coreParams.begin() + 3, coreParams.begin() + sharedTailStart);
-                            vector<double> flatteTail(coreParams.begin() + sharedTailStart, coreParams.end());
-                            vector<double> fullFlatteParams = {k, flatteTail[0], flatteTail[1], flatteTail[2]};
-                            complex<double> flatteTerm = GetFlatteAmplitude(mass, k, fullFlatteParams);
-                            // Note: GetFlatteAmplitude expects [k,g_etapi,g_KK,Mass]; we constructed an approximate tail here.
-                            complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
-                            return flatteTerm * exp(complex<double>(0, phase)) + polyAmp;
-                        }
-
-                        // Pattern B: k, [poly block], g_etapi,g_KK,Mass (poly inserted after k)
-                        const size_t polyStart = 1; // after k
-                        const size_t polyEnd = coreParams.size() - (baseReq - 1); // leave tail (g_etapi,g_KK,Mass)
-                        if (polyEnd <= polyStart) {
-                            vector<double> flatteParams(coreParams.begin(), coreParams.begin() + baseReq);
-                            return GetFlatteAmplitude(mass, k, flatteParams) * exp(complex<double>(0, phase));
-                        }
-                        if (polyEnd - polyStart != static_cast<size_t>(polyBlockSize)) {
-                            vector<double> flatteParams(coreParams.begin(), coreParams.begin() + baseReq);
-                            return GetFlatteAmplitude(mass, k, flatteParams) * exp(complex<double>(0, phase));
-                        }
-
-                        double m_threshold = coreParams[polyStart];
-                        double m_expansion = coreParams[polyStart + 1];
-                        vector<double> polyParams(coreParams.begin() + polyStart + 2, coreParams.begin() + polyEnd);
-                        vector<double> flatteParams(coreParams.begin(), coreParams.begin() + 1); // only k
-                        flatteParams.push_back(coreParams[polyEnd]); // g_etapi
-                        flatteParams.push_back(coreParams[polyEnd + 1]); // g_KK
-                        flatteParams.push_back(coreParams[polyEnd + 2]); // Mass
-
+                        vector<double> flatteParams(coreParams.begin(), coreParams.begin() + baseReq);
+                        // cout << "Flatte params: ";
+                        // for (size_t i = 0; i < flatteParams.size(); ++i) {
+                        //     cout << flatteParams[i] << " ";
+                        // }
+                        // cout << endl;
                         complex<double> flatteAmp = GetFlatteAmplitude(mass, k, flatteParams) * exp(complex<double>(0, phase));
+                        if (!hasPoly) return flatteAmp;
+
+                        // If polynomial block present, it is expected appended after base params
+                        if (coreParams.size() < static_cast<size_t>(baseReq + polyBlockSize)) return flatteAmp;
+                        double m_threshold = coreParams[baseReq];
+                        double m_expansion = coreParams[baseReq + 1];
+                        vector<double> polyParams(coreParams.begin() + baseReq + 2, coreParams.begin() + baseReq + polyBlockSize);
                         complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
                         return flatteAmp + polyAmp;
                     }
@@ -209,6 +183,8 @@ namespace m2pw{
                 case 2:  // Breit-Wigner + optional polynomial
                     {
                         // Base BW expects [k, M, width] then optional poly block appended
+                        // cout << "FuncType 2: baseReq = " << 3 << ", coreParams size = " << coreParams.size() << endl;
+
                         const int baseReq = 3;
                         if (coreParams.size() < static_cast<size_t>(baseReq)) return complex<double>(0.0, 0.0);
                         double k = coreParams[0];
@@ -263,8 +239,8 @@ namespace m2pw{
 
                 case 4: // Coherent sum of Flatté + Breit-Wigner + optional polynomial
                     {
-                        // Flatté part expects [k, g_etapi, g_KK, Mass], BW part expects [k, M, width], then optional poly block appended
-                        const int flatteReq = 4;
+                        // Flatté part expects [k, g_etapi, g_KK, g_etaprimepi, Mass], BW part expects [k, M, width], then optional poly block appended
+                        const int flatteReq = 5;
                         const int bwReq = 3;
                         if (coreParams.size() < static_cast<size_t>(flatteReq + bwReq)) return complex<double>(0.0, 0.0);
 
@@ -313,13 +289,26 @@ namespace m2pw{
 
         // Flatté amplitude for case 2
         complex<double> GetFlatteAmplitude(double mass, double k, const vector<double>& params) const {
-            if (params.size() < 4) {
+            if (params.size() < 5) {
                 return complex<double>(0.0, 0.0);
             }
 
-            double g_etapi = params[1];
-            double g_KK = params[2];
-            double M0 = params[3];
+            double M0 = params[1];
+            double g_etapi = params[2];
+            double g_KK = params[3];
+            double g_etaprimepi = params[4];
+
+            double g_etapi_sqr = g_etapi * g_etapi;
+            double g_KK_sqr = g_KK * g_KK;
+            double g_etaprimepi_sqr = g_etaprimepi * g_etaprimepi;
+            if (g_KK < 0.0) {
+                const double g_etapi_per_g_KK_sqr = 1.05; // (g_etapi/g_KK)² from CBAR
+                g_KK_sqr = g_etapi_sqr * g_etapi_per_g_KK_sqr;
+            }
+            if (g_etaprimepi < 0.0) {
+                const double g_etaprimepi_per_g_etapi_sqr = 0.772; // (g_etaprimepi/g_etapi)² from CBAR
+                g_etaprimepi_sqr = g_etapi_sqr * g_etaprimepi_per_g_etapi_sqr;
+            }
             
             double s = mass * mass;
             double M0_sq = M0 * M0;
@@ -327,9 +316,10 @@ namespace m2pw{
             // Phase space factors
             double rho_etapi = GetPhaseSpaceFactor(mass, 0.547853, 0.13957); // η-π
             double rho_KK = GetPhaseSpaceFactor(mass, 0.493677, 0.493677);   // K-K
+            double rho_etaprimepi = GetPhaseSpaceFactor(mass, 0.95778, 0.13957); // η'-π
             
             // Flatté denominator: M₀² - s - i(g₁²ρ₁ + g₂²ρ₂)
-            complex<double> denominator(M0_sq - s, -(g_etapi*g_etapi*rho_etapi + g_KK*g_KK*rho_KK));
+            complex<double> denominator(M0_sq - s, -(g_etapi_sqr*rho_etapi + g_KK_sqr*rho_KK + g_etaprimepi_sqr*rho_etaprimepi));
             return k / denominator;
         }
         
@@ -351,8 +341,8 @@ namespace m2pw{
         complex<double> GetConformalPolynomialAmplitude(
             double mass,
             const vector<double>& params,
-            double thresholdMass = kPolynomialThresholdMass,
-            double expansionMass = kPolynomialExpansionMass) const {
+            double thresholdMass,
+            double expansionMass) const {
             // Parameters structure:
             // params[0] = re_0 (real part of z^0 coefficient)
             // params[1] = im_0 (imag part of z^0 coefficient)

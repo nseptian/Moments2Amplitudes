@@ -146,7 +146,7 @@ namespace m2pw {
             int ell_value = -1;
             bool isPhase = false;
             bool isMassDependent = false;
-            bool isSharedResonance = false;  // true for g_etapi, g_KK (same value across all mass bins)
+            bool isSharedResonance = false;
         };
         
         // Constructor with both mass dependence and moments configuration
@@ -299,6 +299,11 @@ namespace m2pw {
             void SetParameterInitialValues(const std::map<TString, double>& values);
             void SetParameterLimitsBatch(const std::map<TString, std::pair<double, double>>& limits);
             bool SetGaussianConstraint(const TString& parName, double mean, double sigma);
+
+            // Return the registered parameter names in index order.
+            const std::vector<TString>& GetParameterNames() const {
+                return parIndexNames;
+            }
 
             // Configure generalized Breit-Wigner reference values used when M/width are not supplied explicitly.
             bool ConfigureBreitWignerDefaultsForWave(const TString& waveName, double mass, double width);

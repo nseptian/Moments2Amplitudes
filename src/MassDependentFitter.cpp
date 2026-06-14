@@ -99,6 +99,7 @@ namespace m2pw {
         }
 
         TString SharedResonanceKeyForWave(const TString& waveName) {
+            // cout << "Generating shared resonance key for wave: " << waveName << endl;
             return Form("shared_%s", waveName.Data());
         }
 
@@ -126,6 +127,7 @@ namespace m2pw {
                 "_m_expansion",
                 "_g_etapi",
                 "_g_KK",
+                "_g_etaprimepi",
                 "_MassFlatte",
                 "_MassBW",
                 "_WidthBW",
@@ -168,19 +170,26 @@ namespace m2pw {
 
             if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial)) {
                 // Wave-specific values hold k and optional polynomial block.
-                // Shared values hold [g_etapi, g_KK, Mass].
+                // Shared values hold [Mass, g_etapi, g_KK, g_etaprimepi].
                 if (params.empty()) {
                     return false;
                 }
 
                 auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
-                if (sharedIt == massDepPars.end() || sharedIt->second.size() < 3) {
+                if (sharedIt == massDepPars.end() || sharedIt->second.size() < 4) {
                     return false;
                 }
+                
+                std::vector<double> assembled;
+                assembled.reserve(params.size() + 4);
+                assembled.push_back(params[0]);         // k
+                assembled.push_back(sharedIt->second[0]); // Mass
+                assembled.push_back(sharedIt->second[1]); // g_etapi
+                assembled.push_back(sharedIt->second[2]); // g_KK
+                assembled.push_back(sharedIt->second[3]); // g_etaprimepi
 
-                params.push_back(sharedIt->second[0]); // g_etapi
-                params.push_back(sharedIt->second[1]); // g_KK
-                params.push_back(sharedIt->second[2]); // Mass
+                assembled.insert(assembled.end(), params.begin() + 1, params.end()); // optional polynomial block
+                params.swap(assembled);
                 return true;
             }
 
@@ -192,6 +201,7 @@ namespace m2pw {
                 }
 
                 auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
+                // cout << "shared size for wave " << waveName << ": " << sharedIt->second.size() << endl;
                 if (sharedIt == massDepPars.end() || sharedIt->second.size() < 2) {
                     return false;
                 }
@@ -233,25 +243,26 @@ namespace m2pw {
 
             if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial) || funcType == 4) {
                 // Wave-specific values hold [k_fl, k_bw] and optional polynomial block.
-                // Shared values hold [g_etapi, g_KK, MassFlatte, MassBW, WidthBW].
+                // Shared values hold [g_etapi, g_KK, g_etaprimepi, MassFlatte, MassBW, WidthBW].
                 if (params.size() < 2) {
                     return false;
                 }
 
                 auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
-                if (sharedIt == massDepPars.end() || sharedIt->second.size() < 5) {
+                if (sharedIt == massDepPars.end() || sharedIt->second.size() < 6) {
                     return false;
                 }
 
                 std::vector<double> assembled;
                 assembled.reserve(params.size() + 5);
                 assembled.push_back(params[0]);           // k_fl
-                assembled.push_back(sharedIt->second[0]); // g_etapi
-                assembled.push_back(sharedIt->second[1]); // g_KK
-                assembled.push_back(sharedIt->second[2]); // MassFlatte
+                assembled.push_back(sharedIt->second[0]); // MassFlatte
+                assembled.push_back(sharedIt->second[1]); // g_etapi
+                assembled.push_back(sharedIt->second[2]); // g_KK
+                assembled.push_back(sharedIt->second[3]); // g_etaprimepi
                 assembled.push_back(params[1]);           // k_bw
-                assembled.push_back(sharedIt->second[3]); // MassBW
-                assembled.push_back(sharedIt->second[4]); // WidthBW
+                assembled.push_back(sharedIt->second[4]); // MassBW
+                assembled.push_back(sharedIt->second[5]); // WidthBW
                 assembled.insert(assembled.end(), params.begin() + 2, params.end()); // optional polynomial block
                 params.swap(assembled);
                 return true;
@@ -404,8 +415,7 @@ namespace m2pw {
                 plan.isMassDependent = IsMassDependentEll(info->ell_value);
                 
                 // Detect shared resonance parameters (same value across all mass bins)
-                plan.isSharedResonance = (plan.par_name.Contains("g_etapi") || 
-                                        plan.par_name.Contains("g_KK"));
+                plan.isSharedResonance = (plan.par_name.BeginsWith("Mass") || plan.par_name.BeginsWith("Width") || plan.par_name.BeginsWith("g_"));
                 
                 plans.push_back(std::move(plan));
             }
@@ -658,8 +668,7 @@ namespace m2pw {
                     fallbackPlan.ell_value = fallbackInfo->ell_value;
                     fallbackPlan.isPhase = fallbackInfo->isPhase;
                     fallbackPlan.isMassDependent = IsMassDependentEll(fallbackInfo->ell_value);
-                    fallbackPlan.isSharedResonance = (fallbackPlan.par_name.Contains("g_etapi") || 
-                                                    fallbackPlan.par_name.Contains("g_KK"));
+                    fallbackPlan.isSharedResonance = (fallbackPlan.par_name.BeginsWith("Mass") || fallbackPlan.par_name.BeginsWith("Width") || fallbackPlan.par_name.BeginsWith("g_"));
                     param_plan = &fallbackPlan;
                 }
 
@@ -667,6 +676,7 @@ namespace m2pw {
 
                 const TString& par_name = param_plan->par_name;
                 const int ell_value = param_plan->ell_value;
+                cout << "Pre-caching shared resonance parameter: " << par_name << " (ell=" << ell_value << ")" << endl;
                 const bool isMassDependent = param_plan->isMassDependent;
                 
                 double value = 0.0;
@@ -741,8 +751,7 @@ namespace m2pw {
                     fallbackPlan.ell_value = fallbackInfo->ell_value;
                     fallbackPlan.isPhase = fallbackInfo->isPhase;
                     fallbackPlan.isMassDependent = IsMassDependentEll(fallbackInfo->ell_value);
-                    fallbackPlan.isSharedResonance = (fallbackPlan.par_name.Contains("g_etapi") || 
-                                                    fallbackPlan.par_name.Contains("g_KK"));
+                    fallbackPlan.isSharedResonance = (fallbackPlan.par_name.BeginsWith("Mass") || fallbackPlan.par_name.BeginsWith("Width") || fallbackPlan.par_name.BeginsWith("g_"));
                     param_plan = &fallbackPlan;
                 }
 
@@ -1432,6 +1441,7 @@ namespace m2pw {
         const std::vector<TString>& waveNames = GetMassDependentWaveNames(ell_value);
 
         for (const TString& waveName : waveNames) {
+            // cout << "Evaluating amplitude for wave " << waveName << " in mass bin " << mass_bin << endl;
             const TString key = Form("%s_%s", MassDependentBaseKey(par_name).Data(), waveName.Data());
             const auto it = massDepPars.find(key);
             if (it == massDepPars.end() || it->second.empty()) {
@@ -1490,7 +1500,7 @@ namespace m2pw {
                     params.push_back(phaseIt->second[0]);
                 }
             }
-
+            // cout << "Evaluating amplitude for wave " << waveName << " with function type " << funcType << endl;
             total_amplitude += massDepFuncs_[funcIndex].GetAmplitude(mass_bin, params, includeGlobalPhase);
         }
 
@@ -1797,15 +1807,14 @@ namespace m2pw {
             }
         } else if (funcType == static_cast<int>(MT::FlattePlusPolynomial)) {
             const int polyOrder = getPolyOrder(funcIndex);
+            paramTypes = {"k", "Mass", "g_etapi", "g_KK", "g_etaprimepi"};
             if (polyOrder >= 0) {
-                paramTypes = {"k", "g_etapi", "g_KK", "m_threshold", "m_expansion"};
+                paramTypes.push_back("m_threshold");
+                paramTypes.push_back("m_expansion");
                 for (int i = 0; i <= polyOrder; ++i) {
                     paramTypes.push_back(Form("re_%d", i));
                     paramTypes.push_back(Form("im_%d", i));
                 }
-                paramTypes.push_back("Mass");
-            } else {
-                paramTypes = {"k", "g_etapi", "g_KK", "Mass"};
             }
         } else if (funcType == static_cast<int>(MT::BreitWignerPlusPolynomial)) {
             const int polyOrder = getPolyOrder(funcIndex);
@@ -1831,7 +1840,7 @@ namespace m2pw {
             }
         } else if (funcType == static_cast<int>(MT::FlatteBreitWignerPlusPolynomial) || funcType == 4) {
             const int polyOrder = getPolyOrder(funcIndex);
-            paramTypes = {"k_fl", "g_etapi", "g_KK", "MassFlatte", "k_bw", "MassBW", "WidthBW"};
+            paramTypes = {"k_fl", "MassFlatte", "g_etapi", "g_KK", "g_etaprimepi", "k_bw", "MassBW", "WidthBW"};
             if (polyOrder >= 0) {
                 paramTypes.push_back("m_threshold");
                 paramTypes.push_back("m_expansion");
@@ -1840,8 +1849,6 @@ namespace m2pw {
                     paramTypes.push_back(Form("im_%d", i));
                 }
             }
-        } else {
-            paramTypes = {"k", "Mass", "Width"};
         }
 
         return paramTypes;
@@ -1908,45 +1915,46 @@ namespace m2pw {
                 }
 
                 // Check if this wave uses conformal polynomial coefficients.
-                bool isConformal = false;
-                bool isFlattePlusConformal = false;
-                int polyOrder = 2;
+                // bool isConformal = false;
+                // bool isFlattePlusConformal = false;
+                // int polyOrder = 2;
                 int funcType = -1;
                 if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
                     funcType = fitter.massDepFuncs_[funcIndex].GetFuncType();
-                    isConformal = (funcType == static_cast<int>(MassDependenceConfig::ModelType::Polynomial));
-                    isFlattePlusConformal =
-                        (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial));
-                    if (isConformal || isFlattePlusConformal) {
-                        polyOrder = fitter.massDepFuncs_[funcIndex].GetPolyOrder();
-                    }
+                    // isConformal = (funcType == static_cast<int>(MassDependenceConfig::ModelType::Polynomial));
+                    // isFlattePlusConformal =
+                    //     (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial));
+                    // if (isConformal || isFlattePlusConformal) {
+                    //     polyOrder = fitter.massDepFuncs_[funcIndex].GetPolyOrder();
+                    // }
                 }
+                cout << "Determining parameters for wave " << waveName << " with function type " << funcType << endl;
 
                 // Determine which parameter types to add
                 std::vector<TString> paramTypes = BuildParamTypesForWave(funcType, funcIndex);
                 // Note: BuildParamTypesForWave will consult massDepFuncs_ via fitter to
                 // decide if polynomial blocks should be appended based on polyOrder.
                 // The previous inline logic for conformal/Flatté/BW was centralized here.
-                if (isConformal && polyOrder >= 0) {
-                    // Conformal polynomial: add re_i and im_i for i=0 to polyOrder
-                    // Parameters: m_threshold, m_expansion, re_i, im_i
-                    // BuildParamTypesForWave already covers this, so nothing more to do.
-                    LogMDInfo("MODE", Form("wave=%s model=conformal order=%d n_params=%zu",
-                        waveName.Data(), polyOrder, paramTypes.size()));
-                } else if (isFlattePlusConformal && polyOrder >= 0) {
-                    LogMDInfo("MODE", Form("wave=%s model=flatte_plus_conformal order=%d n_params=%zu",
-                        waveName.Data(), polyOrder, paramTypes.size()));
-                } else if (isFlattePlusConformal) {
-                    LogMDInfo("MODE", Form("wave=%s model=flatte order=NA n_params=%zu",
-                        waveName.Data(), paramTypes.size()));
-                }
+                // if (isConformal && polyOrder >= 0) {
+                //     // Conformal polynomial: add re_i and im_i for i=0 to polyOrder
+                //     // Parameters: m_threshold, m_expansion, re_i, im_i
+                //     // BuildParamTypesForWave already covers this, so nothing more to do.
+                //     LogMDInfo("MODE", Form("wave=%s model=conformal order=%d n_params=%zu",
+                //         waveName.Data(), polyOrder, paramTypes.size()));
+                // } else if (isFlattePlusConformal && polyOrder >= 0) {
+                //     LogMDInfo("MODE", Form("wave=%s model=flatte_plus_conformal order=%d n_params=%zu",
+                //         waveName.Data(), polyOrder, paramTypes.size()));
+                // } else if (isFlattePlusConformal) {
+                //     LogMDInfo("MODE", Form("wave=%s model=flatte order=NA n_params=%zu",
+                //         waveName.Data(), paramTypes.size()));
+                // }
                 // BuildParamTypesForWave covered BW, TwoBW, Flatté, Polynomial, and defaults.
 
                 for (const TString& paramType : paramTypes) {
                     TString name;
                     // vector<TString> sharedResonanceParamTypes = {"Mass", "Width", "g_etapi", "g_KK"};
-                    const bool isSharedResonanceParam = paramType.BeginsWith("Mass") || paramType.BeginsWith("Width") || paramType == "g_etapi" || paramType == "g_KK";
-                    if (isSharedResonanceParam && !isConformal) {
+                    const bool isSharedResonanceParam = paramType.BeginsWith("Mass") || paramType.BeginsWith("Width") || paramType.BeginsWith("g_");
+                    if (isSharedResonanceParam) {
                         name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
                     } else {
                         name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
@@ -1959,79 +1967,31 @@ namespace m2pw {
                     }
 
                     double initialValue;
-                    if (isConformal || isFlattePlusConformal) {
-                        // Conformal polynomial parameters
-                        if (paramType.BeginsWith("re_") || paramType.BeginsWith("im_")) {
-                            // Extract coefficient index
-                            TString indexStr = paramType;
-                            indexStr.Remove(0, 3);
-                            int coeffIndex = indexStr.Atoi();
-                            
-                            // Scale down higher order terms
-                            double scale = TMath::Power(0.5, coeffIndex);
-                            initialValue = rng.Uniform(-50, 50) * scale;
-                        } else if (paramType == "k") {
-                            initialValue = rng.Uniform(-30, 30);
-                        } else if (paramType == "g_etapi") {
-                            initialValue = 0.5;
-                        } else if (paramType == "g_KK") {
-                            initialValue = 0.3;
-                        } else if (paramType == "m_threshold") {
-                            initialValue = 0.683;
-                        } else if (paramType == "m_expansion") {
-                            initialValue = 0.98;
-                        } else {
-                            initialValue = 0.0;
-                        }
-                    } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial) && paramType == "g_etapi") {
+                    if (paramType.BeginsWith("re_") || paramType.BeginsWith("im_")) {
+                        // Polynomial coefficients: initialize randomly for any model that carries them.
+                        TString indexStr = paramType;
+                        indexStr.Remove(0, 3);
+                        int coeffIndex = indexStr.Atoi();
+
+                        // Scale down higher order terms.
+                        double scale = TMath::Power(0.5, coeffIndex);
+                        initialValue = rng.Uniform(-50, 50) * scale;
+                        LogMDInfo("INIT", Form("param=%s source=seed field=%s value=%g", name.Data(), paramType.Data(), initialValue));
+                    } else if (paramType == "g_etapi") {
                         initialValue = 0.5;
-                    } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial) && paramType == "g_KK") {
-                        initialValue = 0.3;
+                        LogMDInfo("INIT", Form("param=%s source=seed field=%s value=%g", name.Data(), paramType.Data(), initialValue));
+                    } else if (paramType == "g_KK") {
+                        initialValue = -99.0;
+                        LogMDInfo("INIT", Form("param=%s source=seed field=%s value=%g", name.Data(), paramType.Data(), initialValue));
+                    } else if (paramType == "g_etaprimepi") {
+                        initialValue = -99.0;
+                        LogMDInfo("INIT", Form("param=%s source=seed field=%s value=%g", name.Data(), paramType.Data(), initialValue));
                     } else if (paramType.BeginsWith("k")) {
                         initialValue = rng.Uniform(-30, 30);  // Random for coupling strength
-                    } else if (paramType == "Mass1") {
+                        LogMDInfo("INIT", Form("param=%s source=seed field=%s value=%g", name.Data(), paramType.Data(), initialValue));
+                    } else { 
                         initialValue = 0.0;
-                        LogMDInfo("INIT", Form("param=%s source=default field=Mass1 value=%g", name.Data(), initialValue));
-                    } else if (paramType == "Width1") {
-                        initialValue = 0.0;
-                        LogMDInfo("INIT", Form("param=%s source=default field=Width1 value=%g", name.Data(), initialValue));
-                    } else if (paramType == "Mass2") {
-                        initialValue = 0.0;
-                        LogMDInfo("INIT", Form("param=%s source=default field=Mass2 value=%g", name.Data(), initialValue));
-                    } else if (paramType == "Width2") {
-                        initialValue = 0.0;
-                        LogMDInfo("INIT", Form("param=%s source=default field=Width2 value=%g", name.Data(), initialValue));
-                    } else if (paramType == "MassFlatte") {
-                        initialValue = 1.001;
-                        LogMDInfo("INIT", Form("param=%s source=default field=MassFlatte value=%g", name.Data(), initialValue));
-                    } else if (paramType == "MassBW") {
-                        initialValue = 0.0;
-                        LogMDInfo("INIT", Form("param=%s source=default field=MassBW value=%g", name.Data(), initialValue));
-                    } else if (paramType == "WidthBW") {
-                        initialValue = 0.0;
-                        LogMDInfo("INIT", Form("param=%s source=default field=WidthBW value=%g", name.Data(), initialValue));
-                    } else if (paramType == "Mass") {
-                        // Use model-specific default mass if file/config value is absent.
-                        if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial)) {
-                            initialValue = 1.001;
-                        } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::Polynomial) ||
-                                   funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial)) {
-                            initialValue = 0.98;
-                        } else {
-                            initialValue = 0.0;
-                        }
-                        LogMDInfo("INIT", Form("param=%s source=default field=Mass value=%g", name.Data(), initialValue));
-                    } else {  // Width
-                        // Use model-specific default width/threshold scale if file/config value is absent.
-                        if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial)) {
-                            initialValue = 0.075;
-                        } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::Polynomial) ||
-                                   funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial)) {
-                            initialValue = 0.683;
-                        } else {
-                            initialValue = 0.0;
-                        }
-                        LogMDInfo("INIT", Form("param=%s source=default field=Width value=%g", name.Data(), initialValue));
+                        LogMDInfo("INIT", Form("param=%s source=default field=%s value=%g", name.Data(), paramType.Data(), initialValue));
                     }
 
                     parsList[name] = initialValue;
@@ -2200,14 +2160,13 @@ namespace m2pw {
                 
                 // Determine which parameter types to add from option.
                 std::vector<TString> paramTypes = BuildParamTypesForWave(funcType, funcIndex);
+
+                // cout << "Processing wave " << waveName << " with function type " << funcType << " for parameter " << parName << endl;
                 
                 for (const TString& paramType : paramTypes) {
                     TString name;
-                    const bool isSharedResonanceParam =
-                        paramType.BeginsWith("Mass") || paramType.BeginsWith("Width") ||
-                        paramType == "g_etapi" || paramType == "g_KK";
-                    if (isSharedResonanceParam && 
-                        funcType != static_cast<int>(MassDependenceConfig::ModelType::Polynomial)) {
+                    const bool isSharedResonanceParam = paramType.BeginsWith("Mass") || paramType.BeginsWith("Width") || paramType.BeginsWith("g_");
+                    if (isSharedResonanceParam) {
                         name = Form("MD_%s_%s", SharedResonanceKeyForWave(waveName).Data(), paramType.Data());
                     } else {
                         name = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), paramType.Data());
@@ -2222,18 +2181,19 @@ namespace m2pw {
                     // Try to read the parameter value from the tree using TLeaf
                     double value = 0.0;
                     TLeaf* leaf = tree->GetLeaf(name);
-                    if (!leaf && isSharedResonanceParam) {
-                        TString legacyParamType = paramType;
-                        legacyParamType.ReplaceAll("Mass", "M");
-                        legacyParamType.ReplaceAll("Width", "width");
-                        TString legacyName = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), legacyParamType.Data());
-                        leaf = tree->GetLeaf(legacyName);
-                    }
+                    // if (!leaf && isSharedResonanceParam) {
+                    //     TString legacyParamType = paramType;
+                    //     legacyParamType.ReplaceAll("Mass", "M");
+                    //     legacyParamType.ReplaceAll("Width", "width");
+                    //     TString legacyName = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), legacyParamType.Data());
+                    //     leaf = tree->GetLeaf(legacyName);
+                    // }
                     if (leaf) {
                         value = leaf->GetValue();
                         LogMDInfo("LOAD", Form("param=%s source=file value=%g", name.Data(), value));
                     } else {
                         // Parameter not found in file, use values from MassDependentFunction or defaults
+                        cout << "Parameter " << name << " not found in file. Using default value based on paramType." << endl;
                         if (paramType == "k") {
                             value = 1.0;
                             LogMDInfo("INIT", Form("param=%s source=default field=k value=%g", name.Data(), value));
@@ -2241,62 +2201,20 @@ namespace m2pw {
                             value = 0.5;
                             LogMDInfo("INIT", Form("param=%s source=default field=g_etapi value=%g", name.Data(), value));
                         } else if (paramType == "g_KK") {
-                            value = 0.3;
+                            value = -99.0;
                             LogMDInfo("INIT", Form("param=%s source=default field=g_KK value=%g", name.Data(), value));
+                        } else if (paramType == "g_etaprimepi") {
+                            value = -99.0;
+                            LogMDInfo("INIT", Form("param=%s source=default field=g_etaprimepi value=%g", name.Data(), value));
                         } else if (paramType == "m_threshold") {
                             value = 0.683;
                             LogMDInfo("INIT", Form("param=%s source=default field=m_threshold value=%g", name.Data(), value));
                         } else if (paramType == "m_expansion") {
-                            value = 0.98;
+                            value = 1.2;
                             LogMDInfo("INIT", Form("param=%s source=default field=m_expansion value=%g", name.Data(), value));
-                        } else if (paramType.BeginsWith("re_") || paramType.BeginsWith("im_")) {
+                        } else { 
                             value = 0.0;
-                            LogMDInfo("INIT", Form("param=%s source=default field=conformal_coeff value=%g", name.Data(), value));
-                        } else if (paramType.BeginsWith("k")) {
-                            value = 0.0;  // Default coupling
-                            LogMDInfo("INIT", Form("param=%s source=default field=k value=%g", name.Data(), value));
-                        } else if (paramType == "Mass1") {
-                            value = 0.0;
-                            LogMDInfo("INIT", Form("param=%s source=default field=Mass1 value=%g", name.Data(), value));
-                        } else if (paramType == "Width1") {
-                            value = 0.0;
-                            LogMDInfo("INIT", Form("param=%s source=default field=Width1 value=%g", name.Data(), value));
-                        } else if (paramType == "Mass2") {
-                            value = 0.0;
-                            LogMDInfo("INIT", Form("param=%s source=default field=Mass2 value=%g", name.Data(), value));
-                        } else if (paramType == "Width2") {
-                            value = 0.0;
-                            LogMDInfo("INIT", Form("param=%s source=default field=Width2 value=%g", name.Data(), value));
-                        } else if (paramType == "MassFlatte") {
-                            value = 1.001;
-                            LogMDInfo("INIT", Form("param=%s source=default field=MassFlatte value=%g", name.Data(), value));
-                        } else if (paramType == "MassBW") {
-                            value = 0.0;
-                            LogMDInfo("INIT", Form("param=%s source=default field=MassBW value=%g", name.Data(), value));
-                        } else if (paramType == "WidthBW") {
-                            value = 0.0;
-                            LogMDInfo("INIT", Form("param=%s source=default field=WidthBW value=%g", name.Data(), value));
-                        } else if (paramType == "Mass") {
-                            // Use model-specific default mass if file/config value is absent.
-                            if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial)) {
-                                value = 1.001;
-                            } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::Polynomial) ||
-                                       funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial)) {
-                                value = 0.98;
-                            } else {
-                                value = 0.0;
-                            }
-                        } else {  // Width
-                            // Use model-specific default width/threshold scale if file/config value is absent.
-                            if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial)) {
-                                value = 0.075;
-                            } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::Polynomial) ||
-                                       funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial)) {
-                                value = 0.683;
-                            } else {
-                                value = 0.0;
-                            }
-                            LogMDInfo("INIT", Form("param=%s source=default field=Width value=%g", name.Data(), value));
+                            LogMDInfo("INIT", Form("param=%s source=default field=%s value=%g", name.Data(), paramType.Data(), value));
                         }
                     }
 
