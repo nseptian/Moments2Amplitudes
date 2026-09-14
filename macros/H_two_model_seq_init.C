@@ -83,11 +83,7 @@ void H_two_model(const Double_t FIRST_MASS_BIN_CENTER, const Int_t N_MASS_BINS, 
 
     m2pw::MassDependentFitter::ParameterManager paramManager(fitter);
 
-    paramManager.AddMassDependentParametersForL(std::vector<int>{2}, 
-                                      init_model_file, 
-                                      false,
-                                      false,
-                                      true);
+    paramManager.AddMassDependentParameter(std::vector<int>{2}, init_model_file, 0);
 
     // paramManager.AddMassDependentParametersForL(std::vector<int>{0}, 
     //                               seed, 
@@ -108,12 +104,7 @@ void H_two_model(const Double_t FIRST_MASS_BIN_CENTER, const Int_t N_MASS_BINS, 
     //                                                   false);
 
     std::vector<int> initializedMassIndependentL = {0};
-    paramManager.AddMassIndependentParametersForL(initializedMassIndependentL, loadedMassBins,
-                                                init_model_file);
-
-    std::map<string, std::pair<double,double>> FirstMassBin_S_waves_init_values = paramManager.GetAmplitudeValuesAtMassBins(initializedMassIndependentL, loadedMassBins[0]);
-    
-    paramManager.AddMassIndependentParametersForL(initializedMassIndependentL, initializedMassBins, FirstMassBin_S_waves_init_values);
+    paramManager.AddMassIndependentParameter(initializedMassIndependentL, init_model_file);
 
     // std::cout << "\n=== Running H_two_model ===" << std::endl;
     // std::cout << "FIRST_MASS_BIN_CENTER = " << FIRST_MASS_BIN_CENTER << std::endl;

@@ -33,77 +33,65 @@ namespace m2pw {
          * @brief Configuration for mass dependence of different l values
          */
         struct MassDependenceConfig {
-            std::map<int, std::vector<TString>> massDependentWaves;  // l -> list of wave names
-            std::vector<int> massIndependentL;                       // l values that are mass independent
+            enum class ModelType {
+                Polynomial = 0,
+                FlattePlusPolynomial = 1,
+                BreitWignerPlusPolynomial = 2,
+                TwoBreitWignerPlusPolynomial = 3,
+                FlatteBreitWignerPlusPolynomial = 4
+            };
+
+            struct WaveModelConfig {
+                TString waveName;
+                ModelType modelType = ModelType::BreitWignerPlusPolynomial;
+                int polyOrder = 2;
+
+                WaveModelConfig() = default;
+                WaveModelConfig(const TString& name, ModelType type, int order = 2)
+                    : waveName(name), modelType(type), polyOrder(order) {}
+            };
+
+            std::map<int, std::vector<WaveModelConfig>> massDependentWaves;  // ELL -> list of wave model configs
+            std::vector<int> massIndependentL;                       // ELL values that are mass independent
             
             // Constructor with default behavior
             MassDependenceConfig() {
-                massDependentWaves[2] = {"a2_1320"};  // Default: only l=2 with single wave
-                massIndependentL = {0, 1};            // l=0,1 mass independent
+                massDependentWaves[2] = {{"a2_1320", ModelType::BreitWignerPlusPolynomial}};  // Default: only ELL=2 with single wave
+                massIndependentL = {0, 1};            // ELL=0,1 mass independent
             }
             
-            // Check if a given l value is mass dependent
-            bool IsMassDependent(int l) const {
-                return massDependentWaves.find(l) != massDependentWaves.end();
+            // Check if a given ELL value is mass dependent
+            bool IsMassDependent(int ell) const {
+                return massDependentWaves.find(ell) != massDependentWaves.end();
             }
             
-            // Check if a given l value is mass independent
-            bool IsMassIndependent(int l) const {
-                return std::find(massIndependentL.begin(), massIndependentL.end(), l) != massIndependentL.end();
-            }
-
-            static bool HasPhaseTag(const TString& waveName) {
-                return waveName.EndsWith("_phase");
-            }
-
-            static TString StripPhaseTag(const TString& waveName) {
-                if (!HasPhaseTag(waveName)) {
-                    return waveName;
-                }
-
-                TString stripped = waveName;
-                stripped.Remove(stripped.Length() - 6);
-                return stripped;
-            }
-
-            bool UseGlobalPhaseForWave(int l, const TString& waveName) const {
-                auto it = massDependentWaves.find(l);
-                if (it == massDependentWaves.end()) {
-                    return false;
-                }
-
-                for (const TString& configuredWave : it->second) {
-                    if (StripPhaseTag(configuredWave) == waveName && HasPhaseTag(configuredWave)) {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            bool IsGlobalPhaseEnabledForL(int l) const {
-                auto it = massDependentWaves.find(l);
-                if (it == massDependentWaves.end()) {
-                    return false;
-                }
-
-                return std::any_of(it->second.begin(), it->second.end(),
-                                   [](const TString& waveName) { return HasPhaseTag(waveName); });
+            // Check if a given ELL value is mass independent
+            bool IsMassIndependent(int ell) const {
+                return std::find(massIndependentL.begin(), massIndependentL.end(), ell) != massIndependentL.end();
             }
             
-            // Get wave names for a given l value
-            std::vector<TString> GetWavesForL(int l) const {
-                auto it = massDependentWaves.find(l);
+            // Get wave names for a given ELL value
+            std::vector<TString> GetWaves(int ell) const {
+                auto it = massDependentWaves.find(ell);
                 if (it == massDependentWaves.end()) {
                     return {};
                 }
 
-                std::vector<TString> normalizedWaves;
-                normalizedWaves.reserve(it->second.size());
-                for (const TString& waveName : it->second) {
-                    normalizedWaves.push_back(StripPhaseTag(waveName));
+                std::vector<TString> waveNames;
+                waveNames.reserve(it->second.size());
+                for (const auto& waveConfig : it->second) {
+                    waveNames.push_back(waveConfig.waveName);
                 }
-                return normalizedWaves;
+                return waveNames;
+            }
+
+            const std::vector<WaveModelConfig>* GetWaveModel(int ell) const {
+                auto it = massDependentWaves.find(ell);
+                if (it == massDependentWaves.end()) {
+                    return nullptr;
+                }
+
+                return &it->second;
             }
         };
 
@@ -145,9 +133,20 @@ namespace m2pw {
             TString refl_str;
             TString l_str;
             TString m_str;
+            TString base_name;
+            int ell_value = -1;
             bool isPhase;
             
             ParameterInfo(const TString& parName);
+        };
+
+        struct ParameterEvalPlan {
+            TString par_name;
+            TString base_name;
+            int ell_value = -1;
+            bool isPhase = false;
+            bool isMassDependent = false;
+            bool isSharedResonance = false;  // true for g_etapi, g_KK (same value across all mass bins)
         };
         
         // Constructor with both mass dependence and moments configuration
@@ -189,26 +188,40 @@ namespace m2pw {
         // Method to set/update configuration
         void SetMassDependenceConfig(const MassDependenceConfig& config);
         void SetMomentsConfig(const MomentsConfig& config);
+        void SetMinimizerPrintLevel(int level);
+        void SetMaxFunctionCalls(int maxCalls);
+        void SetMinimizerStrategy(int strategy);
+        void SetMinimizerTolerance(double tolerance);
+        void SetMaxIterations(int maxIterations);
+        
+        // Parallel execution control
+        void SetEnableParallelization(bool enable) { enableParallelization_ = enable; }
+        bool GetEnableParallelization() const { return enableParallelization_; }
+        void SetParallelDuringMinimization(bool enable) { parallelDuringMinimization_ = enable; }
+        bool GetParallelDuringMinimization() const { return parallelDuringMinimization_; }
+        
+        void SetNumThreads(int nthreads);  // Implementation in .cpp
+        int GetNumThreads() const { return numThreads_; }
         
         // Get current configuration
         const MassDependenceConfig& GetMassDependenceConfig() const { return massDependenceConfig_; }
         const MomentsConfig& GetMomentsConfig() const { return hMomentsConfig_; }
+        int GetMinimizerPrintLevel() const { return minimizerPrintLevel_; }
 
         // Static factory methods for common configurations
         static MassDependenceConfig CreateDefaultConfig() {
-            return MassDependenceConfig(); // l=2 mass dependent with a2_1320, l=0,1 mass independent
+            return MassDependenceConfig(); // ELL=2 mass dependent with a2_1320, ELL=0,1 mass independent
         }
 
         static MassDependenceConfig CreateDWaveTwoBreitWignerConfig() {
             MassDependenceConfig config;
             // Single D-wave model with two resonances: a2(1320) + a2(1700).
-            // Only one global phase is introduced and it rotates the a2(1700) term.
-            config.massDependentWaves[2] = {"a2_1320_a2_1700_phase"};
+            config.massDependentWaves[2] = {{"a2_1320_1700", MassDependenceConfig::ModelType::TwoBreitWignerPlusPolynomial}};
             config.massIndependentL = {0, 1};
             return config;
         }
         
-        static MassDependenceConfig CreateCustomConfig(const std::map<int, std::vector<TString>>& massDep,
+        static MassDependenceConfig CreateCustomConfig(const std::map<int, std::vector<MassDependenceConfig::WaveModelConfig>>& massDep,
                                                       const std::vector<int>& massIndep) {
             MassDependenceConfig config;
             config.massDependentWaves = massDep;
@@ -240,90 +253,68 @@ namespace m2pw {
             std::vector<TString> fixedParNames;  // For fixed parameters
             std::map<TString, int> nameToIndex;
             std::map<TString, std::pair<double, double>> parameterLimits;  // Optional per-parameter limits
+            std::map<TString, std::pair<double, double>> gaussianConstraints; // per-parameter gaussian constraint: mean,sigma
             std::vector<double> parErrors;  // Store parameter errors
             int totalNpars = 0;
             int randomSeed = -1;
+            TRandom3 rng{0};
             MassDependentFitter& fitter;  // Reference to parent fitter
 
             // Constructor
             ParameterManager(MassDependentFitter& f) : fitter(f) {}
 
-            // Add mass-independent parameters with random initialization
-            void AddMassIndependentParameters(int seed);
+            // Add mass-independent parameters for selected L values with random initialization.
+            void AddMassIndependentParameter(const std::vector<int>& targetELL,
+                                            const int seed);
 
-            // Add mass-independent parameters for specific L values from a result tree
-            void AddMassIndependentParametersForL(const std::vector<int>& targetL,
-                                                 const TString& resultTreeFile);
+            // Add mass-independent parameters for selected L values initialized from a result tree.
+            void AddMassIndependentParameter(const std::vector<int>& targetELL,
+                                            const TString filePath);
 
-            void AddMassIndependentParametersForL(const std::vector<int>& targetL,
-                                                 const std::vector<double>& massBins,
-                                                const TString& resultTreeFile);
-
-            void AddMassIndependentParametersForL(const std::vector<int>& targetL,
-                                                 const std::vector<double>& massBins,
-                                                const std::map<std::string, std::pair<double,double>>& init_values);
-            
-            void AddMassIndependentParametersForPhase(const std::vector<TString>& targetVariables);
-
-            void AddMassIndependentParametersForPhase(const TString& resultTreeFile,
-                                                 const std::vector<TString>& targetVariables);
-
-            // Add fixed mass-independent parameters for specific L values
-            void AddFixedMassIndependentParametersForL(const std::vector<int>& fixedL,
-                                                     const std::map<int, double>& fixedValues,
-                                                     bool magnitudeOnly = true);
-
-            // Add fixed mass-independent parameters for specific L and reflectivity (e.g., "1+", "2-")
-            void AddFixedMassIndependentParametersForL(const std::vector<std::string>& lReflectivities,
-                                                     const std::map<std::string, double>& fixedValues,
-                                                     bool magnitudeOnly = true);
-
-            void AddMassDependentParameters(int seed);
-
-            // Add parameters with values from a file
-            void AddMassDependentParameters(const TString filePath,
-                                          const bool isFixed);
-
-            // Add mass dependent parameters for specific waves with random initialization
-            void AddMassDependentParametersForL(const std::vector<int>& targetL,
+            // Add mass dependent parameters for specific waves with random initialization, options:
+            // option = 0: add coupling + shared resonance mass/width parameters (default)
+            // option = 1: option 0 + add shared global phase for all waves in the same L (e.g., "2+")
+            // option = 2: option 0 + add shared global phase for all waves in the same L with the same reflectivity
+            // option = 3: legacy alias of option 0
+            void AddMassDependentParameter(const std::vector<int>& targetELL,
                                           const int seed,
-                                          const bool magnitudeOnly,
-                                          const bool isFixed,
-                                          const bool yieldOnly = false);
+                                          const int option);
 
-            // Add mass dependent parameters for specific waves from a result tree
-            void AddMassDependentParametersForL(const std::vector<int>& targetL,
+            // Add mass dependent parameters for specific waves with initialization from result tree, options:
+            // option = 0: add coupling + shared resonance mass/width parameters (default)
+            // option = 1: option 0 + add shared global phase for all waves in the same L (e.g., "2+")
+            // option = 2: option 0 + add shared global phase for all waves in the same L with the same reflectivity
+            // option = 3: legacy alias of option 0
+    
+            void AddMassDependentParameter(const std::vector<int>& targetELL,
                                           const TString filePath,
-                                          const bool magnitudeOnly,
-                                          const bool isFixed,
-                                          const bool yieldOnly = false);
+                                          const int option);
 
-            void AddMassDependentParametersForL(const std::vector<TString>& targetL,
-                                          const int seed,
-                                          const bool magnitudeOnly,
-                                          const bool isFixed,
-                                          const bool yieldOnly = false);
-            
-            void AddMassDependentParametersForL(const std::vector<TString>& targetL,
-                                          const TString filePath,
-                                          const bool magnitudeOnly,
-                                          const bool isFixed,
-                                          const bool yieldOnly = false);
+            // Build list of parameter type names for a given function type/index
+            std::vector<TString> BuildParamTypesForWave(int funcType, int funcIndex) const;
 
             bool SetParameterInitialValue(const TString& parName, double value);
             bool SetInitialValue(const TString& parName, double value, bool isFixed);
             bool SetParameterLimits(const TString& parName, double lower, double upper);
             void SetParameterInitialValues(const std::map<TString, double>& values);
             void SetParameterLimitsBatch(const std::map<TString, std::pair<double, double>>& limits);
+            bool SetGaussianConstraint(const TString& parName, double mean, double sigma);
+
+            // Configure generalized Breit-Wigner reference values used when M/width are not supplied explicitly.
+            bool ConfigureBreitWignerDefaultsForWave(const TString& waveName, double mass, double width);
+            int ConfigureBreitWignerDefaults(int ellValue, double mass, double width);
 
             std::map<std::string, std::pair<double,double>> GetAmplitudeValuesAtMassBins(
-                const std::vector<int>& targetL,
+                const std::vector<int>& targetELL,
                 double massBinCenter);
 
             std::vector<double> GetValues() const;
+
+            void PrintParameters() const;
             
             // Store results from minimizer including errors
             void StoreResults(const ROOT::Math::Minimizer* minimizer);
+
         };
 
         void MakeResultTree(const ParameterManager& paramManager, const TString& fileName) const;
@@ -333,13 +324,16 @@ namespace m2pw {
         private:
             MassDependentFitter& fitter_;
             const std::vector<TString>& parIndexNames_;
+            const ParameterManager* paramManager_ = nullptr;
             mutable std::map<TString, std::vector<double>> massDepPars_;
             mutable std::map<TString, std::map<TString, std::vector<double>>> massIndepPars_;
+            mutable std::map<TString, double> currentValues_;
 
         public:
             Chi2Function(MassDependentFitter& fitter, 
-                        const std::vector<TString>& parIndexNames)
-                : fitter_(fitter), parIndexNames_(parIndexNames) {}
+                        const std::vector<TString>& parIndexNames,
+                        const ParameterManager& paramManager)
+                : fitter_(fitter), parIndexNames_(parIndexNames), paramManager_(&paramManager) {}
 
             double operator()(const double* mass_dep_pars) const;
 
@@ -362,6 +356,11 @@ private:
     MassDependenceConfig massDependenceConfig_;
     MomentsConfig hMomentsConfig_;  // Configuration for moment selection
     std::map<TString, int> waveToFunctionIndex_;  // Maps wave names to function indices
+    std::map<double, std::vector<int>> equationLCache_;  // Parsed L for each equation, per mass bin
+    std::map<double, std::vector<ParameterInfo>> parameterInfoCache_;  // Parsed parameter metadata per mass bin
+    std::map<double, std::vector<ParameterEvalPlan>> parameterEvalPlanCache_;  // Preclassified parameter evaluation plan per mass bin
+    std::map<int, bool> massDependentEllCache_;  // Fast lookup for mass-dependent ell values
+    std::map<int, std::vector<TString>> massDependentWaveNamesCache_;  // Fast lookup for wave names by ell
 
     // Caching for performance
     mutable double lastChi2_ = 0.0;
@@ -370,11 +369,30 @@ private:
 
     // Minimizer status and validity
     bool minimizerIsValid_ = false;
+    bool minimizerHasValidErrors_ = false;
     int minimizerStatus_ = -1;
+    int minimizerPrintLevel_ = 0;
+    int maxFunctionCalls_ = 1000000;
+    int minimizerStrategy_ = 1;
+    double minimizerTolerance_ = 1e-3;
+    int maxIterations_ = 100000;
+    
+    // Parallel execution control
+    bool enableParallelization_ = true;  // Enable/disable parallel chi2 evaluation
+    int numThreads_ = 0;  // Number of threads (0 = auto policy, >0 = explicit count)
+    bool parallelDuringMinimization_ = false;  // Default off: minimizer gradients are usually faster sequentially
+    mutable bool inMinimization_ = false;  // Internal state flag for DoEval behavior
 
     // Helper methods
     void InitializeMassBins(const std::vector<double>& mass_bins);
     void InitializeMDFunctions();
+    void BuildEquationLCache();
+    void BuildParameterInfoCache();
+    void BuildMassDependenceLookupCache();
+    void BuildParameterEvalPlanCache();
+
+    bool IsMassDependentEll(int ell_value) const;
+    const std::vector<TString>& GetMassDependentWaveNames(int ell_value) const;
 
     std::unique_ptr<ParameterInfo> ParseParameterName(const TString& parName) const;
 
@@ -382,15 +400,10 @@ private:
     double EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const;
 
     // Helper methods for amplitude-level evaluation (single or multiple waves)
-    double GetAmplitudeMagnitude(double mass_bin,
-                                const TString& par_name,
-                                const std::map<TString, std::vector<double>>& massDepPars,
-                                int l_value) const;
-
-    double GetAmplitudePhase(double mass_bin,
-                            const TString& base_name,
-                            const std::map<TString, std::vector<double>>& massDepPars,
-                            int l_value) const;
+    std::complex<double> GetCombinedAmplitude(double mass_bin,
+                                              const TString& par_name,
+                                              const std::map<TString, std::vector<double>>& massDepPars,
+                                              int ell_value) const;
 
     // Helper method to map wave names to function indices
     int GetFunctionIndexForWave(const TString& waveName) const;
@@ -399,7 +412,7 @@ private:
     int ExtractLFromEquationName(const TString& eqnName) const;
 
     // Helper method to determine if parameters for a given L are needed based on H moments config
-    bool ParameterNeededForMoments(int l, const MomentsConfig& hConfig) const;
+    bool ParameterNeededForMoments(int ell_value, const MomentsConfig& hConfig) const;
     };
 
     // Implementation of inline methods
@@ -410,8 +423,12 @@ private:
             refl_str = ((TObjString*)parts->At(0))->GetString();
             l_str = ((TObjString*)parts->At(1))->GetString();
             m_str = ((TObjString*)parts->At(2))->GetString();
+            ell_value = l_str.Atoi();
             isPhase = (refl_str == "aphi" || refl_str == "bphi");
         }
+
+        base_name = name;
+        base_name.ReplaceAll("phi", "");
     }
    
 }

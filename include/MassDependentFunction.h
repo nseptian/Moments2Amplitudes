@@ -34,6 +34,10 @@ namespace m2pw{
         }
 
         // Vector parameter version (main implementation)
+        complex<double> GetAmplitude(double mass, const vector<double>& params, bool include_globalphase = false) const {
+            return ComputeAmplitude(mass, params, include_globalphase);
+        }
+
         double GetPWMagnitude(double mass, const vector<double>& params, bool include_globalphase = false) const {
             complex<double> amp = GetAmplitude(mass, params, include_globalphase);
             return abs(amp);
@@ -51,51 +55,56 @@ namespace m2pw{
         int GetPolyOrder() const { return _PolyOrder; }
         
         // Get number of parameters needed for this function type
+        // If _PolyOrder == -1 the polynomial block is disabled and contributes 0 parameters.
         int GetNParameters() const {
-            if (_FuncType == 4) {  // Conformal polynomial
-                return 2*(_PolyOrder + 1);  // (re_i, im_i) for i=0 to N
-            } else if (_FuncType == 5) {  // Flatté + conformal polynomial
-                return 3 + 2*(_PolyOrder + 1);  // scale, g_etapi, g_KK + polynomial coeffs
-            } else if (_FuncType == 2) {  // Flatté
-                return 3;  // g1, g2, M0
-            } else if (_FuncType == 6) {  // Coherent sum of two Breit-Wigners
-                return 6; // k1, M1, width1, k2, M2, width2 (global phase handled separately)
-            } else {  // Breit-Wigner
-                return 3;  // k, M, width
+            int base = 0;
+            switch (_FuncType) {
+                case 0: // Polynomial (pure conformal polynomial)
+                    base = 0;
+                    break;
+                case 1: // Flatté + polynomial
+                    base = 4; // k, g_etapi, g_KK, Mass
+                    break;
+                case 2: // Breit-Wigner + polynomial
+                    base = 3; // k, M, width
+                    break;
+                case 3: // Two Breit-Wigner + polynomial
+                    base = 6; // k1, M1, width1, k2, M2, width2
+                    break;
+                case 4: // Flatte + Breit-Wigner + polynomial
+                    base = 7; // k_fl, g_etapi, g_KK, M_fl, k_bw, M_bw, width_bw
+                    break;
+                default:
+                    base = 3;
+                    break;
             }
-        }
 
-        // Get resonance mass based on function type
-        double GetResonanceMass() const {
-            if (_FuncType == 0) return 1.3182;      // a2(1320)
-            else if (_FuncType == 1) return 1.706;  // a2(1700)
-            else if (_FuncType == 2) return 1.001;  // a0(980) bare mass
-            else if (_FuncType == 3) return 1.354;  // pi1(1400)
-            else if (_FuncType == 4) return 0.98;   // Conformal polynomial expansion point (a0(980))
-            else if (_FuncType == 5) return 0.98;   // Flatté + conformal poly (a0(980))
-            else return 1.5;  // Default
-        }
+            int polyBlock = 0;
+            if (_PolyOrder >= 0) {
+                // polynomial block layout: m_threshold, m_expansion, then 2*(order+1) real/imag coefficients
+                polyBlock = 2 + 2*(_PolyOrder + 1);
+            }
 
-        // Get resonance width based on function type
-        double GetResonanceWidth() const {
-            if (_FuncType == 0) return 0.107;       // a2(1320)
-            else if (_FuncType == 1) return 0.380;  // a2(1700)
-            else if (_FuncType == 2) return 0.075;  // a0(980) - approximate width
-            else if (_FuncType == 3) return 0.330;  // pi1(1400)
-            else if (_FuncType == 4) return 0.683;  // Conformal polynomial threshold (η + π⁰)
-            else if (_FuncType == 5) return 0.683;  // Flatté + conformal poly threshold (η + π⁰)
-            else return 0.15;  // Default
+            if (_FuncType == 0) {
+                return polyBlock; // pure polynomial function
+            }
+
+            return base + polyBlock;
         }
 
     private:
+        static constexpr double kDefaultFlatteMass = 1.001;
+        static constexpr double kPolynomialThresholdMass = 0.683;
+        static constexpr double kPolynomialExpansionMass = 0.98;
+
         int _NMassBins = 0;
         double _FirstMassBinCenter = 0.0;
         double _MassBinWidth = 0.0;
         int _FuncType = 0;
-        int _PolyOrder = 2;  // Polynomial order for conformal polynomial (FuncType=4)
+        int _PolyOrder = 2;  // Polynomial order for conformal polynomial (used when ModelType indicates polynomial)
 
         // Core amplitude calculation
-        complex<double> GetAmplitude(double mass, const vector<double>& params, bool include_globalphase) const {
+        complex<double> ComputeAmplitude(double mass, const vector<double>& params, bool include_globalphase) const {
             if (params.empty()) {
                 return complex<double>(0.0, 0.0);
             }
@@ -108,54 +117,175 @@ namespace m2pw{
 
             vector<double> coreParams = params;
             double phase = 0.0;
+            double phase_flatte = 0.0;
+            double phase_bw = 0.0;
             if (include_globalphase && params.size() > 1) {
-                phase = params.back();
-                coreParams.pop_back();
+                if (_FuncType == 4 && params.size() > 2) {
+                    // case-4 uses two independent phases appended in order: [phase_flatte, phase_bw]
+                    phase_bw = coreParams.back();
+                    coreParams.pop_back();
+                    phase_flatte = coreParams.back();
+                    coreParams.pop_back();
+                } else {
+                    phase = coreParams.back();
+                    coreParams.pop_back();
+                }
             }
 
             if (coreParams.empty()) {
                 return complex<double>(0.0, 0.0);
             }
+            // Determine whether a polynomial block is present in the parameters.
+            const bool hasPoly = (_PolyOrder >= 0);
+            const int polyBlockSize = hasPoly ? (2 + 2*(_PolyOrder + 1)) : 0; // threshold, expansion, coeffs
 
             switch (_FuncType) {
-                case 0:  // a2(1320) - Breit-Wigner
-                case 1:  // a2(1700) - Breit-Wigner  
-                case 3:  // pi1(1400) - Breit-Wigner
+                case 0:  // Polynomial (pure conformal polynomial)
                     {
-                    double k = coreParams[0];
-                    return GetBreitWignerAmplitude(mass, k, coreParams)*exp(complex<double>(0, phase));
+                        // Pure polynomial function: expect [m_threshold, m_expansion, coeffs...]
+                        if (coreParams.size() < 4) {
+                            return complex<double>(0.0, 0.0);
+                        }
+                        const double m_threshold = coreParams[0];
+                        const double m_expansion = coreParams[1];
+                        vector<double> polyParams(coreParams.begin() + 2, coreParams.end());
+                        return GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion) * exp(complex<double>(0, phase));
                     }
-                    
-                case 2:  // a0(980) - Flatté
+
+                case 1: // Flatté + optional polynomial
                     {
-                    double k = coreParams[0];
-                    return GetFlatteAmplitude(mass, k, coreParams)*exp(complex<double>(0, phase));
+                        // Flatté base layout without polynomial: [k, g_etapi, g_KK, Mass]
+                        const int baseReq = 4; // k + tail (g_etapi,g_KK,Mass)
+                        if (coreParams.size() < static_cast<size_t>(baseReq)) return complex<double>(0.0, 0.0);
+
+                        double k = coreParams[0];
+                        // If no polynomial block, behave as pure Flatté
+                        if (!hasPoly) {
+                            vector<double> flatteParams(coreParams.begin(), coreParams.begin() + baseReq);
+                            return GetFlatteAmplitude(mass, k, flatteParams) * exp(complex<double>(0, phase));
+                        }
+
+                        // Try to detect polynomial block placement.
+                        // Pattern A: k, m_threshold, m_expansion, polyCoeffs..., g_etapi,g_KK,Mass
+                        const size_t sharedTailSize = 3;
+                        if (coreParams.size() >= static_cast<size_t>(3 + polyBlockSize + sharedTailSize)) {
+                            const size_t sharedTailStart = coreParams.size() - sharedTailSize;
+                            double m_threshold = coreParams[1];
+                            double m_expansion = coreParams[2];
+                            vector<double> polyParams(coreParams.begin() + 3, coreParams.begin() + sharedTailStart);
+                            vector<double> flatteTail(coreParams.begin() + sharedTailStart, coreParams.end());
+                            vector<double> fullFlatteParams = {k, flatteTail[0], flatteTail[1], flatteTail[2]};
+                            complex<double> flatteTerm = GetFlatteAmplitude(mass, k, fullFlatteParams);
+                            // Note: GetFlatteAmplitude expects [k,g_etapi,g_KK,Mass]; we constructed an approximate tail here.
+                            complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
+                            return flatteTerm * exp(complex<double>(0, phase)) + polyAmp;
+                        }
+
+                        // Pattern B: k, [poly block], g_etapi,g_KK,Mass (poly inserted after k)
+                        const size_t polyStart = 1; // after k
+                        const size_t polyEnd = coreParams.size() - (baseReq - 1); // leave tail (g_etapi,g_KK,Mass)
+                        if (polyEnd <= polyStart) {
+                            vector<double> flatteParams(coreParams.begin(), coreParams.begin() + baseReq);
+                            return GetFlatteAmplitude(mass, k, flatteParams) * exp(complex<double>(0, phase));
+                        }
+                        if (polyEnd - polyStart != static_cast<size_t>(polyBlockSize)) {
+                            vector<double> flatteParams(coreParams.begin(), coreParams.begin() + baseReq);
+                            return GetFlatteAmplitude(mass, k, flatteParams) * exp(complex<double>(0, phase));
+                        }
+
+                        double m_threshold = coreParams[polyStart];
+                        double m_expansion = coreParams[polyStart + 1];
+                        vector<double> polyParams(coreParams.begin() + polyStart + 2, coreParams.begin() + polyEnd);
+                        vector<double> flatteParams(coreParams.begin(), coreParams.begin() + 1); // only k
+                        flatteParams.push_back(coreParams[polyEnd]); // g_etapi
+                        flatteParams.push_back(coreParams[polyEnd + 1]); // g_KK
+                        flatteParams.push_back(coreParams[polyEnd + 2]); // Mass
+
+                        complex<double> flatteAmp = GetFlatteAmplitude(mass, k, flatteParams) * exp(complex<double>(0, phase));
+                        complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
+                        return flatteAmp + polyAmp;
                     }
-                    
-                case 4:  // Conformal polynomial
-                    return GetConformalPolynomialAmplitude(mass, coreParams)*exp(complex<double>(0, phase));
-                    
-                case 5:  // Flatté + conformal polynomial
-                    return GetFlattePlusConformalAmplitude(mass, coreParams)*exp(complex<double>(0, phase));
 
-                case 6: // a2(1320) + a2(1700) coherent sum
+                case 2:  // Breit-Wigner + optional polynomial
                     {
-                        const double k1 = (coreParams.size() >= 1) ? coreParams[0] : 0.0;
-                        const double M1 = (coreParams.size() >= 2) ? coreParams[1] : 1.3182;
-                        const double w1 = (coreParams.size() >= 3) ? coreParams[2] : 0.107;
+                        // Base BW expects [k, M, width] then optional poly block appended
+                        const int baseReq = 3;
+                        if (coreParams.size() < static_cast<size_t>(baseReq)) return complex<double>(0.0, 0.0);
+                        double k = coreParams[0];
+                        vector<double> bwParams(coreParams.begin(), coreParams.begin() + baseReq);
+                        complex<double> bwAmp = GetBreitWignerAmplitude(mass, k, bwParams) * exp(complex<double>(0, phase));
 
-                        const double k2 = (coreParams.size() >= 4) ? coreParams[3] : 0.0;
-                        const double M2 = (coreParams.size() >= 5) ? coreParams[4] : 1.706;
-                        const double w2 = (coreParams.size() >= 6) ? coreParams[5] : 0.380;
+                        if (!hasPoly) return bwAmp;
+
+                        // Extract polynomial block appended after base params
+                        if (coreParams.size() < static_cast<size_t>(baseReq + polyBlockSize)) return bwAmp;
+                        double m_threshold = coreParams[baseReq];
+                        double m_expansion = coreParams[baseReq + 1];
+                        vector<double> polyParams(coreParams.begin() + baseReq + 2, coreParams.begin() + baseReq + polyBlockSize);
+                        complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
+                        return bwAmp + polyAmp;
+                    }
+
+                case 3: // Coherent sum of two Breit-Wigners + optional polynomial
+                    {
+                        if (coreParams.size() < 6) {
+                            return complex<double>(0.0, 0.0);
+                        }
+
+                        const double k1 = coreParams[0];
+                        const double M1 = coreParams[1];
+                        const double w1 = coreParams[2];
+
+                        const double k2 = coreParams[3];
+                        const double M2 = coreParams[4];
+                        const double w2 = coreParams[5];
 
                         const double s = mass * mass;
                         const complex<double> denom1(M1 * M1 - s, -M1 * w1);
                         const complex<double> denom2(M2 * M2 - s, -M2 * w2);
 
-                        // a2(1320) phase is fixed to 0; optional global phase rotates only a2(1700).
-                        complex<double> amp_1320 = k1 / denom1;
-                        complex<double> amp_1700 = (k2 / denom2) * exp(complex<double>(0, phase));
-                        return amp_1320 + amp_1700;
+                        // resonance 1 phase is fixed to 0; optional global phase rotates only resonance 2.
+                        complex<double> amp_1 = k1 / denom1;
+                        complex<double> amp_2 = (k2 / denom2) * exp(complex<double>(0, phase));
+                        complex<double> baseAmp = amp_1 + amp_2;
+
+                        if (!hasPoly) return baseAmp;
+
+                        // If polynomial block present, it is expected appended after base params
+                        const size_t baseReq = 6;
+                        if (coreParams.size() < static_cast<size_t>(baseReq + polyBlockSize)) return baseAmp;
+                        double m_threshold = coreParams[baseReq];
+                        double m_expansion = coreParams[baseReq + 1];
+                        vector<double> polyParams(coreParams.begin() + baseReq + 2, coreParams.begin() + baseReq + polyBlockSize);
+                        complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
+                        return baseAmp + polyAmp;
+                    }
+
+                case 4: // Coherent sum of Flatté + Breit-Wigner + optional polynomial
+                    {
+                        // Flatté part expects [k, g_etapi, g_KK, Mass], BW part expects [k, M, width], then optional poly block appended
+                        const int flatteReq = 4;
+                        const int bwReq = 3;
+                        if (coreParams.size() < static_cast<size_t>(flatteReq + bwReq)) return complex<double>(0.0, 0.0);
+
+                        double k_fl = coreParams[0];
+                        vector<double> flatteParams(coreParams.begin(), coreParams.begin() + flatteReq);
+                        complex<double> flatteAmp = GetFlatteAmplitude(mass, k_fl, flatteParams) * exp(complex<double>(0, phase_flatte));
+
+                        double k_bw = coreParams[flatteReq];
+                        vector<double> bwParams(coreParams.begin() + flatteReq, coreParams.begin() + flatteReq + bwReq);
+                        complex<double> bwAmp = GetBreitWignerAmplitude(mass, k_bw, bwParams) * exp(complex<double>(0, phase_bw));
+
+                        complex<double> baseAmp = flatteAmp + bwAmp;
+
+                        // If polynomial block present, it is expected appended after base params
+                        const size_t baseReq = flatteReq + bwReq;
+                        if (coreParams.size() < static_cast<size_t>(baseReq + polyBlockSize)) return baseAmp;
+                        double m_threshold = coreParams[baseReq];
+                        double m_expansion = coreParams[baseReq + 1];
+                        vector<double> polyParams(coreParams.begin() + baseReq + 2, coreParams.begin() + baseReq + polyBlockSize);
+                        complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
+                        return baseAmp + polyAmp;
                     }
                     
                 default:
@@ -163,11 +293,15 @@ namespace m2pw{
             }
         }
 
-        // Unified Breit-Wigner calculation for cases 0, 1, 3
+        // Unified Breit-Wigner calculation
         complex<double> GetBreitWignerAmplitude(double mass, double k, const vector<double>& params) const {
-            // Get mass and width - either from params or defaults
-            double M = (params.size() >= 2) ? params[1] : GetResonanceMass();
-            double width = (params.size() >= 3) ? params[2] : GetResonanceWidth();
+            // Require explicit mass and width from parameters.
+            if (params.size() < 3) {
+                return complex<double>(0.0, 0.0);
+            }
+
+            double M = params[1];
+            double width = params[2];
             
             double s = mass * mass;
             double M_sq = M * M;
@@ -179,9 +313,13 @@ namespace m2pw{
 
         // Flatté amplitude for case 2
         complex<double> GetFlatteAmplitude(double mass, double k, const vector<double>& params) const {
-            double g1 = k;  // coupling to ηπ
-            double g2 = (params.size() >= 2) ? params[1] : 0.340 * g1;  // coupling to KK̄
-            double M0 = (params.size() >= 3) ? params[2] : GetResonanceMass();  // bare mass
+            if (params.size() < 4) {
+                return complex<double>(0.0, 0.0);
+            }
+
+            double g_etapi = params[1];
+            double g_KK = params[2];
+            double M0 = params[3];
             
             double s = mass * mass;
             double M0_sq = M0 * M0;
@@ -191,8 +329,8 @@ namespace m2pw{
             double rho_KK = GetPhaseSpaceFactor(mass, 0.493677, 0.493677);   // K-K
             
             // Flatté denominator: M₀² - s - i(g₁²ρ₁ + g₂²ρ₂)
-            complex<double> denominator(M0_sq - s, -(g1*g1*rho_etapi + g2*g2*rho_KK));
-            return g1 / denominator;
+            complex<double> denominator(M0_sq - s, -(g_etapi*g_etapi*rho_etapi + g_KK*g_KK*rho_KK));
+            return k / denominator;
         }
         
         // Phase space factor: ρ = 2k/√s
@@ -209,8 +347,12 @@ namespace m2pw{
             return 2.0 * k / mass;
         }
 
-        // Conformal polynomial amplitude for case 4
-        complex<double> GetConformalPolynomialAmplitude(double mass, const vector<double>& params) const {
+        // Polynomial amplitude (conformal mapping basis)
+        complex<double> GetConformalPolynomialAmplitude(
+            double mass,
+            const vector<double>& params,
+            double thresholdMass = kPolynomialThresholdMass,
+            double expansionMass = kPolynomialExpansionMass) const {
             // Parameters structure:
             // params[0] = re_0 (real part of z^0 coefficient)
             // params[1] = im_0 (imag part of z^0 coefficient)
@@ -219,16 +361,20 @@ namespace m2pw{
             // ... and so on for higher orders
             
             // Default conformal parameters
-            double m_threshold = GetResonanceWidth();  // threshold mass (η + π⁰)
+            double m_threshold = thresholdMass;  // threshold mass (η + π⁰)
             double s_min = m_threshold * m_threshold;  // threshold in s
-            double m_expansion = GetResonanceMass();   // expansion point mass (a0(980))
+            double m_expansion = expansionMass;   // expansion point mass
             double s_0 = m_expansion * m_expansion;    // expansion point in s
             
-            // Compute conformal variable z
+            // Compute canonical conformal variable z using threshold-shifted sqrt(s - s_min)
             double s = mass * mass;
-            double sqrt_s = mass;
+            double sqrt_s_minus_smin = 0.0;
+            if (s > s_min) {
+                sqrt_s_minus_smin = TMath::Sqrt(s - s_min);
+            }
             double sqrt_s0_minus_smin = TMath::Sqrt(s_0 - s_min);
-            double z = (sqrt_s - sqrt_s0_minus_smin) / (sqrt_s + sqrt_s0_minus_smin);
+            double z = (sqrt_s_minus_smin - sqrt_s0_minus_smin) /
+                       (sqrt_s_minus_smin + sqrt_s0_minus_smin);
             
             // Build polynomial: sum_{i=0}^{N} (re_i + i*im_i) * z^i
             complex<double> amplitude(0.0, 0.0);
@@ -258,84 +404,6 @@ namespace m2pw{
             return amplitude;
         }
 
-        // Flatté + conformal polynomial amplitude for case 5
-        complex<double> GetFlattePlusConformalAmplitude(double mass, const vector<double>& params) const {
-            // Parameters structure:
-            // params[0] = scale (scale factor for Flatté amplitude)
-            // params[1] = g_etapi (coupling to ηπ channel)
-            // params[2] = g_KK (coupling to KK̄ channel)
-            // params[3] = re_0 (real part of z^0 coefficient)
-            // params[4] = im_0 (imag part of z^0 coefficient)
-            // params[5] = re_1 (real part of z^1 coefficient)
-            // params[6] = im_1 (imag part of z^1 coefficient)
-            // ... and so on for higher orders
-            
-            if (params.size() < 5) {  // Minimum: scale, g_etapi, g_KK, re_0, im_0
-                return complex<double>(0.0, 0.0);
-            }
-            
-            // Extract Flatté parameters
-            double scale = params[0];
-            double g_etapi = params[1];
-            double g_KK = params[2];
-            double m0 = GetResonanceMass();  // Fixed at 0.98 GeV for a0(980)
-            
-            // Compute Flatté amplitude
-            double s = mass * mass;
-            double M0_sq = m0 * m0;
-            
-            // Phase space factors with proper analytic continuation below threshold
-            double m_etapi_threshold = 0.683;  // η + π⁰ threshold in GeV
-            double m_KK_threshold = 0.987354;  // K + K̄ threshold in GeV
-            
-            // η-π channel: m_η = 0.547853, m_π = 0.13957
-            complex<double> rho_etapi = GetComplexPhaseSpaceFactor(mass, 0.547853, 0.13957);
-            // K-K̄ channel: m_K = 0.493677
-            complex<double> rho_KK = GetComplexPhaseSpaceFactor(mass, 0.493677, 0.493677);
-            
-            // Flatté denominator: M₀² - s - i*m₀*(g_ηπ²*ρ_ηπ + g_KK²*ρ_KK)
-            complex<double> width_term = m0 * (g_etapi * g_etapi * rho_etapi + g_KK * g_KK * rho_KK);
-            complex<double> denominator(M0_sq - s, 0.0);
-            denominator -= complex<double>(0.0, 1.0) * width_term;
-            
-            complex<double> A_flatte = scale / denominator;
-            
-            // Compute conformal polynomial background
-            double m_threshold = GetResonanceWidth();  // threshold mass (η + π⁰)
-            double s_min = m_threshold * m_threshold;
-            double m_expansion = GetResonanceMass();   // expansion point (a0(980))
-            double s_0 = m_expansion * m_expansion;
-            
-            // Conformal variable z
-            double sqrt_s = mass;
-            double sqrt_s0_minus_smin = TMath::Sqrt(s_0 - s_min);
-            double z = (sqrt_s - sqrt_s0_minus_smin) / (sqrt_s + sqrt_s0_minus_smin);
-            
-            // Build polynomial from remaining parameters
-            complex<double> A_poly(0.0, 0.0);
-            int poly_start = 3;  // Polynomial coefficients start at index 3
-            int n_poly_params = params.size() - poly_start;
-            
-            if (n_poly_params >= 2) {
-                int order = n_poly_params / 2 - 1;
-                double z_power = 1.0;
-                
-                for (int i = 0; i <= order; ++i) {
-                    size_t re_idx = poly_start + 2*i;
-                    size_t im_idx = poly_start + 2*i + 1;
-                    
-                    if (re_idx < params.size() && im_idx < params.size()) {
-                        complex<double> coeff(params[re_idx], params[im_idx]);
-                        A_poly += coeff * z_power;
-                        z_power *= z;
-                    }
-                }
-            }
-            
-            // Total amplitude: A(s) = scale * A_Flatté(s) + A_poly(z)
-            return A_flatte + A_poly;
-        }
-        
         // Complex phase space factor with analytic continuation below threshold
         complex<double> GetComplexPhaseSpaceFactor(double mass, double m1, double m2) const {
             double s = mass * mass;

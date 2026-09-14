@@ -39,9 +39,16 @@ void H_odd_model(int seed=0){
     std::vector<double> massBins = massDepMoments.GetMassBins();
 
     using namespace m2pw;
+    using MDModel = MassDependentFitter::MassDependenceConfig::ModelType;
+    using WaveModelConfig = MassDependentFitter::MassDependenceConfig::WaveModelConfig;
     
     // auto a2_1320_config = MassDependentFitter::CreateDefaultConfig();
-    auto pi1_1400_a2_1320_config = MassDependentFitter::CreateCustomConfig({{1, {"pi1_1400"}}, {2, {"a2_1320"}}}, {0});
+    auto pi1_1400_a2_1320_config = MassDependentFitter::CreateCustomConfig(
+        {
+            {1, {WaveModelConfig{"pi1_1400", MDModel::BreitWigner}}},
+            {2, {WaveModelConfig{"a2_1320", MDModel::BreitWigner}}}
+        },
+        {0});
     // auto H24_config = MassDependentFitter::CreateL2L4OnlyConfig();
     // auto H024_config = MassDependentFitter::CreateL0L2L4OnlyConfig();
     auto allMoments_config = MassDependentFitter::CreateIncludeAllConfig();
@@ -61,18 +68,9 @@ void H_odd_model(int seed=0){
 
     // paramManager.AddMassIndependentParametersForPhase(a_1_m1_file,
     //                                             std::vector<TString>{"aphi_1_-1"});
-    
-    paramManager.AddMassDependentParametersForL(std::vector<int>{2}, 
-                                          D_waves_model_file, 
-                                          false,
-                                          false,
-                                          true);
 
-    paramManager.AddMassDependentParametersForL(std::vector<int>{1}, 
-                                          seed, 
-                                          false,
-                                          false,
-                                          true);
+    paramManager.AddMassDependentParameter(std::vector<int>{2}, D_waves_model_file, 0);
+    paramManager.AddMassDependentParameter(std::vector<int>{1}, seed, 0);
 
     // paramManager.AddMassIndependentParametersForPhase(fitter.GetMassBins(),
                                                 // fitter.GetParNames(),
@@ -108,10 +106,7 @@ void H_odd_model(int seed=0){
     
     std::vector<int> initializedL = {0};
     const TString S_waves_file = "/d/home/septian/Moments2Amplitudes/macros/result_tree_BWa2_freeSWaves_ZeroPWaves_322_nominal_t010030.root";
-    paramManager.AddMassIndependentParametersForL(fitter.GetMassBins(),
-                                                fitter.GetParNames(),
-                                                initializedL,
-                                                S_waves_file);
+    paramManager.AddMassIndependentParameter(initializedL, S_waves_file);
 
     // paramManager.AddMassIndependentParameters(fitter.GetMassBins(), 
     //                                           fitter.GetParNames(), 
