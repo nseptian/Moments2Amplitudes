@@ -36,7 +36,8 @@ sys.path.append(Moments_config_dir)
 from Config_IO_test import (
   AnalysisConfig,
   BEAM_POL_INFOS,
-  CFG_IO_TEST_LMAX4_ZEROPWAVES
+  CFG_IO_TEST_LMAX4_ZEROPWAVES,
+  CFG_IO_TEST_LMAX4_WITHPWAVES
 )
 from MomentCalculator import (
   DataSet,
@@ -318,7 +319,7 @@ CPP_CODE_IS_IN_EFFICIENCY_HOLES = """
 
 
 if __name__ == "__main__":
-  cfg = deepcopy(CFG_IO_TEST_LMAX4_ZEROPWAVES)  # perform analysis of Nizar's polarized eta pi0 data
+  cfg = deepcopy(CFG_IO_TEST_LMAX4_WITHPWAVES)  # perform analysis of Nizar's polarized eta pi0 data
   subsystemLabel = "EtaPi0"
   os.chdir(Mom2Amp_dir)  # Change to the Moments directory
   dataDirBaseName = cfg.dataDirBaseName

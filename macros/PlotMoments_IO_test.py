@@ -39,7 +39,8 @@ sys.path.append(Moments_config_dir)
 
 from Config_IO_test import (
   AnalysisConfig,
-  CFG_IO_TEST_LMAX4_ZEROPWAVES
+  CFG_IO_TEST_LMAX4_ZEROPWAVES,
+  CFG_IO_TEST_LMAX4_WITHPWAVES
 )
 import MomentCalculator
 from MomentCalculator import (
@@ -715,7 +716,7 @@ def _runAnalysisConfigurationInSeparateProcess(
 
 
 if __name__ == "__main__":
-  cfg = deepcopy(CFG_IO_TEST_LMAX4_ZEROPWAVES)  # perform analysis of Nizar's polarized eta pi0 data
+  cfg = deepcopy(CFG_IO_TEST_LMAX4_WITHPWAVES)  # perform analysis of Nizar's polarized eta pi0 data
   os.chdir(Mom2Amp_dir)  # Change to the Moments directory
 
   compareTo = None
@@ -731,8 +732,8 @@ if __name__ == "__main__":
   beamPolLabels = ("All", )
   maxLs = (
     4,
-    # 6,
-    # 8,
+    6,
+    8,
   )
   plotCompareUncert = True
   # plotCompareUncert = False
