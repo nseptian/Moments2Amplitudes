@@ -1,37 +1,39 @@
 # Moments2Amplitudes
 
-[![DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/nseptian/Moments2Amplitudes)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/nseptian/Moments2Amplitudes)
 
-Tools for **mass-dependent partial wave analysis (PWA) of two-pseudoscalar meson photoproduction** — specifically $\eta\pi^0$ produced in polarized photon-proton collisions. The name reflects the full pipeline: starting from measured angular **Moments** (obtained via brufit MCMC), then fitting mass-dependent **Amplitudes** to the output.
+Tools for **mass-dependent modeling of angular moments of two-pseudoscalar mesons produced in polarized photon-proton collisions** (such as $\eta\pi^0$). 
 
-Inspired by and compatible with [brufit](https://github.com/dglazier/brufit/tree/R6.34Test/tutorials/PhotoAmps/TwoSpin0AmpsFromMoments) and the [Moments](https://github.com/bgrube/Moments) framework.
+The main goal is to extract partial wave amplitudes by fitting mass-dependent, physically-motivated parameterizations directly to the estimated physical moments and covariance matrices produced by the [brufit](https://github.com/dglazier/brufit/tree/R6.34Test) MCMC sampler — going from **Moments to Amplitudes**.
 
 ---
 
 ## Physics Overview
 
-The angular distribution of $\gamma p \to \eta\pi^0 p$ events can be decomposed into a set of angular moments $H(L, M)$ — bilinear combinations of the underlying partial wave amplitudes $T_{J,m}^{\epsilon}$ (where $J$ is spin, $m$ is helicity, $\epsilon$ is reflectivity). This project takes the posterior moment distributions from brufit's MCMC sampler and fits physically-motivated, mass-continuous amplitude models across all mass bins simultaneously to extract resonance parameters.
+The angular distribution of two pseudoscalar mesons produced in photoproduction can be expanded in terms of angular moments $H(L, M)$, which are bilinear sums of the underlying partial wave amplitudes $T_{J, m}^\epsilon$ (spin $J$, projection $m$, reflectivity $\epsilon = \pm 1$). 
 
-### Supported Amplitude Parameterizations
+Rather than estimating amplitudes independently bin-by-bin in invariant mass, this framework imposes mass-dependent parameterizations across the entire mass spectrum simultaneously. It reads the moment values and covariance matrices from brufit MCMC fit outputs (`ResultsBruMcmcCovariance.root`) and performs a global $\chi^2$ minimization.
 
-| Model | Use case |
+### Amplitude Parameterizations
+
+Supported parameterizations in `MassDependentFunction`:
+
+| Model | Description |
 |---|---|
-| Breit-Wigner | Narrow resonances (e.g. $a_2(1320)$, D-wave) |
-| Flatté | Coupled-channel threshold effects (e.g. $a_0(980) \to \eta\pi, K\bar{K}$) |
-| Breit-Wigner + polynomial | Resonance on a smooth background |
-| Flatté + polynomial | Coupled-channel + smooth background |
-| Flatté + Breit-Wigner + polynomial | Full S-wave model |
-| Conformal polynomial | Model-independent, analytic S-wave expansion |
-
-The conformal polynomial maps the physical mass region $s \in [s_\text{min}, \infty)$ to the unit disk $|z| < 1$ and expands the amplitude as $T(m) = \sum_{i=0}^{N}(a_i + ib_i)\,z^i$, respecting analyticity without imposing a specific resonance hypothesis.
+| Breit-Wigner | Resonances such as $a_2(1320)$ ($D$-wave) |
+| Flatté | Coupled-channel threshold effects, e.g., $a_0(980) \to \eta\pi, K\bar{K}$ ($S$-wave) |
+| Breit-Wigner + Polynomial | Resonance on top of a smooth background |
+| Flatté + Polynomial | Flatté amplitude with polynomial background term |
+| Two Breit-Wigners + Polynomial | Coherent sum of two Breit-Wigner states plus background |
+| Flatté + Breit-Wigner + Polynomial | Combined $S$-wave model |
 
 ---
 
 ## Requirements
 
-- [ROOT](https://root.cern/) 6.28+ (with ACLiC, RDataFrame, Minuit2)
-- [brufit](https://github.com/dglazier/brufit/tree/R6.34Test) — PWA/moment relations and MCMC fitting
-- Python 3.9 with the packages listed in [`pixi.toml`](pixi.toml) (managed via [pixi](https://pixi.sh))
+- [ROOT](https://root.cern/) (v6.28+, with Minuit2 and ACLiC enabled)
+- [brufit](https://github.com/dglazier/brufit/tree/R6.34Test) (PWA-moment relations and MCMC fitting)
+- [Moments](https://github.com/bgrube/Moments) (linear algebra method for calculating angular moments)
 
 ---
 
@@ -39,36 +41,33 @@ The conformal polynomial maps the physical mass region $s \in [s_\text{min}, \in
 
 ```
 Moments2Amplitudes/
-├── include/                          # C++ headers
-│   ├── MassDependentFitter.h         # Main fitter: chi2, minimizer, parameter management
-│   ├── MassDependentFunction.h       # Line-shape library (BW, Flatté, conformal poly, ...)
-│   ├── MassDependentMoments.h        # Loads brufit MCMC results across mass bins
-│   ├── MomentHelper.h                # Per-bin moment I/O and covariance access
-│   ├── ParameterHelper.h             # Parameter naming conventions and helpers
-│   ├── Equation.h / EquationSolver.h # System of equations relating moments to amplitudes
+├── include/                          # C++ headers for mass-dependent fitting
+│   ├── MassDependentFitter.h         # Core fitter: chi2 calculation, Minuit2 interface, parameter management
+│   ├── MassDependentFunction.h       # Parameterized line shapes (Breit-Wigner, Flatté, polynomials)
+│   ├── MassDependentMoments.h        # Loads moment results and covariances across mass bins
+│   ├── MomentHelper.h                # Per-bin moment data and covariance matrix handler
+│   ├── ParameterHelper.h             # Parameter naming and mapping utilities
+│   ├── Equation.h / EquationSolver.h # Bilinear equations relating moments to amplitudes
 │
-├── src/                              # C++ implementation files (compiled by ROOT ACLiC)
+├── src/                              # C++ implementation files (compiled via ROOT ACLiC)
 │   ├── MassDependentFitter.cpp
 │   ├── ParameterHelper.cpp
 │   ├── Equation.cpp / EquationSolver.cpp
 │   └── MomentHelper.cpp
 │
-├── macros/                           # Example ROOT macros for mass-dependent fits
-│   ├── Load.C                        # ROOT library loader for brufit + this project
-│   ├── ConfigureAmpsNoValues.C       # Set up amplitude basis (Lmax, Mmax, Nref)
-│   ├── run_model.sh                  # Parallel fit runner (multi-seed, timestamped output)
-│   ├── H_two_model.C                 # Example: S+D waves (Flatté a0 + BW a2), L=0,2
-│   ├── H_four_model.C                # Example: L=0,2,4 waves
-│   ├── H_odd_model.C                 # Example: odd-L (P-wave) model
-│   ├── Mom2Amp_DBreitWigner.C        # Example: D-wave only BW
-│   ├── Mom2Amp_SFlatteDBreitWigner.C # Example: S(Flatté) + D(BW)
-│   ├── Mom2Amp_SFlattepolyDBreitWigner.C   # Example: S(Flatté+poly) + D(BW)
-│   ├── Mom2Amp_SFlattepolyPDBreitWigner.C  # Example: S(Flatté+poly) + P + D(BW)
-│   ├── Mom2Amp_SPiecewiseDBreitWigner.C    # Example: S(piecewise) + D(BW)
-│   └── RunGivenBruMoments.C         # Run fit from previously stored brufit moments
+├── macros/                           # Example fit macros and execution scripts
+│   ├── Load.C                        # Loads required libraries and includes
+│   ├── ConfigureAmpsNoValues.C       # Sets up amplitude wave definitions
+│   ├── run_model.sh                  # Shell script for parallel multi-seed fits with organized output
+│   ├── H_two_model.C                 # Example: S + D waves fitting H_0 and H_2 moments
+│   ├── H_four_model.C                # Example: waves up to L=4 (H_0, H_2, H_4)
+│   ├── H_odd_model.C                 # Example: odd moments (P-wave contribution)
+│   ├── Mom2Amp_DBreitWigner.C        # Example: D-wave Breit-Wigner fit
+│   ├── Mom2Amp_SFlatteDBreitWigner.C # Example: S-wave Flatté + D-wave Breit-Wigner
+│   ├── Mom2Amp_SFlattepolyDBreitWigner.C  # Example: S-wave (Flatté + poly) + D-wave (BW)
+│   └── RunGivenBruMoments.C         # Example: Fit using pre-existing moments
 │
-├── set_env.sh                        # Set MOMS2AMPS, Moments, ROOT_INCLUDE_PATH
-└── pixi.toml                         # Python environment specification
+└── set_env.sh                        # Environment setup script
 ```
 
 ---
@@ -79,11 +78,22 @@ Moments2Amplitudes/
 
 Follow the [brufit build instructions](https://github.com/dglazier/brufit/tree/R6.34Test). Make sure the BruFit environment script is sourced before running any macros.
 
-### 2. Set environment variables
+### 2. Clone and set up Moments
+
+```bash
+git clone https://github.com/bgrube/Moments.git
+cd Moments
+pip install -r requirements.txt
+```
+
+> If running on a cluster other than ifarm, edit `OpenMpUtilities.py` line 47 and replace `"ifarm"` with your hostname.
+
+### 3. Set environment variables
 
 Edit [`set_env.sh`](set_env.sh) to point to your local installations:
 
 ```bash
+export Moments=/path/to/Moments/
 export MOMS2AMPS=/path/to/Moments2Amplitudes/
 export ROOT_INCLUDE_PATH="${MOMS2AMPS}/include:${ROOT_INCLUDE_PATH}"
 ```
@@ -96,39 +106,58 @@ source set_env.sh
 
 ---
 
-## Mass-Dependent Amplitude Fit
+## Running Example Fits
 
-After obtaining `ResultsBruMcmcCovariance.root` per mass bin from brufit's MCMC sampler, run a mass-dependent model macro. For example:
+The scripts in `macros/` provide test and example setups for mass-dependent fits using moments obtained from brufit MCMC sampling.
+
+### Single Fit Execution
+
+To run a single fit macro with ROOT:
 
 ```bash
-# Single seed
 root -l -b -q ${BRUFIT}/macros/LoadBru.C macros/Load.C 'macros/Mom2Amp_SFlatteDBreitWigner.C(0)'
-
-# Run many seeds in parallel with organized output
-./macros/run_model.sh -n my_fit -s 1 -e 100 -j 40 Mom2Amp_SFlatteDBreitWigner.C
 ```
 
-The `run_model.sh` script creates a timestamped output directory:
-```
-run/my_fit_YYYYMMDD_HHMMSS/
-  ├── macro/      # snapshot of macros used
-  ├── logs/       # per-seed logs
-  ├── results/    # result ROOT trees
-  └── metadata.txt
+Here `0` is the random seed passed to initialize free parameters.
+
+### Multi-Seed Parallel Execution
+
+To explore parameter space and check fit stability across different initial seeds, use `run_model.sh`:
+
+```bash
+./macros/run_model.sh -n fit_run_01 -s 1 -e 100 -j 40 Mom2Amp_SFlatteDBreitWigner.C
 ```
 
-### Configuring the amplitude model
+Options:
+- `-n, --name`: Name of the run (creates a timestamped directory under `run/`).
+- `-s, --start`: Starting seed number (default: `1`).
+- `-e, --end`: Ending seed number (default: `100`).
+- `-j, --jobs`: Maximum concurrent background jobs (default: `80`).
+
+Each run creates an organized output directory containing:
+```
+run/fit_run_01_YYYYMMDD_HHMMSS/
+├── macro/       # Snapshot of macro files used for the run
+├── logs/        # Individual seed logs
+├── results/     # Output ROOT trees and fit parameters
+└── metadata.txt # Run environment and summary
+```
+
+### Configuring Amplitude Models
+
+In the macros, model parameterizations are assigned per partial wave using `MassDependenceConfig`:
 
 ```cpp
 using MDModel = m2pw::MassDependentFitter::MassDependenceConfig::ModelType;
 using WaveModelConfig = m2pw::MassDependentFitter::MassDependenceConfig::WaveModelConfig;
 
+// S-wave (L=0) parameterized with Flatté + polynomial; D-wave (L=2) with Breit-Wigner; P-wave (L=1) mass-independent
 auto config = m2pw::MassDependentFitter::CreateCustomConfig(
     {
-        {0, {WaveModelConfig{"a0_980", MDModel::FlattePlusPolynomial, 2}}},  // S-wave
-        {2, {WaveModelConfig{"a2_1320", MDModel::BreitWigner}}}              // D-wave
+        {0, {WaveModelConfig{"a0_980", MDModel::FlattePlusPolynomial, 2}}},
+        {2, {WaveModelConfig{"a2_1320", MDModel::BreitWigner}}}
     },
-    {1}  // P-wave mass-independent
+    {1} // Mass-independent waves
 );
 ```
 
@@ -136,17 +165,17 @@ auto config = m2pw::MassDependentFitter::CreateCustomConfig(
 
 ## Key Classes
 
-| Class | File | Description |
+| Class | Header | Description |
 |---|---|---|
-| `m2pw::MassDependentFitter` | [`include/MassDependentFitter.h`](include/MassDependentFitter.h) | Top-level fitter; sets up chi2, runs Minuit2, manages parameters |
-| `m2pw::MassDependentFunction` | [`include/MassDependentFunction.h`](include/MassDependentFunction.h) | Evaluates complex amplitude for a given line-shape model |
-| `MassDependentMoments` | [`include/MassDependentMoments.h`](include/MassDependentMoments.h) | Loads brufit MCMC results and covariances across mass bins |
-| `MomentHelper` | [`include/MomentHelper.h`](include/MomentHelper.h) | Per-bin moment access: values, errors, covariance matrix |
-| `Equation` / `EquationSolver` | [`include/Equation.h`](include/Equation.h) | Encodes the system $H_{L,M} = f(\{T_{J,m}^\epsilon\})$ |
+| `m2pw::MassDependentFitter` | [`include/MassDependentFitter.h`](include/MassDependentFitter.h) | Configures waves, sets up the $\chi^2$ objective function, and executes Minuit2 minimization |
+| `m2pw::MassDependentFunction` | [`include/MassDependentFunction.h`](include/MassDependentFunction.h) | Computes complex partial wave amplitudes for Breit-Wigner, Flatté, and polynomial models |
+| `MassDependentMoments` | [`include/MassDependentMoments.h`](include/MassDependentMoments.h) | Loads brufit MCMC moment values and full covariance matrices across all mass bins |
+| `MomentHelper` | [`include/MomentHelper.h`](include/MomentHelper.h) | Interface for extracting moments and covariance matrices per mass bin |
+| `Equation` / `EquationSolver` | [`include/Equation.h`](include/Equation.h) | Encodes symbolic/numerical relationships between angular moments and partial wave bilinear products |
 
 ---
 
 ## References
 
-- B. Grube, [Moments framework](https://github.com/bgrube/Moments)
-- D. Glazier, [brufit](https://github.com/dglazier/brufit)
+- [brufit](https://github.com/dglazier/brufit) — ROOT-based framework for partial wave analysis and moment estimation
+- B. Grube, [Moments framework](https://github.com/bgrube/Moments) — Linear algebra method for calculating angular moments from data
