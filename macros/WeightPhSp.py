@@ -15,8 +15,8 @@ import os
 
 import sys
 
-moments_dir = os.getenv("Moments")
-sys.path.append(moments_dir)
+Moments_dir = "/d/grid17/septian/Moments-dev/Moments.Legacy/"
+sys.path.append(Moments_dir)
 
 from MomentCalculator import (
   AmplitudeSet,
@@ -26,10 +26,10 @@ from MomentCalculator import (
 )
 from PlottingUtilities import setupPlotStyle
 import RootUtilities  # importing initializes OpenMP and loads basisFunctions.C
-from testMomentsPhotoProd import (
-  genAccepted2BodyPsPhotoProd,
-  genDataFromWaves,
-)
+# from testMomentsPhotoProd import (
+#   genAccepted2BodyPsPhotoProd,
+#   genDataFromWaves,
+# )
 from Utilities import (
   makeDirPath,
   printGitInfo,
@@ -51,15 +51,19 @@ def weightAccPhaseSpaceWithIntensity(
 ):
   """Weight accepted phase-space MC data with intensity calculated from partial-wave amplitudes"""
   # read accepted phase-space MC data
+  print(f"Weighting accepted phase-space MC data with intensity calculated from partial-wave amplitudes")
+  print(f"Accepted phase-space MC data file: {accPhaseSpaceFileName}")
   accPhaseSpaceData = ROOT.RDataFrame(accPhaseSpaceTreeName, accPhaseSpaceFileName)
   nmbAccPhaseSpaceEvents = accPhaseSpaceData.Count().GetValue()
   # construct formula for intensity calculation
   intensityFormula = partialWaveAmplitudes.intensityFormula(
     polarization = polarization,
-    thetaFormula = "std::acos(cosTheta_eta_hel)",
-    phiFormula   = "phi_eta_hel * TMath::DegToRad()",
-    PhiFormula   = "Phi * TMath::DegToRad()",
-    printFormula = True,
+    thetaFormula = "std::acos(cosTheta_eta_gj)",
+    # phiFormula   = "phi_eta_hel * TMath::DegToRad()",
+    # PhiFormula   = "Phi * TMath::DegToRad()",
+    phiFormula   = "phi_eta_gj",
+    PhiFormula   = "Phi",
+    printFormula = False,
   )
   accPhaseSpaceData = accPhaseSpaceData.Define("intensityWeight", f"(double){intensityFormula}") \
                                        .Define("rndNmb",          "(double)gRandom->Rndm()")
@@ -69,24 +73,25 @@ def weightAccPhaseSpaceWithIntensity(
   # accept each event with probability intensityWeight / maxIntensityWeight
   data = accPhaseSpaceData.Define("acceptEvent", f"(bool)(rndNmb < (intensityWeight / {maxIntensityWeight}))") \
                           .Filter("acceptEvent == true")
+
   nmbWeightedEvents = data.Count().GetValue()
   print(f"Sample contains {nmbWeightedEvents} events after intensity weighting; efficiency is {nmbWeightedEvents / nmbAccPhaseSpaceEvents}")
   # add columns with discriminating variables for sideband subtraction
-  massPi0Mean   = 0.135881  # [GeV]
-  massPi0Sigma  = 0.0076    # [GeV]
-  massEtaMean   = 0.548625  # [GeV]
-  massEtaSigma  = 0.0191    # [GeV]
+  # massPi0Mean   = 0.135881  # [GeV]
+  # massPi0Sigma  = 0.0076    # [GeV]
+  # massEtaMean   = 0.548625  # [GeV]
+  # massEtaSigma  = 0.0191    # [GeV]
   # the sideband boundaries are:
   #   pi0: from (massPi0Mean +- 3.0 * massPi0Sigma) to (massPi0Mean +- 5.5 * massPi0Sigma)
   #   eta: from (massEtaMean +- 3.0 * massEtaSigma) to (massEtaMean +- 6.0 * massEtaSigma)
-  if isSignal:
-    data = data.Define("massPi0", f"gRandom->Gaus({massPi0Mean}, {massPi0Sigma})") \
-               .Define("massEta", f"gRandom->Gaus({massEtaMean}, {massEtaSigma})")
-  else:
-    data = data.Define("massPi0", f"gRandom->Uniform({massPi0Mean - 5.5 * massPi0Sigma}, {massPi0Mean + 5.5 * massPi0Sigma})") \
-               .Define("massEta", f"gRandom->Uniform({massEtaMean - 6.0 * massEtaSigma}, {massEtaMean + 6.0 * massEtaSigma})")
+  # if isSignal:
+    # data = data.Define("massPi0", f"gRandom->Gaus({massPi0Mean}, {massPi0Sigma})") \
+    #            .Define("massEta", f"gRandom->Gaus({massEtaMean}, {massEtaSigma})")
+  # else:
+  #   data = data.Define("massPi0", f"gRandom->Uniform({massPi0Mean - 5.5 * massPi0Sigma}, {massPi0Mean + 5.5 * massPi0Sigma})") \
+  #              .Define("massEta", f"gRandom->Uniform({massEtaMean - 6.0 * massEtaSigma}, {massEtaMean + 6.0 * massEtaSigma})")
   # write weighted data to file
-  outFileName = f"{accPhaseSpaceFileName}.intensityWeightedAmpsBrufitNorm_pol0.3_{run_tag}_{seed}.{'sig' if isSignal else 'bkg'}"
+  outFileName = f"{accPhaseSpaceFileName}.intensityWeightedAmpsBrufitNorm_pol0.3_{run_tag}_{seed}.{'sig.root' if isSignal else 'bkg.root'}"
   print(f"Writing accepted phase-space data that were weighted with intensity function to file {outFileName}")
   data.Snapshot(accPhaseSpaceTreeName, f"{outFileName}")
 
@@ -112,59 +117,101 @@ if __name__ == "__main__":
     timer.start("Total execution time")
 
     # set parameters of test case
-    mom2AmpsWorkingDir    = "/d/grid17/septian/Moments2Amplitudes/"
-    accPhaseSpaceFileName = mom2AmpsWorkingDir+"samples/F2017_1_selected_TestMomentFit_data_flat.root"
+    mom2AmpsWorkingDir    = "/d/grid17/septian/Moments2Amplitudes/data/data/"
+    # accPhaseSpaceFileName = mom2AmpsWorkingDir+"samples/F2017_1_selected_TestMomentFit_data_flat.root"
+    # accPhaseSpaceFileName = mom2AmpsWorkingDir+"nominal/processed/flat_phsp_reconmc_2017_01_SingleMassBin.root"
+    accPhaseSpaceFileName = mom2AmpsWorkingDir+"/nominal_SingleMassBin_m128132/reconmc_phase1_merged_PhSp_t010020.root"
     outFileDirName        = makeDirPath(mom2AmpsWorkingDir+"plots/"+run_tag)
     nmbPwaMcEvents        = 10000    # number of "data" events to generate from partial-wave amplitudes
     nmbPsMcEvents         = 1000000  # number of phase-space events to generate
     beamPolarization      = 0.3      # polarization of photon beam
-    maxL                  = 4        # maximum L quantum number of moments
+    maxL                  = 6        # maximum L quantum number of moments
     # define angular distribution of signal
+    # Lmax = 4
     # partialWaveAmplitudesSig: tuple[AmplitudeValue, ...] = (  # set of all possible partial waves up to ell = 2
     #   # negative-reflectivity waves
-    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 0, m =  0), val =  1.0 + 0.0j),  # S_0^-
-    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m = -1), val = -0.4 + 0.1j),  # P_-1^-
-    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m =  0), val =  0.3 - 0.8j),  # P_0^-
-    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m = +1), val = -0.8 + 0.7j),  # P_+1^-
-    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = -2), val =  0.1 - 0.4j),  # D_-2^-
-    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = -1), val =  0.5 + 0.2j),  # D_-1^-
-    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m =  0), val = -0.1 - 0.2j),  # D_ 0^-
-    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = +1), val =  0.2 - 0.1j),  # D_+1^-
-    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = +2), val = -0.2 + 0.3j),  # D_+2^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 0, m =  0), val =  0.1 + 0.1j),  # S_0^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m = -1), val =  0.0 + 0.0j),  # P_-1^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m =  0), val =  0.0 + 0.0j),  # P_0^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m = +1), val =  0.0 + 0.0j),  # P_+1^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = -2), val =  0.0 + 0.0j),  # D_-2^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = -1), val =  0.1 + 0.0j),  # D_-1^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m =  0), val =  0.0 + 0.0j),  # D_ 0^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = +1), val =  0.1 + 0.0j),  # D_+1^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = +2), val =  0.0 + 0.0j),  # D_+2^-
     #   # positive-reflectivity waves
-    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 0, m =  0), val =  0.5 + 0.0j),  # S_0^+
-    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m = -1), val =  0.5 - 0.1j),  # P_-1^+
-    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m =  0), val = -0.8 - 0.3j),  # P_0^+
-    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m = +1), val =  0.6 + 0.3j),  # P_+1^+
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 0, m =  0), val =  0.2 + 0.3j),  # S_0^+
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m = -1), val =  0.1 + 0.0j),  # P_-1^+
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m =  0), val =  0.0 + 0.0j),  # P_0^+
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m = +1), val =  0.0 + 0.0j),  # P_+1^+
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = -2), val =  0.0 + 0.0j),  # D_-2^+
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = -1), val =  0.0 + 0.0j),  # D_-1^+
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m =  0), val =  0.2 + 0.0j),  # D_ 0^+
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = +1), val =  0.1 + 0.0j),  # D_+1^+
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = +2), val =  0.5 + 0.0j),  # D_+2^+
+    # )
+
+    # Lmax = 6
+    partialWaveAmplitudesSig: tuple[AmplitudeValue, ...] = (  # set of all possible partial waves up to ell = 2
+      # negative-reflectivity waves
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 0, m =  0), val =  0.1 + 0.1j),  # S_0^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m = -1), val =  0.0 + 0.0j),  # P_-1^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m =  0), val =  0.0 + 0.0j),  # P_0^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m = +1), val =  0.0 + 0.0j),  # P_+1^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = -2), val =  0.0 + 0.0j),  # D_-2^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = -1), val =  0.1 + 0.0j),  # D_-1^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m =  0), val =  0.0 + 0.0j),  # D_ 0^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = +1), val =  0.1 + 0.0j),  # D_+1^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = +2), val =  0.0 + 0.0j),  # D_+2^- 
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 3, m = -3), val =  0.0 + 0.0j),  # F_-3^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 3, m = -2), val =  0.0 + 0.0j),  # F_-2^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 3, m = -1), val =  0.0 + 0.0j),  # F_-1^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 3, m =  0), val =  0.0 + 0.0j),  # F_ 0^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 3, m = +1), val =  0.0 + 0.0j),  # F_+1^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 3, m = +2), val =  0.0 + 0.0j),  # F_+2^-
+      AmplitudeValue(QnWaveIndex(refl = -1, l = 3, m = +3), val =  0.0 + 0.0j),  # F_+3^-
+
+      # positive-reflectivity waves
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 0, m =  0), val =  0.2 + 0.3j),  # S_0^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m = -1), val =  0.1 + 0.0j),  # P_-1^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m =  0), val =  0.0 + 0.0j),  # P_0^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m = +1), val =  0.0 + 0.0j),  # P_+1^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = -2), val =  0.0 + 0.0j),  # D_-2^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = -1), val =  0.0 + 0.0j),  # D_-1^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m =  0), val =  0.2 + 0.0j),  # D_ 0^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = +1), val =  0.1 + 0.0j),  # D_+1^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = +2), val =  0.5 + 0.0j),  # D_+2^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 3, m = -3), val =  0.0 + 0.0j),  # F_-3^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 3, m = -2), val =  0.0 + 0.0j),  # F_-2^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 3, m = -1), val =  0.0 + 0.0j),  # F_-1^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 3, m =  0), val =  0.0 + 0.0j),  # F_ 0^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 3, m = +1), val =  0.2 + 0.3j),  # F_+1^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 3, m = +2), val =  0.0 + 0.0j),  # F_+2^+
+      AmplitudeValue(QnWaveIndex(refl = +1, l = 3, m = +3), val =  0.0 + 0.0j),  # F_+3^+
+    )
+
+    # partialWaveAmplitudesSig: tuple[AmplitudeValue, ...] = (  # set of all possible partial waves up to ell = 2
+    #   # negative-reflectivity waves
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 0, m =  0), val = ( 0.5 + 0.0j)),  # S_0^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m = -1), val = 0.0),  # P_-1^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m =  0), val = 0.0),  # P_0^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m = +1), val = 0.0),  # P_+1^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = -2), val = 0.1 - 0.4j),  # D_-2^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = -1), val = 0.5 + 0.2j),  # D_-1^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m =  0), val =-0.1 - 0.2j),  # D_ 0^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = +1), val = 0.2 - 0.1j),  # D_+1^-
+    #   AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = +2), val =-0.2 + 0.3j),  # D_+2^-
+    #   # positive-reflectivity waves
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 0, m =  0), val = ( 1.0 + 0.0j)),  # S_0^+
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m = -1), val = 0.0),  # P_-1^+
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m =  0), val = 0.0),  # P_0^+
+    #   AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m = +1), val = 0.0),  # P_+1^+
     #   AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = -2), val =  0.2 + 0.1j),  # D_-2^+
     #   AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = -1), val =  0.2 - 0.3j),  # D_-1^+
     #   AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m =  0), val =  0.1 - 0.2j),  # D_ 0^+
     #   AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = +1), val =  0.2 + 0.5j),  # D_+1^+
     #   AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = +2), val = -0.3 - 0.1j),  # D_+2^+
     # )
-
-    partialWaveAmplitudesSig: tuple[AmplitudeValue, ...] = (  # set of all possible partial waves up to ell = 2
-      # negative-reflectivity waves
-      AmplitudeValue(QnWaveIndex(refl = -1, l = 0, m =  0), val = ( 0.5 + 0.0j)),  # S_0^-
-      AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m = -1), val = 0.0),  # P_-1^-
-      AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m =  0), val = 0.0),  # P_0^-
-      AmplitudeValue(QnWaveIndex(refl = -1, l = 1, m = +1), val = 0.0),  # P_+1^-
-      AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = -2), val = 0.1 - 0.4j),  # D_-2^-
-      AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = -1), val = 0.5 + 0.2j),  # D_-1^-
-      AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m =  0), val =-0.1 - 0.2j),  # D_ 0^-
-      AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = +1), val = 0.2 - 0.1j),  # D_+1^-
-      AmplitudeValue(QnWaveIndex(refl = -1, l = 2, m = +2), val =-0.2 + 0.3j),  # D_+2^-
-      # positive-reflectivity waves
-      AmplitudeValue(QnWaveIndex(refl = +1, l = 0, m =  0), val = ( 1.0 + 0.0j)),  # S_0^+
-      AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m = -1), val = 0.0),  # P_-1^+
-      AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m =  0), val = 0.0),  # P_0^+
-      AmplitudeValue(QnWaveIndex(refl = +1, l = 1, m = +1), val = 0.0),  # P_+1^+
-      AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = -2), val =  0.2 + 0.1j),  # D_-2^+
-      AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = -1), val =  0.2 - 0.3j),  # D_-1^+
-      AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m =  0), val =  0.1 - 0.2j),  # D_ 0^+
-      AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = +1), val =  0.2 + 0.5j),  # D_+1^+
-      AmplitudeValue(QnWaveIndex(refl = +1, l = 2, m = +2), val = -0.3 - 0.1j),  # D_+2^+
-    )
 
     # Calculate the sum of squared magnitudes
     total_magnitude_squared = sum(abs(amp.val)**2 for amp in partialWaveAmplitudesSig)
@@ -248,37 +295,37 @@ if __name__ == "__main__":
       HTruthDicts.append(HTruthDict)
     with open(HTruthJsonFileName, "w") as HTruthJsonFile:
       json.dump(HTruthDicts, HTruthJsonFile, indent = 4, default = str)
-    dataPwaModel = genDataFromWaves(
-      nmbEvents         = nmbPwaMcEvents,
-      polarization      = beamPolarization,
-      amplitudeSet      = amplitudeSetSig,
-      efficiencyFormula = None,
-      outFileNamePrefix = f"{outFileDirName}/",
-      regenerateData    = True,
-    )
-    t.stop()
+    # dataPwaModel = genDataFromWaves(
+    #   nmbEvents         = nmbPwaMcEvents,
+    #   polarization      = beamPolarization,
+    #   amplitudeSet      = amplitudeSetSig,
+    #   efficiencyFormula = None,
+    #   outFileNamePrefix = f"{outFileDirName}/",
+    #   regenerateData    = True,
+    # )
+    # t.stop()
 
-    # plot data generated from partial-wave amplitudes
-    canv = ROOT.TCanvas()
-    nmbBins = 25
-    hist = dataPwaModel.Histo3D(
-      ROOT.RDF.TH3DModel("hData", ";cos#theta;#phi [deg];#Phi [deg]", nmbBins, -1, +1, nmbBins, -180, +180, nmbBins, -180, +180), "cosTheta", "phiDeg", "PhiDeg")
-    hist.SetMinimum(0)
-    hist.GetXaxis().SetTitleOffset(1.5)
-    hist.GetYaxis().SetTitleOffset(2)
-    hist.GetZaxis().SetTitleOffset(1.5)
-    hist.Draw("BOX2Z")
-    canv.SaveAs(f"{outFileDirName}/{hist.GetName()}.pdf")
+    # # plot data generated from partial-wave amplitudes
+    # canv = ROOT.TCanvas()
+    # nmbBins = 25
+    # hist = dataPwaModel.Histo3D(
+    #   ROOT.RDF.TH3DModel("hData", ";cos#theta;#phi [deg];#Phi [deg]", nmbBins, -1, +1, nmbBins, -180, +180, nmbBins, -180, +180), "cosTheta", "phiDeg", "PhiDeg")
+    # hist.SetMinimum(0)
+    # hist.GetXaxis().SetTitleOffset(1.5)
+    # hist.GetYaxis().SetTitleOffset(2)
+    # hist.GetZaxis().SetTitleOffset(1.5)
+    # hist.Draw("BOX2Z")
+    # canv.SaveAs(f"{outFileDirName}/{hist.GetName()}.pdf")
 
-    # generate phase-space data for perfect acceptance
-    t = timer.start("Time to generate phase-space MC data")
-    dataAcceptedPs = genAccepted2BodyPsPhotoProd(
-      nmbEvents         = nmbPsMcEvents,
-      efficiencyFormula = None,
-      outFileNamePrefix = f"{outFileDirName}/",
-      regenerateData    = True
-    )
-    t.stop()
+    # # generate phase-space data for perfect acceptance
+    # t = timer.start("Time to generate phase-space MC data")
+    # dataAcceptedPs = genAccepted2BodyPsPhotoProd(
+    #   nmbEvents         = nmbPsMcEvents,
+    #   efficiencyFormula = None,
+    #   outFileNamePrefix = f"{outFileDirName}/",
+    #   regenerateData    = True
+    # )
+    # t.stop()
 
     # weight accepted phase-space MC data with intensity calculated from partial-wave amplitudes
     t = timer.start("Time to weight accepted phase-space MC data")
@@ -295,7 +342,8 @@ if __name__ == "__main__":
     #   partialWaveAmplitudes = amplitudeSetBkg,
     #   isSignal              = False,
     #   accPhaseSpaceFileName = accPhaseSpaceFileName,
-    #   seed                 = args.seed
+    #   seed                 = args.seed,
+    #   run_tag              = args.tag
     # )
     t.stop()
 

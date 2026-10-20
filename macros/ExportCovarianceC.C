@@ -4,10 +4,6 @@
 #include <sstream>
 #include <iostream>
 
-// Include your BruFit header here if running compiled, or ensure 
-// the macro environment has it loaded before execution.
-// #include "BruCovarianceReader.h" 
-
 void ExportCovarianceC(TString dir, TString matrixFilename, TString outputFilename) {
     // int N = 15;
     // TMatrixDSym myMatrix(N);
@@ -30,7 +26,6 @@ void ExportCovarianceC(TString dir, TString matrixFilename, TString outputFilena
         return;
     }
 
-    // Print the parameter names for verification
     std::cout << "Parameter names from the file:" << std::endl;
     std::vector<std::string> paramNames;
     std::stringstream namesStream(paramNamesObj->GetString().Data());
@@ -57,7 +52,6 @@ void ExportCovarianceC(TString dir, TString matrixFilename, TString outputFilena
 
     TMatrixDSym& myMatrix = *myMatrixPointer;
 
-    // Execute the standalone API to write the matrix
     // TString outputFilename = "brufit_covariance_matrix_Mpi0eta_1.300.root";
     HS::FIT::BruCovarianceReader::SaveThis(dir+outputFilename, "MyCovMatrix", myMatrix, paramNames);
     

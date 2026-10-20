@@ -1,6 +1,16 @@
 # Ignore run outputs
 run/
-test-*
+test_*
+plots*
+data*
+brufit*
+
+# Analysis output directories
+Moments.out/
+
+# Python cache
+__pycache__/
+*.pyc
 
 # ROOT ACLiC compilation artifacts
 *.so

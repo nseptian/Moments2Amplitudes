@@ -31,12 +31,13 @@ os.environ["BRUFIT"] = BRUFIT_DIR
 # call ExportCovarianceC function for each maxL and binIndex
 
 maxLs = (
-   4,
-   6,
-   8,
+   2,
+   # 4,
+   # 6,
+   # 8,
 )
 
-base_dir = "/d/grid17/septian/Moments2Amplitudes/Moments.out/IO_test_m128132_Lmax4_WithPWaves/"
+base_dir = "/d/grid17/septian/Moments2Amplitudes/Moments.out/IO_test_m128132_Lmax4_ZeroPWaves/"
 maxL_dir = {maxL: f"{base_dir}.maxL_{maxL}/" for maxL in maxLs}
 
 print("maxL directories:")
@@ -116,14 +117,15 @@ for maxL, momentResults in momentResults_maxL.items():
 
       massCenter = next((center for var, center in momentResult.binCenters.items() if var.name == "Mpi0eta"), None)
       if massCenter is None:
-         print(f"Bin {binIndex}: Re[H_0_0_0] = {H_0_0_0_real} ± {H_0_0_0_real_uncert}")
+         print(f"Bin {binIndex}: Re[H_0_0_0] = {H_0_0_0_real} +- {H_0_0_0_real_uncert}")
       else:
-         print(f"Bin {binIndex} (Mpi0eta = {massCenter}): Re[H_0_0_0] = {H_0_0_0_real} ± {H_0_0_0_real_uncert}")
+         print(f"Bin {binIndex} (Mpi0eta = {massCenter}): Re[H_0_0_0] = {H_0_0_0_real} +- {H_0_0_0_real_uncert}")
 
       myMatrix: ROOT.TMatrixDSym = ROOT.TMatrixDSym(nmbMoments)  # covariance matrix physical moments
 
       flatIndices: list[int] = []  # indices of moments in momentResult corresponding to the entry in paramNames
       useRealParts: list[bool] = []  # True for Re part, False for Im part for each entry in paramNames
+      h1_norm_moments: dict[ROOT.TH1D] = {}
       for label in paramNames:
          if label.startswith("H_"):
             quantumNumbers: list[str] = label.split("_")  # naming pattern: H_<moment index>_<L>_<M>
@@ -136,11 +138,23 @@ for maxL, momentResults in momentResults_maxL.items():
             flatIndices.append(momentResult.indices[qnIndex])
             # Convention: momentIndex 0 and 1 use Re parts, momentIndex 2 uses Im parts.
             useRealParts.append(momentIndex in (0, 1))
+            if (useRealParts[-1]):
+               moment_value, moment_error = momentResult[flatIndices[-1]].real
+            else:
+               moment_value, moment_error = momentResult[flatIndices[-1]].imag
+
+            # update the mass binning
+            h1_norm_moments[label] = ROOT.TH1D(f"h1_norm_{label}", label, 1, 1.28, 1.32)
+            moment_value *= 2.0
+            moment_error *= 2.0
+            print(f"{label}: {moment_value} +- {moment_error}")
+            h1_norm_moments[label].SetBinContent(1, moment_value)
+            h1_norm_moments[label].SetBinError(1, moment_error)
 
       flatIndices.append(H_0_0_0_index)
       useRealParts.append(True)  # Yld_Moments is built from Re[H_0_0_0]
 
-      scales = [H_0_0_0_real / 2.0 if name == "Yld_Moments" else 1.0 for name in paramNames]
+      scales = [H_0_0_0_real if name == "Yld_Moments" else 2.0 for name in paramNames]
 
       for i in range(nmbMoments):
          for j in range(i, nmbMoments):
@@ -155,14 +169,19 @@ for maxL, momentResults in momentResults_maxL.items():
       savePath = f"{dir}/covariance_matrix_{binLabel}.root"
       myMatrix.Print()
 
-      print(f"Saving covariance matrix for bin {binIndex} to {savePath}")
+      print(f"Saving the moments value and covariance matrix for bin {binIndex} to {savePath}")
 
       rootFile = ROOT.TFile(savePath, "RECREATE")
       myMatrix.Write("MyCovMatrix")
 
+      for label in paramNames:
+         if label != "Yld_Moments":
+            h1_norm_moments[label].Write()
+
       # Save parameter names in each ROOT file for downstream lookup.
       paramNamesStr = ROOT.TObjString(",".join(paramNames))
       paramNamesStr.Write("paramNames")
+         
 
       rootFile.Close()
 

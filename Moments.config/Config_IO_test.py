@@ -469,7 +469,7 @@ class AnalysisConfig:
     return df
 
 
-# configuration for Nizar's polarized gamma p -> (eta pi0) p data, with eta -> gamma gamma
+# configuration for IO test with Lmax = 4 Zero P-waves
 CFG_IO_TEST_LMAX4_ZEROPWAVES = AnalysisConfig(
   frame              = AnalysisConfig.CoordSysType.GJ,
   subsystem          = SubsystemInfo(  # eta pi0 subsystem to analyze; eta is the analyzer
@@ -501,6 +501,88 @@ CFG_IO_TEST_LMAX4_ZEROPWAVES = AnalysisConfig(
   polarization       = "Pol",  # read polarization from tree column
   # maxL               = 4,
   outFileDirBaseName = "./Moments.out/IO_test_m128132_Lmax4_ZeroPWaves/",
+  binVarMass         = KinematicBinningVariable(
+    name      = "Mpi0eta",
+    label     = "#it{m}_{#it{#eta}#it{#pi}^{0}}",
+    unit      = "GeV/#it{c}^{2}",
+    nmbDigits = 3,
+  ),
+  massBinning        = HistAxisBinning(nmbBins = 1, minVal = 1.28, maxVal = 1.32),  # 40 MeV wide bins
+)
+
+# configuration for IO test with Lmax = 4 with P-waves
+CFG_IO_TEST_LMAX4_WITHPWAVES = AnalysisConfig(
+  frame              = AnalysisConfig.CoordSysType.GJ,
+  subsystem          = SubsystemInfo(  # eta pi0 subsystem to analyze; eta is the analyzer
+    lvALabel          = "eta",     # label of eta Lorentz-vector
+    lvBLabel          = "pi0",     # label of pi0 Lorentz-vector
+    lvRecoilLabel     = "recoil",  # label of recoil-proton Lorentz-vector
+    pairLabel         = "EtaPi0",
+    ATLatexLabel      = "#it{#eta}",
+    BTLatexLabel      = "#it{#pi}^{0}",
+    recoilTLatexLabel = "#it{p}",
+    pairTLatexLabel   = "#it{#eta}#it{#pi}^{0}",
+  ),
+  dataDirBaseName    = "./data/IO_test_Lmax4_WithPWaves/",
+  dataPeriods        = ("merged", ),  # merged Phase-I + Spring 2020 data with different polarization values
+  tBinLabels         = (
+    "t010020",
+  ),
+  beamPolLabels      = ("All", ),  # input files contain all beam polarization orientations merged together
+  inputDataFormats   = {
+    AnalysisConfig.DataType.REAL_DATA             : AnalysisConfig.DataFormat.AMPTOOLS,
+    AnalysisConfig.DataType.ACCEPTED_PHASE_SPACE  : AnalysisConfig.DataFormat.AMPTOOLS,
+    AnalysisConfig.DataType.GENERATED_PHASE_SPACE : AnalysisConfig.DataFormat.AMPTOOLS,
+  },
+  # treeName           = "EtaPi0",
+  treeName           = "kin",  # tree name in input files; same for all data types 
+  dataFileName       = "data_flat_All.root",
+  psAccFileName      = "phaseSpace_acc_flat_All.root",
+  psGenFileName      = "phaseSpace_gen_flat_All.root",
+  polarization       = "Pol",  # read polarization from tree column
+  # maxL               = 4,
+  outFileDirBaseName = "./Moments.out/IO_test_m128132_Lmax4_WithPWaves/",
+  binVarMass         = KinematicBinningVariable(
+    name      = "Mpi0eta",
+    label     = "#it{m}_{#it{#eta}#it{#pi}^{0}}",
+    unit      = "GeV/#it{c}^{2}",
+    nmbDigits = 3,
+  ),
+  massBinning        = HistAxisBinning(nmbBins = 1, minVal = 1.28, maxVal = 1.32),  # 40 MeV wide bins
+)
+
+# configuration for IO test with Lmax = 6
+CFG_IO_TEST_LMAX6 = AnalysisConfig(
+  frame              = AnalysisConfig.CoordSysType.GJ,
+  subsystem          = SubsystemInfo(  # eta pi0 subsystem to analyze; eta is the analyzer
+    lvALabel          = "eta",     # label of eta Lorentz-vector
+    lvBLabel          = "pi0",     # label of pi0 Lorentz-vector
+    lvRecoilLabel     = "recoil",  # label of recoil-proton Lorentz-vector
+    pairLabel         = "EtaPi0",
+    ATLatexLabel      = "#it{#eta}",
+    BTLatexLabel      = "#it{#pi}^{0}",
+    recoilTLatexLabel = "#it{p}",
+    pairTLatexLabel   = "#it{#eta}#it{#pi}^{0}",
+  ),
+  dataDirBaseName    = "./data/IO_test_Lmax6/",
+  dataPeriods        = ("merged", ),  # merged Phase-I + Spring 2020 data with different polarization values
+  tBinLabels         = (
+    "t010020",
+  ),
+  beamPolLabels      = ("All", ),  # input files contain all beam polarization orientations merged together
+  inputDataFormats   = {
+    AnalysisConfig.DataType.REAL_DATA             : AnalysisConfig.DataFormat.AMPTOOLS,
+    AnalysisConfig.DataType.ACCEPTED_PHASE_SPACE  : AnalysisConfig.DataFormat.AMPTOOLS,
+    AnalysisConfig.DataType.GENERATED_PHASE_SPACE : AnalysisConfig.DataFormat.AMPTOOLS,
+  },
+  # treeName           = "EtaPi0",
+  treeName           = "kin",  # tree name in input files; same for all data types 
+  dataFileName       = "data_flat_All.root",
+  psAccFileName      = "phaseSpace_acc_flat_All.root",
+  psGenFileName      = "phaseSpace_gen_flat_All.root",
+  polarization       = "Pol",  # read polarization from tree column
+  # maxL               = 4,
+  outFileDirBaseName = "./Moments.out/IO_test_m128132_Lmax6/",
   binVarMass         = KinematicBinningVariable(
     name      = "Mpi0eta",
     label     = "#it{m}_{#it{#eta}#it{#pi}^{0}}",

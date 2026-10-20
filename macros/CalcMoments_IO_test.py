@@ -37,7 +37,8 @@ from Config_IO_test import (
   AnalysisConfig,
   BEAM_POL_INFOS,
   CFG_IO_TEST_LMAX4_ZEROPWAVES,
-  CFG_IO_TEST_LMAX4_WITHPWAVES
+  CFG_IO_TEST_LMAX4_WITHPWAVES,
+  CFG_IO_TEST_LMAX6
 )
 from MomentCalculator import (
   DataSet,
@@ -319,7 +320,7 @@ CPP_CODE_IS_IN_EFFICIENCY_HOLES = """
 
 
 if __name__ == "__main__":
-  cfg = deepcopy(CFG_IO_TEST_LMAX4_WITHPWAVES)  # perform analysis of Nizar's polarized eta pi0 data
+  cfg = deepcopy(CFG_IO_TEST_LMAX4_ZEROPWAVES)
   subsystemLabel = "EtaPi0"
   os.chdir(Mom2Amp_dir)  # Change to the Moments directory
   dataDirBaseName = cfg.dataDirBaseName
@@ -330,9 +331,10 @@ if __name__ == "__main__":
   )
   beamPolLabels = ("All", )
   maxLs = (
-    4,
-    6,
-    8,
+    2,
+    # 4,
+    # 6,
+    # 8,
   )
   forceIntegralMatrixCalculation = True  # if `True` integral matrices are recalculated even if pickled versions exist
   # forceIntegralMatrixCalculation = False
