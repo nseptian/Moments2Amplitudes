@@ -11,6 +11,8 @@
 #include <TObjString.h>
 #include <TFile.h>
 #include <TTree.h>
+#include <TMatrixDSym.h>
+#include <TVectorD.h>
 #include <vector>
 #include <map>
 #include <set>
@@ -146,7 +148,7 @@ namespace m2pw {
             int ell_value = -1;
             bool isPhase = false;
             bool isMassDependent = false;
-            bool isSharedResonance = false;  // true for g_etapi, g_KK (same value across all mass bins)
+            bool isSharedResonance = false;
         };
         
         // Constructor with both mass dependence and moments configuration
@@ -172,6 +174,19 @@ namespace m2pw {
          * @brief Print which moments are included in chi2 calculation
          */
         void PrintIncludedMoments() const;
+
+        /**
+         * @brief Print covariance matrices for every mass bin
+         * @param printInverse If true, prints the inverse covariance matrix (W = V^-1) instead of V
+         */
+        void PrintCovarianceMatrices(bool printInverse = false) const;
+
+        /**
+         * @brief Print covariance matrix for a specific mass bin
+         * @param massBin Mass bin center in GeV
+         * @param printInverse If true, prints the inverse covariance matrix (W = V^-1) instead of V
+         */
+        void PrintCovarianceMatrix(double massBin, bool printInverse = false) const;
 
         void PrintEquations(const TString opt = "", const double mass_bin_center = 0.0) const;
         void SetEquationValues(MassDependentMoments& moms);
@@ -199,6 +214,107 @@ namespace m2pw {
         bool GetEnableParallelization() const { return enableParallelization_; }
         void SetParallelDuringMinimization(bool enable) { parallelDuringMinimization_ = enable; }
         bool GetParallelDuringMinimization() const { return parallelDuringMinimization_; }
+        
+        // Covariance matrix control
+        void SetUseCovarianceMatrix(bool use) { useCovarianceMatrix_ = use; }
+        bool GetUseCovarianceMatrix() const { return useCovarianceMatrix_; }
+
+        struct BinCovarianceCache {
+            std::vector<size_t> eqnIndices;
+            std::vector<TString> momentNames;
+            TMatrixDSym covMatrix;
+            TMatrixDSym invCovMatrix;
+            mutable TVectorD deltaVec;
+            bool isValid = false;
+
+            BinCovarianceCache() = default;
+
+            BinCovarianceCache(const BinCovarianceCache& other)
+                : eqnIndices(other.eqnIndices), momentNames(other.momentNames), isValid(other.isValid) {
+                if (other.covMatrix.GetNrows() > 0) {
+                    covMatrix.ResizeTo(other.covMatrix.GetNrows(), other.covMatrix.GetNcols());
+                    covMatrix = other.covMatrix;
+                }
+                if (other.invCovMatrix.GetNrows() > 0) {
+                    invCovMatrix.ResizeTo(other.invCovMatrix.GetNrows(), other.invCovMatrix.GetNcols());
+                    invCovMatrix = other.invCovMatrix;
+                }
+                if (other.deltaVec.GetNrows() > 0) {
+                    deltaVec.ResizeTo(other.deltaVec.GetNrows());
+                    deltaVec = other.deltaVec;
+                }
+            }
+
+            BinCovarianceCache& operator=(const BinCovarianceCache& other) {
+                if (this != &other) {
+                    eqnIndices = other.eqnIndices;
+                    momentNames = other.momentNames;
+                    isValid = other.isValid;
+                    if (other.covMatrix.GetNrows() > 0) {
+                        covMatrix.ResizeTo(other.covMatrix.GetNrows(), other.covMatrix.GetNcols());
+                        covMatrix = other.covMatrix;
+                    } else {
+                        covMatrix.Clear();
+                    }
+                    if (other.invCovMatrix.GetNrows() > 0) {
+                        invCovMatrix.ResizeTo(other.invCovMatrix.GetNrows(), other.invCovMatrix.GetNcols());
+                        invCovMatrix = other.invCovMatrix;
+                    } else {
+                        invCovMatrix.Clear();
+                    }
+                    if (other.deltaVec.GetNrows() > 0) {
+                        deltaVec.ResizeTo(other.deltaVec.GetNrows());
+                        deltaVec = other.deltaVec;
+                    } else {
+                        deltaVec.Clear();
+                    }
+                }
+                return *this;
+            }
+
+            BinCovarianceCache(BinCovarianceCache&& other) noexcept
+                : eqnIndices(std::move(other.eqnIndices)), momentNames(std::move(other.momentNames)), isValid(other.isValid) {
+                if (other.covMatrix.GetNrows() > 0) {
+                    covMatrix.ResizeTo(other.covMatrix.GetNrows(), other.covMatrix.GetNcols());
+                    covMatrix = other.covMatrix;
+                }
+                if (other.invCovMatrix.GetNrows() > 0) {
+                    invCovMatrix.ResizeTo(other.invCovMatrix.GetNrows(), other.invCovMatrix.GetNcols());
+                    invCovMatrix = other.invCovMatrix;
+                }
+                if (other.deltaVec.GetNrows() > 0) {
+                    deltaVec.ResizeTo(other.deltaVec.GetNrows());
+                    deltaVec = other.deltaVec;
+                }
+            }
+
+            BinCovarianceCache& operator=(BinCovarianceCache&& other) noexcept {
+                if (this != &other) {
+                    eqnIndices = std::move(other.eqnIndices);
+                    momentNames = std::move(other.momentNames);
+                    isValid = other.isValid;
+                    if (other.covMatrix.GetNrows() > 0) {
+                        covMatrix.ResizeTo(other.covMatrix.GetNrows(), other.covMatrix.GetNcols());
+                        covMatrix = other.covMatrix;
+                    } else {
+                        covMatrix.Clear();
+                    }
+                    if (other.invCovMatrix.GetNrows() > 0) {
+                        invCovMatrix.ResizeTo(other.invCovMatrix.GetNrows(), other.invCovMatrix.GetNcols());
+                        invCovMatrix = other.invCovMatrix;
+                    } else {
+                        invCovMatrix.Clear();
+                    }
+                    if (other.deltaVec.GetNrows() > 0) {
+                        deltaVec.ResizeTo(other.deltaVec.GetNrows());
+                        deltaVec = other.deltaVec;
+                    } else {
+                        deltaVec.Clear();
+                    }
+                }
+                return *this;
+            }
+        };
         
         void SetNumThreads(int nthreads);  // Implementation in .cpp
         int GetNumThreads() const { return numThreads_; }
@@ -300,6 +416,11 @@ namespace m2pw {
             void SetParameterLimitsBatch(const std::map<TString, std::pair<double, double>>& limits);
             bool SetGaussianConstraint(const TString& parName, double mean, double sigma);
 
+            // Return the registered parameter names in index order.
+            const std::vector<TString>& GetParameterNames() const {
+                return parIndexNames;
+            }
+
             // Configure generalized Breit-Wigner reference values used when M/width are not supplied explicitly.
             bool ConfigureBreitWignerDefaultsForWave(const TString& waveName, double mass, double width);
             int ConfigureBreitWignerDefaults(int ellValue, double mass, double width);
@@ -382,6 +503,10 @@ private:
     int numThreads_ = 0;  // Number of threads (0 = auto policy, >0 = explicit count)
     bool parallelDuringMinimization_ = false;  // Default off: minimizer gradients are usually faster sequentially
     mutable bool inMinimization_ = false;  // Internal state flag for DoEval behavior
+
+    // Covariance matrix evaluation
+    bool useCovarianceMatrix_ = true;
+    std::map<double, BinCovarianceCache> binCovarianceCache_;
 
     // Helper methods
     void InitializeMassBins(const std::vector<double>& mass_bins);

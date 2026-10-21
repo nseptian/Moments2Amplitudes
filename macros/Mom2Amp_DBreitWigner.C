@@ -39,7 +39,8 @@ void Mom2Amp_DBreitWigner(int seed=0){
     using MDModel = MassDependentFitter::MassDependenceConfig::ModelType;
     using WaveModelConfig = MassDependentFitter::MassDependenceConfig::WaveModelConfig;
     
-    auto a2_1320_config = MassDependentFitter::CreateCustomConfig({{2, {WaveModelConfig{"a2_1320", MDModel::BreitWigner}}}}, {0});
+    auto a2_1320_config = MassDependentFitter::CreateCustomConfig({{2, {WaveModelConfig{"a2_1320", MDModel::BreitWignerPlusPolynomial, -1}}}}, {0});
+
     // auto pi1_1400_a2_1320_config = MassDependentFitter::CreateCustomConfig(
     //     {
     //         {1, {WaveModelConfig{"pi1_1400", MDModel::BreitWigner}}},
@@ -52,6 +53,7 @@ void Mom2Amp_DBreitWigner(int seed=0){
     // auto allMoments_config = MassDependentFitter::CreateIncludeAllConfig();
 
     MassDependentFitter fitter{setup, massBins, 2, 0.0, {"H_3"}, a2_1320_config, H4_config};
+    
     fitter.SetEquationValues(massDepMoments);
     
     fitter.PrintIncludedMoments();
@@ -122,6 +124,12 @@ void Mom2Amp_DBreitWigner(int seed=0){
     // fitter.PrintIncludedMoments();
 
     paramManager.PrintParameters();
+    
+    for (auto& massBin : massBins) {
+        std::cout << "covariance matrix for mass bin " << massBin << " GeV:" << std::endl;
+        massDepMoments.GetMoments(massBin).PrintCovarianceMatrix();
+    } 
+
     fitter.SetMinimizerPrintLevel(2);
     fitter.MinimizeChi2(paramManager);
 

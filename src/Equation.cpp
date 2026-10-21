@@ -31,6 +31,7 @@ namespace m2pw{
    void Equation::SetEquationValue(Double_t val){
      
     _eqnValue=0.0;
+    _eqnError=1.0;
 
     //and now construct equation formula
     TString equation(_rooFormulaVar.expression());
@@ -49,6 +50,7 @@ namespace m2pw{
   void Equation::SetEquationValue(Double_t val, Double_t error){
      
     _eqnValue=0.0;
+    _eqnError = (error > 0.0) ? error : 1.0;
 
     //and now construct equation formula
     TString equation(_rooFormulaVar.expression());
@@ -59,7 +61,7 @@ namespace m2pw{
       equation.Append(Form(" - %0.16f",_eqnValue));
      }
     //else leave alone as dependent
-    equation = TString::Format("((%s)/%0.16f)", equation.Data(), error);
+    equation = TString::Format("((%s)/%0.16f)", equation.Data(), _eqnError);
     // cout << equation << endl;
     //now make the formula to be minimised
     _formula=TFormula(GetName()+"_Eqn",equation);
