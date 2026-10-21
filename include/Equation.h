@@ -23,6 +23,7 @@ namespace m2pw{
     const TString& GetOrigFormula() const {return _origFormula;}
     
     Double_t EqnValue() const {return _eqnValue;}
+    Double_t EqnError() const {return _eqnError;}
     Double_t GetOrigFormulaValue() const {return _origFormulaVal;}
     
     unsigned int LocalNDim() const {
@@ -32,6 +33,9 @@ namespace m2pw{
     Double_t DoEvalSq(const double* x) const { 
       auto result=DoEval(x);
       return result*result;
+    }
+    Double_t DoEvalResidual(const double* x) const {
+      return (_eqnError > 0.0) ? DoEval(x) * _eqnError : DoEval(x);
     }
     Bool_t NeedsRecalc() const{
       return _needsRecalc;
@@ -67,6 +71,7 @@ namespace m2pw{
     
     mutable Double_t _cachedVal=0;
     Double_t _eqnValue=0;
+    Double_t _eqnError=1.0;
     mutable Double_t _origFormulaVal=0;
     std::vector<Double_t> _constantVals;
     mutable std::vector<Double_t> _localX;

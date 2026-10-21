@@ -579,10 +579,25 @@ namespace m2pw {
     }
 
     double MassDependentFitter::EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const {
-        double chi2 = 0.0;
         const auto current_vals = pars.CurrentVals();
-
         auto& equations = eqns_.at(massBin);
+
+        if (useCovarianceMatrix_) {
+            auto covIt = binCovarianceCache_.find(massBin);
+            if (covIt != binCovarianceCache_.end() && covIt->second.isValid) {
+                const auto& cache = covIt->second;
+                const size_t K = cache.eqnIndices.size();
+                Double_t* delta = cache.deltaVec.GetMatrixArray();
+                for (size_t i = 0; i < K; ++i) {
+                    auto& eqn = equations[cache.eqnIndices[i]];
+                    eqn.SetNeedsRecalc();
+                    delta[i] = eqn.DoEvalResidual(current_vals);
+                }
+                return cache.invCovMatrix.Similarity(cache.deltaVec);
+            }
+        }
+
+        double chi2 = 0.0;
         const auto cacheIt = equationLCache_.find(massBin);
 
         for (size_t idx = 0; idx < equations.size(); ++idx) {
@@ -869,19 +884,70 @@ namespace m2pw {
     }
 
     void MassDependentFitter::SetEquationValues(MassDependentMoments& moms) {
+        binCovarianceCache_.clear();
         for (auto& [mass_bin, equations] : eqns_) {
+            MomentHelper moments = moms.GetMoments(mass_bin);
             for (auto& eqn : equations) {
                 eqn.FindL();
-                // Get a copy instead of a reference to avoid binding to temporary
-                MomentHelper moments = moms.GetMoments(mass_bin);
-                // cout << "Setting equation value for " << eqn.GetName() 
-                //      << " at mass bin " << mass_bin 
-                //      << ": value = " << moments.GetUnnormalizedVal(eqn.GetName())
-                //      << ", error = " << moments.GetUnnormalizedError(eqn.GetName()) << endl;
                 eqn.SetEquationValue(moments.GetUnnormalizedVal(eqn.GetName()),
                                    moments.GetUnnormalizedError(eqn.GetName()));
                 eqn.DoEval(pars_[mass_bin].CurrentVals());
             }
+
+            // Build Covariance Cache for this mass bin
+            BinCovarianceCache cache;
+            const auto cacheIt = equationLCache_.find(mass_bin);
+            for (size_t idx = 0; idx < equations.size(); ++idx) {
+                auto& eqn = equations[idx];
+                int L_value = -1;
+                if (cacheIt != equationLCache_.end() && idx < cacheIt->second.size()) {
+                    L_value = cacheIt->second[idx];
+                } else {
+                    L_value = ExtractLFromEquationName(eqn.GetName());
+                }
+                if (L_value < 0 || hMomentsConfig_.ShouldIncludeL(L_value)) {
+                    cache.eqnIndices.push_back(idx);
+                    cache.momentNames.push_back(eqn.GetName());
+                }
+            }
+
+            const size_t K = cache.momentNames.size();
+            if (K > 0) {
+                TMatrixDSym V(K);
+                for (size_t i = 0; i < K; ++i) {
+                    for (size_t j = i; j < K; ++j) {
+                        double cov_val = moments.GetCovariance(cache.momentNames[i], cache.momentNames[j]);
+                        V(i, j) = cov_val;
+                        V(j, i) = cov_val;
+                    }
+                }
+                cache.covMatrix.ResizeTo(K, K);
+                cache.covMatrix = V;
+                cache.deltaVec.ResizeTo(K);
+
+                TMatrixDSym invV(V);
+                Double_t det = 0.0;
+                invV.Invert(&det);
+                if (invV.IsValid() && det > 1e-15 && !std::isnan(det)) {
+                    cache.invCovMatrix.ResizeTo(K, K);
+                    cache.invCovMatrix = invV;
+                    cache.isValid = true;
+                } else {
+                    LogFitWarn("CHI2", Form("mass_bin=%g covariance_matrix_singular (det=%g) fallback_to_diagonal", mass_bin, det));
+                    cache.invCovMatrix.ResizeTo(K, K);
+                    cache.invCovMatrix.Zero();
+                    for (size_t i = 0; i < K; ++i) {
+                        double var = V(i, i);
+                        if (var <= 0.0) {
+                            double err = moments.GetUnnormalizedError(cache.momentNames[i]);
+                            var = (err > 0.0) ? err * err : 1.0;
+                        }
+                        cache.invCovMatrix(i, i) = 1.0 / var;
+                    }
+                    cache.isValid = true;
+                }
+            }
+            binCovarianceCache_[mass_bin] = std::move(cache);
         }
     }
 
@@ -1731,6 +1797,51 @@ namespace m2pw {
         for (int L = 0; L <= 4; ++L) {
             bool shouldInclude = hMomentsConfig_.ShouldIncludeL(L);
             LogFitInfo("MOMENTS", Form("L=%d include=%d", L, shouldInclude));
+        }
+    }
+
+    void MassDependentFitter::PrintCovarianceMatrix(double massBin, bool printInverse) const {
+        auto it = binCovarianceCache_.find(massBin);
+        if (it == binCovarianceCache_.end()) {
+            for (auto fit = binCovarianceCache_.begin(); fit != binCovarianceCache_.end(); ++fit) {
+                if (std::abs(fit->first - massBin) < 1e-4) {
+                    it = fit;
+                    break;
+                }
+            }
+        }
+        if (it == binCovarianceCache_.end()) {
+            std::cerr << "Mass bin " << massBin << " not found in covariance cache." << std::endl;
+            return;
+        }
+
+        const auto& cache = it->second;
+        const size_t K = cache.momentNames.size();
+        std::cout << "\n=== Fitter Covariance Matrix for Mass Bin: " << it->first << " GeV (valid=" << cache.isValid << ") ===" << std::endl;
+        std::cout << "Included moments (" << K << "): [";
+        for (size_t i = 0; i < K; ++i) {
+            std::cout << cache.momentNames[i] << (i + 1 < K ? ", " : "");
+        }
+        std::cout << "]" << std::endl;
+        if (cache.isValid && K > 0) {
+            if (printInverse) {
+                std::cout << "Inverse Covariance Matrix (W = V^-1):" << std::endl;
+                cache.invCovMatrix.Print();
+            } else {
+                std::cout << "Covariance Matrix (V):" << std::endl;
+                cache.covMatrix.Print();
+            }
+        } else {
+            std::cout << "No valid covariance matrix for this bin." << std::endl;
+        }
+    }
+
+    void MassDependentFitter::PrintCovarianceMatrices(bool printInverse) const {
+        std::cout << "\n========================================================" << std::endl;
+        std::cout << " Fitter Covariance Matrices for " << binCovarianceCache_.size() << " Mass Bins" << std::endl;
+        std::cout << "========================================================" << std::endl;
+        for (const auto& [mass, cache] : binCovarianceCache_) {
+            PrintCovarianceMatrix(mass, printInverse);
         }
     }
 
