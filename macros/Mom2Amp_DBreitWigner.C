@@ -128,7 +128,9 @@ void Mom2Amp_DBreitWigner(int seed=0){
     for (auto& massBin : massBins) {
         std::cout << "covariance matrix for mass bin " << massBin << " GeV:" << std::endl;
         massDepMoments.GetMoments(massBin).PrintCovarianceMatrix();
-    } 
+    }
+
+    fitter.SetMinimizerTolerance(0.01);
 
     fitter.SetMinimizerPrintLevel(2);
     fitter.MinimizeChi2(paramManager);

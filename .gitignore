@@ -4,6 +4,7 @@ test_*
 plots*
 data*
 brufit*
+*.root
 
 # Analysis output directories
 Moments.out/

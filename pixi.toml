@@ -35,3 +35,4 @@ py3nj = "~=0.2.1"
 
 [activation.env]
 PYTHONNOUSERSITE = "1"
+PYTHONPATH = "${PIXI_PROJECT_ROOT}/python:${PYTHONPATH}"

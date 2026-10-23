@@ -67,6 +67,10 @@ Moments2Amplitudes/
 │   ├── Mom2Amp_SFlattepolyDBreitWigner.C  # Example: S-wave (Flatté + poly) + D-wave (BW)
 │   └── RunGivenBruMoments.C         # Example: Fit using pre-existing moments
 │
+├── python/                           # Python analysis tools and post-processing
+│   ├── moments_to_amplitudes.py      # Core Moments2Amplitudes analysis class
+│   └── MomentsToAmplitudes.py        # Module alias / backwards-compatibility wrapper
+│
 └── set_env.sh                        # Environment setup script
 ```
 
@@ -159,6 +163,49 @@ auto config = m2pw::MassDependentFitter::CreateCustomConfig(
     },
     {1} // Mass-independent waves
 );
+```
+
+---
+
+## Python Analysis Tools (`Moments2Amplitudes`)
+
+The `python/` directory provides Python utilities for post-processing and visualizing fit results from `MassDependentFitter::MakeResultTree`:
+
+```python
+from moments_to_amplitudes import Moments2Amplitudes
+
+# Initialize analyzer with fit results directory
+analyzer = Moments2Amplitudes(
+    fit_result_dir="path/to/fit/results",
+    output_dir="./plots",
+    filename_pattern="result_tree_[]_nominal.root",
+    n_mass_bins=30,
+    first_mass_bin_center=0.82,
+    mass_bin_width=0.04
+)
+
+# 1. Load multi-seed fit files and filter valid minima (isValid == 1)
+analyzer.load_fit_files(max_files=100)
+
+# 2. Inspect chi2 distribution and rank best fits
+analyzer.print_chi2_values()
+analyzer.plot_chi2_distribution(output_filename="chi2_distribution.pdf")
+
+# 3. Load the best N fits
+analyzer.load_trees_from_best_fits(n_best=10)
+
+# 4. Extract mass-dependent resonance parameters (e.g. mass, width)
+params = analyzer.get_mass_dependent_parameters(
+    parameters=["posRefl_a2_1320_mass", "posRefl_a2_1320_width"],
+    lowest_chi2_tree_index=0
+)
+
+# 5. Plot fitted amplitudes vs invariant mass overlaid with H0(0,0)
+analyzer.plot_amplitudes_vs_mass(
+    unnormalized_moments_file="path/to/UnnormalizedMoments_vs_Mass.root",
+    output_filename="Mom2Amps_a2_vs_mass.pdf",
+    wave_type="a_2"
+)
 ```
 
 ---

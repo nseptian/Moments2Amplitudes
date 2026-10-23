@@ -17,10 +17,16 @@ void Load(){
 
   // CleanAclicArtifacts(srcDir);
   
+  // Suppress duplicate TClassTable warnings while loading ACLiC libraries
+  int prevLevel = gErrorIgnoreLevel;
+  gErrorIgnoreLevel = kError;
+
   // Load source files with absolute paths
   gROOT->ProcessLine(Form(".L %s/ParameterHelper.cpp+", srcDir.Data()));
   gROOT->ProcessLine(Form(".L %s/Equation.cpp+", srcDir.Data()));
   gROOT->ProcessLine(Form(".L %s/EquationSolver.cpp+", srcDir.Data()));
   gROOT->ProcessLine(Form(".L %s/MomentHelper.cpp+", srcDir.Data()));
   gROOT->ProcessLine(Form(".L %s/MassDependentFitter.cpp+", srcDir.Data()));
+
+  gErrorIgnoreLevel = prevLevel;
 }
