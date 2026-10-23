@@ -6,9 +6,9 @@
 #include <vector>
 #include <map>
 
-const Double_t FIRST_MASS_BIN_CENTER = 0.82; // in GeV
+const Double_t FIRST_MASS_BIN_CENTER = 1.06; // in GeV
 const Double_t MASS_BIN_WIDTH = 0.04;
-const Int_t N_MASS_BINS = 20;
+const Int_t N_MASS_BINS = 14;
 
 TString FIT_RESULTS_DIR = "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200/t010020/";
 

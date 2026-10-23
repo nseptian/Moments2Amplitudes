@@ -312,7 +312,6 @@ namespace m2pw {
         
         // Initialize equations for each mass bin
         const auto validEqn = [&noUse](const TString& name) {
-            // if (name.BeginsWith("a_")) return false; // Skip amplitude equations
             if (name == "normalise") return false;
             return std::none_of(noUse.begin(), noUse.end(), 
                                [&name](const TString& match) { return name.Contains(match); });
@@ -325,13 +324,25 @@ namespace m2pw {
                 if (!validEqn(form->GetName())) continue;
                 
                 if (auto* var = dynamic_cast<RooFormulaVar*>(form)) {
-                    eqns_[mass_bin].emplace_back(var, &pars_[mass_bin], noise);
+                    if (IsConstraint(var->GetName())) {
+                        eqns_[mass_bin].emplace_back(var, &pars_[mass_bin], noise);
+                    } else {
+                        others_[mass_bin].emplace_back(var, &pars_[mass_bin]);
+                    }
                 }
+            }
+
+            // Connect dependencies (e.g. normalisation or last wave equation)
+            for (auto& eqn : eqns_[mass_bin]) {
+                eqn.FindDependencies(others_[mass_bin]);
             }
 
             // Initialize equations
             for (auto& eqn : eqns_[mass_bin]) {
                 eqn.FindL();
+                eqn.DoEval(pars_[mass_bin].CurrentVals());
+            }
+            for (auto& eqn : others_[mass_bin]) {
                 eqn.DoEval(pars_[mass_bin].CurrentVals());
             }
         }
@@ -973,13 +984,14 @@ namespace m2pw {
             return;
         }
 
-        std::unique_ptr<TFile> file(TFile::Open(fileName, "RECREATE"));
+        TFile* file = TFile::Open(fileName, "RECREATE");
         if (!file || file->IsZombie()) {
+            if (file) delete file;
             LogFitWarn("RESULT", Form("failed_to_create_file path=%s", fileName.Data()));
             return;
         }
 
-        auto tree = std::make_unique<TTree>("result", "result");
+        TTree* tree = new TTree("result", "result");
         const int nMassBins = static_cast<int>(massBins_.size());
         const int nPars = pars_.begin()->second.Nvars();
 
@@ -1045,12 +1057,12 @@ namespace m2pw {
         LogFitInfo("RESULT", "filling_tree=mass_dependent_params");
 
         // create new tree to store mass dependent parameters
-        auto mdTree = std::make_unique<TTree>("mass_dependent_params", "Mass Dependent Parameters");
+        TTree* mdTree = new TTree("mass_dependent_params", "Mass Dependent Parameters");
         
-        const int nMDPars = paramManager.totalNpars;
-        std::vector<double> md_par_vals(nMDPars);
-        std::vector<double> md_par_errors(nMDPars);
-        int idx = 0;
+        const size_t nMDPars = paramManager.parsList.size();
+        std::vector<double> md_par_vals(nMDPars, 0.0);
+        std::vector<double> md_par_errors(nMDPars, 0.0);
+        size_t idx = 0;
         for (const auto& [parName, value] : paramManager.parsList) {
             // double currentValue = value;
             if (parName.BeginsWith("MD_")) {  // Only mass-dependent parameters
@@ -1075,7 +1087,7 @@ namespace m2pw {
         mdTree->Fill();
 
         
-        auto chi2_tree = std::make_unique<TTree>("chi2", "chi2");
+        TTree* chi2_tree = new TTree("chi2", "chi2");
         double chi2 = lastChi2_;
         chi2_tree->Branch("chi2", &chi2);
         int seed_val = paramManager.randomSeed;
@@ -1091,6 +1103,8 @@ namespace m2pw {
         chi2_tree->Fill();
 
         file->Write();
+        file->Close();
+        delete file;
         LogFitInfo("RESULT", Form("saved path=%s", fileName.Data()));
     }
 

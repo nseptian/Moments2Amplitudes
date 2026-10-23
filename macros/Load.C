@@ -11,13 +11,13 @@ void CleanAclicArtifacts(const TString& srcDir) {
 
 void Load(){
   // Prefer the run-time project directory, then fall back to the legacy env var.
-  TString projectDir = "/d/grid17/septian/Moments2Amplitudes_dev/";
+  TString projectDir = "/d/grid17/septian/Moments2Amplitudes/";
   // cout << "Using project directory: " << projectDir << endl;
   TString srcDir = projectDir + "/src";
 
   // CleanAclicArtifacts(srcDir);
   
-  // // Load source files with absolute paths
+  // Load source files with absolute paths
   gROOT->ProcessLine(Form(".L %s/ParameterHelper.cpp+", srcDir.Data()));
   gROOT->ProcessLine(Form(".L %s/Equation.cpp+", srcDir.Data()));
   gROOT->ProcessLine(Form(".L %s/EquationSolver.cpp+", srcDir.Data()));

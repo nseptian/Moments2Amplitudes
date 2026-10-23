@@ -123,12 +123,24 @@ namespace m2pw{
 	_localX[ilocal]=x[index];
       }
       else if(index==static_cast<Int_t>(ParType::EDependancy)){//dependency
-	_localX[ilocal]=_dependencies[idep]->DoEval(x);
-	++idep;
+	if (idep < _dependencies.size() && _dependencies[idep] != nullptr) {
+	  _localX[ilocal]=_dependencies[idep]->DoEval(x);
+	  ++idep;
+	} else {
+	  std::cerr << "Warning in Equation::OrganiseVariables: dependency index " << idep 
+	            << " out of bounds (size=" << _dependencies.size() << ") for " << GetName() << std::endl;
+	  _localX[ilocal] = 0.0;
+	}
       }
       else if(index==static_cast<Int_t>(ParType::EConstant)){//constant
-	_localX[ilocal]=_constantVals[iconst];
-	++iconst;
+	if (iconst < _constantVals.size()) {
+	  _localX[ilocal]=_constantVals[iconst];
+	  ++iconst;
+	} else {
+	  std::cerr << "Warning in Equation::OrganiseVariables: constant index " << iconst 
+	            << " out of bounds (size=" << _constantVals.size() << ") for " << GetName() << std::endl;
+	  _localX[ilocal] = 0.0;
+	}
       }
       else std::cout<<"DoEval should not be here "<<std::endl;
       ++ilocal;

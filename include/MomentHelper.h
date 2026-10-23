@@ -352,13 +352,18 @@ public:
     Double_t acceptance = 1.0;
     TFile* csFile = TFile::Open(dirPath + "/ResultsCrossSection.root");
     if (csFile && !csFile->IsZombie()) {
-      HS::FIT::CrossSection* cs = (HS::FIT::CrossSection*)csFile->Get("cs");
-      if (cs) {
+      if (auto* tree = csFile->Get<TTree>("CrossSection")) {
+        Double_t acc = 1.0;
+        tree->SetBranchAddress("Acceptance", &acc);
+        if (tree->GetEntries() > 0) tree->GetEntry(0);
+        acceptance = acc;
+      } else if (HS::FIT::CrossSection* cs = (HS::FIT::CrossSection*)csFile->Get("cs")) {
         acceptance = cs->GetAcceptance();
       }
+      csFile->Close();
       delete csFile;
     } else {
-      if (csFile) delete csFile;
+      if (csFile) { csFile->Close(); delete csFile; }
       acceptance = GetAcceptance();
     }
     if (acceptance <= 0.0) acceptance = 1.0;
@@ -505,12 +510,31 @@ private:
       std::cerr << "Error: Cannot open file " << _filepath + "/ResultsCrossSection.root" << std::endl;
       return 1.0; // Default acceptance if file cannot be opened
     }
+
+    // Try reading from modern CrossSectionEvaluator TTree first
+    if (auto* tree = file->Get<TTree>("CrossSection")) {
+      Double_t acc = 1.0;
+      tree->SetBranchAddress("Acceptance", &acc);
+      if (tree->GetEntries() > 0) {
+        tree->GetEntry(0);
+      }
+      file->Close();
+      delete file;
+      return acc;
+    }
+
+    // Fallback to legacy CrossSection object
     HS::FIT::CrossSection* cross_section = (HS::FIT::CrossSection*)file->Get("cs");
     if (!cross_section) {
       std::cerr << "Error: CrossSection not found in file " << _filepath + "/ResultsCrossSection.root" << std::endl;
+      file->Close();
+      delete file;
       return 1.0; // Default acceptance if cross section is not found
     }
-    return cross_section->GetAcceptance();
+    Double_t acc = cross_section->GetAcceptance();
+    file->Close();
+    delete file;
+    return acc;
   }
 
   /**

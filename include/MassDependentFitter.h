@@ -471,6 +471,7 @@ namespace m2pw {
 private:
     std::map<double, ParameterHelper> pars_;
     std::map<double, equation_t> eqns_;
+    std::map<double, equation_t> others_;
     std::vector<MassDependentFunction> massDepFuncs_;
     std::vector<double> massBins_;
     std::map<TString, int> parNameToIndex_;

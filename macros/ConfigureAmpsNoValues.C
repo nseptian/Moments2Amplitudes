@@ -1,8 +1,9 @@
 #include "EquationSolver.h"
 #include "MassDependentFitter.h"
 
-#include "ToyManager.h"
-#include "PhotoTwoSpin0Amps.h"
+// BruFit session already includes AmpConfigure, ToyManager, and PhotoTwoSpin0Amps at startup
+// #include "AmpConfigure.h"
+// #include "PhotoTwoSpin0Amps.h"
 
 HS::FIT::Setup& ConfigureAmpsNoValues(UInt_t Lmax=1,UInt_t Mmax=1,UInt_t Ref=2){
 
@@ -37,6 +38,9 @@ HS::FIT::Setup& ConfigureAmpsNoValues(UInt_t Lmax=1,UInt_t Mmax=1,UInt_t Ref=2){
 
   //Only use even , S,D,... waves
   // config.SetOnlyEvenWaves();
+
+  //Using unnormalize moments relations
+  config.SetNormalise(false);
 
   //Load required functions
   config.ConfigurePWAs();
