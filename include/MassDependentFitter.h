@@ -190,6 +190,7 @@ namespace m2pw {
 
         void PrintEquations(const TString opt = "", const double mass_bin_center = 0.0) const;
         void SetEquationValues(MassDependentMoments& moms);
+        void SetEquationValuesFromMCMCEntry(const MassDependentMoments& moms, Long64_t entryIndex);
         void PrintParNameIndices() const;
         void PrintParCurrentVals(double mass_bin_center) const;     
 
@@ -323,6 +324,9 @@ namespace m2pw {
         const MassDependenceConfig& GetMassDependenceConfig() const { return massDependenceConfig_; }
         const MomentsConfig& GetMomentsConfig() const { return hMomentsConfig_; }
         int GetMinimizerPrintLevel() const { return minimizerPrintLevel_; }
+        bool IsMinimizerValid() const { return minimizerIsValid_; }
+        bool HasValidErrors() const { return minimizerHasValidErrors_; }
+        int GetMinimizerStatus() const { return minimizerStatus_; }
 
         // Static factory methods for common configurations
         static MassDependenceConfig CreateDefaultConfig() {
@@ -467,6 +471,13 @@ namespace m2pw {
         // Utility methods
         static std::vector<TString> GetParNames();
         void MinimizeChi2(ParameterManager& paramManager);
+        void FitMCMCTree(ParameterManager& paramManager, 
+                         MassDependentMoments& moms, 
+                         const TString& outputFileName,
+                         Long64_t burnIn = 0, 
+                         Long64_t maxEntries = -1, 
+                         int stride = 1,
+                         const TString& logDir = "");
 
 private:
     std::map<double, ParameterHelper> pars_;

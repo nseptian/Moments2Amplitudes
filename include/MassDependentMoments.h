@@ -34,7 +34,7 @@ class MassDependentMoments {
                 
                 std::cout << "Loading moments from: " << filePath << std::endl;
                 MomentHelper moments;
-                moments.Set(filePath, 1, 1);
+                moments.Set(filePath, _FitResultsFilename, 1, 1);
                 _moments[massValue] = moments;
             }
         }
@@ -61,7 +61,7 @@ class MassDependentMoments {
                 
                 std::cout << "Loading moments from: " << filePath << std::endl;
                 MomentHelper moments;
-                moments.Set(filePath, 1, 1);
+                moments.Set(filePath, _FitResultsFilename, 1, 1);
                 _moments[massValue] = moments;
             }
         }
@@ -246,6 +246,38 @@ class MassDependentMoments {
 
         const std::vector<Double_t>& GetMassBins() const {
             return _MassBins;
+        }
+
+        /**
+         * @brief Check whether MCMC samples are available across loaded mass bins
+         */
+        bool HasMCMCSamples() const {
+            return GetMCMCEntries() > 0;
+        }
+
+        /**
+         * @brief Get minimum number of MCMC entries across all mass bins
+         */
+        Long64_t GetMCMCEntries() const {
+            if (_moments.empty()) return 0;
+            Long64_t minEntries = -1;
+            for (const auto& [mass, momHelper] : _moments) {
+                Long64_t n = momHelper.GetMCMCEntries();
+                if (minEntries < 0 || n < minEntries) {
+                    minEntries = n;
+                }
+            }
+            return (minEntries < 0) ? 0 : minEntries;
+        }
+
+        /**
+         * @brief Load moment values for a specific MCMC entry into all mass bins
+         * @param entryIndex MCMC tree entry index
+         */
+        void LoadMCMCEntry(Long64_t entryIndex) {
+            for (auto& [mass, momHelper] : _moments) {
+                momHelper.LoadMCMCEntry(entryIndex);
+            }
         }
 
     private:

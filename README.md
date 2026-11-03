@@ -147,6 +147,22 @@ run/fit_run_01_YYYYMMDD_HHMMSS/
 └── metadata.txt # Run environment and summary
 ```
 
+### Multi-Start Global Minimum Search & MCMC Uncertainty Propagation
+
+To avoid local minima traps and propagate experimental uncertainties cleanly, use the randomized multi-start and parallel MCMC propagation workflows:
+
+1. **Pure D-wave fit to $H_4$ ($a_2(1320)$)**:
+   ```bash
+   brufit -l -b -q macros/Load.C 'macros/Mom2Amp_DBreitWigner_MCMC.C(100, 0, 200, 1, "mcmc_propagation_results.root", "logs", 40)'
+   ```
+
+2. **S-wave Piecewise + D-wave Breit-Wigner to $H_0, H_2, H_4$**:
+   ```bash
+   brufit -l -b -q macros/Load.C 'macros/Mom2Amp_SPiecewiseDBreitWigner.C(100, 0, 200, 1, "logs/central_best_params.root", "mcmc_propagation_spiecewise_results.root", "logs_spiecewise", 40)'
+   ```
+
+See [`docs/MCMC_PROPAGATION.md`](docs/MCMC_PROPAGATION.md) for full documentation of options, initialization rules, and output tree schemas.
+
 ### Configuring Amplitude Models
 
 In the macros, model parameterizations are assigned per partial wave using `MassDependenceConfig`:

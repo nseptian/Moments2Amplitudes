@@ -21,6 +21,12 @@ __pycache__/
 
 # Log files
 *.log
+logs/
+logs_*/
+
+# Plots and figures
+*.pdf
+*.png
 
 # Temporary files
 *.tmp

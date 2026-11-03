@@ -10,6 +10,16 @@ void CleanAclicArtifacts(const TString& srcDir) {
 }
 
 void Load(){
+  // Ensure BruFit environment and classes (e.g. RooHSSphHarmonic) are loaded
+  if (!TClass::GetClass("RooHSSphHarmonic")) {
+    TString brufitDir = gSystem->Getenv("BRUFIT");
+    if (!brufitDir.IsNull() && gSystem->AccessPathName(brufitDir + "/macros/LoadBru.C") == 0) {
+      gROOT->ProcessLine(Form(".x %s/macros/LoadBru.C", brufitDir.Data()));
+    } else if (gSystem->AccessPathName("/d/grid17/septian/brufit_dev/brufit/macros/LoadBru.C") == 0) {
+      gROOT->ProcessLine(".x /d/grid17/septian/brufit_dev/brufit/macros/LoadBru.C");
+    }
+  }
+
   // Prefer the run-time project directory, then fall back to the legacy env var.
   TString projectDir = "/d/grid17/septian/Moments2Amplitudes/";
   // cout << "Using project directory: " << projectDir << endl;

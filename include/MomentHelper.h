@@ -38,7 +38,9 @@ public:
       _unnormalized_moments_err(other._unnormalized_moments_err),
       _cov_moment_names(other._cov_moment_names),
       _cov_name_to_index(other._cov_name_to_index),
-      _has_cov(other._has_cov) {
+      _has_cov(other._has_cov),
+      _mcmc_unnormalized_samples(other._mcmc_unnormalized_samples),
+      _nMCMCEntries(other._nMCMCEntries) {
     if (other._has_cov && other._unnormalized_cov.GetNrows() > 0) {
       _unnormalized_cov.ResizeTo(other._unnormalized_cov.GetNrows(), other._unnormalized_cov.GetNcols());
       _unnormalized_cov = other._unnormalized_cov;
@@ -56,6 +58,8 @@ public:
       _cov_moment_names = other._cov_moment_names;
       _cov_name_to_index = other._cov_name_to_index;
       _has_cov = other._has_cov;
+      _mcmc_unnormalized_samples = other._mcmc_unnormalized_samples;
+      _nMCMCEntries = other._nMCMCEntries;
       if (other._has_cov && other._unnormalized_cov.GetNrows() > 0) {
         _unnormalized_cov.ResizeTo(other._unnormalized_cov.GetNrows(), other._unnormalized_cov.GetNcols());
         _unnormalized_cov = other._unnormalized_cov;
@@ -75,7 +79,9 @@ public:
       _unnormalized_moments_err(std::move(other._unnormalized_moments_err)),
       _cov_moment_names(std::move(other._cov_moment_names)),
       _cov_name_to_index(std::move(other._cov_name_to_index)),
-      _has_cov(other._has_cov) {
+      _has_cov(other._has_cov),
+      _mcmc_unnormalized_samples(std::move(other._mcmc_unnormalized_samples)),
+      _nMCMCEntries(other._nMCMCEntries) {
     if (other._has_cov && other._unnormalized_cov.GetNrows() > 0) {
       _unnormalized_cov.ResizeTo(other._unnormalized_cov.GetNrows(), other._unnormalized_cov.GetNcols());
       _unnormalized_cov = other._unnormalized_cov;
@@ -93,6 +99,8 @@ public:
       _cov_moment_names = std::move(other._cov_moment_names);
       _cov_name_to_index = std::move(other._cov_name_to_index);
       _has_cov = other._has_cov;
+      _mcmc_unnormalized_samples = std::move(other._mcmc_unnormalized_samples);
+      _nMCMCEntries = other._nMCMCEntries;
       if (other._has_cov && other._unnormalized_cov.GetNrows() > 0) {
         _unnormalized_cov.ResizeTo(other._unnormalized_cov.GetNrows(), other._unnormalized_cov.GetNcols());
         _unnormalized_cov = other._unnormalized_cov;
@@ -122,10 +130,44 @@ public:
     _filepath = filepath;
     if (!BruFitResult) return;
     
+    if (_filepath.EndsWith(".root")) {
+      _filepath = gSystem->DirName(filepath);
+      if (MCMCResult) {
+        LoadMCMCResults(filepath);
+      } else {
+        LoadDirectResults(filepath);
+      }
+      return;
+    }
+    
     if (MCMCResult) {
-      LoadMCMCResults(_filepath + "/ResultsBruMcmcCovariance.root");
+      TString mcmcFixed = _filepath + "/ResultsBruMcmcFixedCovariance.root";
+      TString mcmcCov = _filepath + "/ResultsBruMcmcCovariance.root";
+      if (!gSystem->AccessPathName(mcmcFixed)) {
+        LoadMCMCResults(mcmcFixed);
+      } else {
+        LoadMCMCResults(mcmcCov);
+      }
     } else {
       LoadDirectResults(_filepath + "/ResultsBruFit.root");
+    }
+  }
+
+  /**
+   * @brief Load moments from a specific BruFit result file in directory
+   * @param filepath Directory containing result file
+   * @param filename Specific result file name
+   * @param BruFitResult Flag to load BruFit results (default: 1)
+   * @param MCMCResult Flag to load MCMC results (default: 1)
+   */
+  void Set(const TString& filepath, const TString& filename, const Int_t BruFitResult = 1, const Int_t MCMCResult = 1) {
+    _filepath = filepath;
+    if (!BruFitResult) return;
+    
+    if (MCMCResult) {
+      LoadMCMCResults(_filepath + "/" + filename);
+    } else {
+      LoadDirectResults(_filepath + "/" + filename);
     }
   }
 
@@ -215,6 +257,50 @@ public:
    * @brief Check whether a covariance matrix is available
    */
   bool HasCovarianceMatrix() const { return _has_cov; }
+
+  /**
+   * @brief Check whether MCMC samples are available
+   */
+  bool HasMCMCSamples() const { return _nMCMCEntries > 0; }
+
+  /**
+   * @brief Get total number of MCMC entries
+   */
+  Long64_t GetMCMCEntries() const { return _nMCMCEntries; }
+
+  /**
+   * @brief Get unnormalized moment value for a specific MCMC entry
+   * @param name Moment name
+   * @param entry MCMC tree entry index
+   * @return Moment value, or central unnormalized value if entry out of range
+   */
+  Double_t GetMCMCUnnormalizedVal(const TString& name, Long64_t entry) const {
+    auto it = _mcmc_unnormalized_samples.find(name);
+    if (it != _mcmc_unnormalized_samples.end() && entry >= 0 && entry < static_cast<Long64_t>(it->second.size())) {
+      return it->second[entry];
+    }
+    return GetUnnormalizedVal(name);
+  }
+
+  /**
+   * @brief Load moment values from a specific MCMC entry into _unnormalized_moments
+   * @param entry MCMC tree entry index
+   */
+  void LoadMCMCEntry(Long64_t entry) {
+    if (entry < 0 || entry >= _nMCMCEntries) return;
+    for (const auto& [name, vals] : _mcmc_unnormalized_samples) {
+      if (entry < static_cast<Long64_t>(vals.size())) {
+        _unnormalized_moments[name] = vals[entry];
+      }
+    }
+  }
+
+  /**
+   * @brief Get map of all moment sample vectors from MCMC
+   */
+  const std::map<TString, std::vector<Double_t>>& GetMCMCSamples() const {
+    return _mcmc_unnormalized_samples;
+  }
 
   /**
    * @brief Get reference to the unnormalized covariance matrix
@@ -649,6 +735,15 @@ private:
       }
     }
     _has_cov = true;
+
+    // Cache unnormalized samples for each moment
+    _mcmc_unnormalized_samples.clear();
+    for (size_t i = 0; i < hBranches.size(); ++i) {
+      _mcmc_unnormalized_samples[hBranches[i]] = std::move(samples[i]);
+    }
+    _mcmc_unnormalized_samples["H_0_0_0"] = std::move(samples[K - 1]);
+    _nMCMCEntries = nEntries;
+
     tree->ResetBranchAddresses();
   }
 
@@ -740,4 +835,6 @@ private:
   std::vector<TString> _cov_moment_names;                  ///< Names of moments in covariance matrix
   std::map<TString, int> _cov_name_to_index;               ///< Index lookup in covariance matrix
   bool _has_cov = false;                                   ///< Flag indicating if covariance matrix is available
+  std::map<TString, std::vector<Double_t>> _mcmc_unnormalized_samples; ///< Per-entry unnormalized moments from MCMCTree
+  Long64_t _nMCMCEntries = 0;                              ///< Number of MCMC entries
 };
