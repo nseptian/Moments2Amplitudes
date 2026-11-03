@@ -257,3 +257,4 @@ def run_all_diagnostics_and_plots(
         "reports": report_files,
         "plots": plot_files,
     }
+

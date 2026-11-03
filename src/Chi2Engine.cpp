@@ -4,6 +4,7 @@
 #include "MassDependentFitter.h"
 #include "FitInternalUtils.h"
 #include "ROOT/TThreadExecutor.hxx"
+#include <TError.h>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -348,38 +349,55 @@ namespace m2pw {
 
             const size_t K = cache.momentNames.size();
             if (K > 0) {
-                TMatrixDSym V(K);
-                for (size_t i = 0; i < K; ++i) {
-                    for (size_t j = i; j < K; ++j) {
-                        double cov_val = moments.GetCovariance(cache.momentNames[i], cache.momentNames[j]);
-                        V(i, j) = cov_val;
-                        V(j, i) = cov_val;
-                    }
-                }
                 cache.covMatrix.ResizeTo(K, K);
-                cache.covMatrix = V;
+                cache.invCovMatrix.ResizeTo(K, K);
                 cache.deltaVec.ResizeTo(K);
 
-                TMatrixDSym invV(V);
-                Double_t det = 0.0;
-                invV.Invert(&det);
-                if (invV.IsValid() && det > 1e-15 && !std::isnan(det)) {
-                    cache.invCovMatrix.ResizeTo(K, K);
-                    cache.invCovMatrix = invV;
-                    cache.isValid = true;
-                } else {
-                    LogFitWarn("CHI2", Form("mass_bin=%g covariance_matrix_singular (det=%g) fallback_to_diagonal", mass_bin, det));
-                    cache.invCovMatrix.ResizeTo(K, K);
+                if (!useCovarianceMatrix_) {
+                    cache.covMatrix.Zero();
                     cache.invCovMatrix.Zero();
                     for (size_t i = 0; i < K; ++i) {
-                        double var = V(i, i);
-                        if (var <= 0.0) {
-                            double err = moments.GetUnnormalizedError(cache.momentNames[i]);
-                            var = (err > 0.0) ? err * err : 1.0;
-                        }
+                        double err = moments.GetUnnormalizedError(cache.momentNames[i]);
+                        double var = (err > 0.0) ? err * err : 1.0;
+                        cache.covMatrix(i, i) = var;
                         cache.invCovMatrix(i, i) = 1.0 / var;
                     }
                     cache.isValid = true;
+                } else {
+                    TMatrixDSym V(K);
+                    for (size_t i = 0; i < K; ++i) {
+                        for (size_t j = i; j < K; ++j) {
+                            double cov_val = moments.GetCovariance(cache.momentNames[i], cache.momentNames[j]);
+                            V(i, j) = cov_val;
+                            V(j, i) = cov_val;
+                        }
+                    }
+                    cache.covMatrix = V;
+
+                    // Temporarily silence internal ROOT TDecompLU errors during the invertibility check
+                    int prevIgnore = gErrorIgnoreLevel;
+                    gErrorIgnoreLevel = kBreak;
+                    TMatrixDSym invV(V);
+                    Double_t det = 0.0;
+                    invV.Invert(&det);
+                    gErrorIgnoreLevel = prevIgnore;
+
+                    if (invV.IsValid() && det > 1e-15 && !std::isnan(det)) {
+                        cache.invCovMatrix = invV;
+                        cache.isValid = true;
+                    } else {
+                        LogFitWarn("CHI2", Form("mass_bin=%g covariance_matrix_singular (det=%g) fallback_to_diagonal", mass_bin, det));
+                        cache.invCovMatrix.Zero();
+                        for (size_t i = 0; i < K; ++i) {
+                            double var = V(i, i);
+                            if (var <= 0.0) {
+                                double err = moments.GetUnnormalizedError(cache.momentNames[i]);
+                                var = (err > 0.0) ? err * err : 1.0;
+                            }
+                            cache.invCovMatrix(i, i) = 1.0 / var;
+                        }
+                        cache.isValid = true;
+                    }
                 }
             }
             binCovarianceCacheVec_[b] = cache;
@@ -781,3 +799,4 @@ namespace m2pw {
 } // namespace m2pw
 
 #endif // CHI2_ENGINE_CPP
+

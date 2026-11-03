@@ -13,7 +13,6 @@
 
 namespace m2pw {
 
-    using MassDependenceConfig = MassDependentFitter::MassDependenceConfig;
 
     MassDependentFitter::MassDependentFitter(const Setup& setup, 
                                            std::vector<double> mass_bins, 

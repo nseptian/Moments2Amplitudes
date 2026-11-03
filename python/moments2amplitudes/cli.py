@@ -198,6 +198,10 @@ def cmd_summary(args: argparse.Namespace) -> int:
 
     summary = FitSummary(cfg, rundir)
     summary.load_from_root(target_root, mcmc_target)
+    if not summary.parameters:
+        logs = sorted(rundir.fit_starts_dir.glob("fit_seed_*.log"))
+        if logs:
+            summary.load_from_log(logs[0])
     txt_path, md_path = summary.save_reports()
     print(f"\n{summary.generate_ascii_table()}\n")
     print(f"[OK] Saved reports:")

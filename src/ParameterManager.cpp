@@ -1132,3 +1132,4 @@ namespace m2pw {
 } // namespace m2pw
 
 #endif // PARAMETER_MANAGER_CPP
+

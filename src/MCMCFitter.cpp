@@ -320,3 +320,4 @@ namespace m2pw {
 } // namespace m2pw
 
 #endif // MCMC_FITTER_CPP
+

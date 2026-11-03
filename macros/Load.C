@@ -10,6 +10,8 @@ void CleanAclicArtifacts(const TString& srcDir) {
 }
 
 void Load(){
+  if (TClass::GetClass("m2pw::MassDependentFitter")) return;
+
   // Ensure BruFit environment and classes (e.g. RooHSSphHarmonic) are loaded
   if (!TClass::GetClass("RooHSSphHarmonic")) {
     TString brufitDir = gSystem->Getenv("BRUFIT");
@@ -20,8 +22,11 @@ void Load(){
         brufitDir = "/d/home/septian/brufit";
       }
     }
-    if (!brufitDir.IsNull() && gSystem->AccessPathName(brufitDir + "/macros/LoadBru.C") == 0) {
-      gROOT->ProcessLine(Form(".x %s/macros/LoadBru.C", brufitDir.Data()));
+    if (!brufitDir.IsNull()) {
+      gSystem->Setenv("BRUFIT", brufitDir.Data());
+      if (gSystem->AccessPathName(brufitDir + "/macros/LoadBru.C") == 0) {
+        gROOT->ProcessLine(Form(".x %s/macros/LoadBru.C", brufitDir.Data()));
+      }
     }
   }
 
@@ -38,6 +43,22 @@ void Load(){
     }
   }
   TString srcDir = projectDir + "/src";
+  TString incDir = projectDir + "/include";
+  TString macDir = projectDir + "/macros";
+
+  // Register include paths for Cling interpreter and ACLiC compilation
+  gInterpreter->AddIncludePath(incDir.Data());
+  gInterpreter->AddIncludePath(macDir.Data());
+  gSystem->AddIncludePath(Form("-I%s", incDir.Data()));
+  gSystem->AddIncludePath(Form("-I%s", macDir.Data()));
+
+  TString brufitDirEnv = gSystem->Getenv("BRUFIT");
+  if (!brufitDirEnv.IsNull()) {
+    gInterpreter->AddIncludePath(brufitDirEnv + "/include");
+    gInterpreter->AddIncludePath(brufitDirEnv + "/core");
+    gSystem->AddIncludePath(Form("-I%s/include", brufitDirEnv.Data()));
+    gSystem->AddIncludePath(Form("-I%s/core", brufitDirEnv.Data()));
+  }
 
   // CleanAclicArtifacts(srcDir);
   

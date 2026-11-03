@@ -10,7 +10,7 @@ import math
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
-from .schema import FitConfig
+from .schema import FitConfig, WaveType
 from .rundir import RunDirectory
 
 
@@ -58,6 +58,26 @@ class FitSummary:
         # Parameters: list of dicts {name, label, value, error, mcmc_median, mcmc_lo, mcmc_hi, status}
         self.parameters: List[Dict[str, Any]] = []
 
+    def _should_display_parameter(self, param_name: str) -> bool:
+        """Filter out polynomial parameters when poly_order is set to -1."""
+        is_poly = (
+            param_name.endswith("m_threshold") or
+            param_name.endswith("m_expansion") or
+            "_re_" in param_name or
+            "_im_" in param_name
+        )
+        if not is_poly:
+            return True
+
+        for w in self.config.waves:
+            if w.type == WaveType.MASS_DEPENDENT and w.poly_order < 0:
+                for res in w.resonances:
+                    if res.name in param_name:
+                        return False
+                if len([mw for mw in self.config.waves if mw.type == WaveType.MASS_DEPENDENT]) == 1:
+                    return False
+        return True
+
     def load_from_root(self, root_file: Path | str, mcmc_file: Optional[Path | str] = None) -> bool:
         """Load nominal best-fit parameters and optional MCMC posterior intervals."""
         root_path = Path(root_file)
@@ -79,6 +99,73 @@ class FitSummary:
 
         return False
 
+    def load_from_log(self, log_path: Path | str) -> bool:
+        """Parse fit parameters and errors directly from the driver log file."""
+        log_file = Path(log_path)
+        if not log_file.is_file():
+            return False
+
+        param_dict: Dict[str, Dict[str, float]] = {}
+        with open(log_file, "r") as f:
+            for line in f:
+                if "[FIT][RESULT]" in line and "param=" in line:
+                    parts = line.strip().split()
+                    p_name = ""
+                    val = None
+                    err = None
+                    for token in parts:
+                        if token.startswith("param="):
+                            p_name = token.split("=")[1]
+                        elif token.startswith("value="):
+                            try:
+                                val = float(token.split("=")[1])
+                            except ValueError:
+                                pass
+                        elif token.startswith("error="):
+                            try:
+                                err = float(token.split("=")[1])
+                            except ValueError:
+                                pass
+                    if p_name:
+                        if p_name not in param_dict:
+                            param_dict[p_name] = {"value": 0.0, "error": 0.0}
+                        if val is not None:
+                            param_dict[p_name]["value"] = val
+                        if err is not None:
+                            param_dict[p_name]["error"] = err
+                elif "[FIT][MIN]" in line:
+                    for token in line.strip().split():
+                        if token.startswith("is_valid="):
+                            self.is_valid = (token.split("=")[1] == "1")
+                        elif token.startswith("is_valid_error="):
+                            self.is_valid_error = (token.split("=")[1] == "1")
+                        elif token.startswith("status="):
+                            try:
+                                self.status = int(token.split("=")[1])
+                            except ValueError:
+                                pass
+
+        if not param_dict:
+            return False
+
+        self.parameters = []
+        for name, data in param_dict.items():
+            if not self._should_display_parameter(name):
+                continue
+            val = data["value"]
+            err = data["error"]
+            self.parameters.append({
+                "name": name,
+                "label": format_parameter_label(name),
+                "value": val,
+                "error": err,
+                "mcmc_median": None,
+                "mcmc_err_lo": None,
+                "mcmc_err_hi": None,
+                "status": "Fixed" if err == 0.0 else "Free",
+            })
+        return True
+
     def _load_with_uproot(self, root_path: Path, mcmc_file: Optional[Path | str]) -> bool:
         import uproot
         import numpy as np
@@ -95,6 +182,8 @@ class FitSummary:
                 p_tree = f["all_params"]
                 keys = [k for k in p_tree.keys() if not k.endswith("_error")]
                 for k in keys:
+                    if not self._should_display_parameter(k):
+                        continue
                     val = float(p_tree[k].array()[0])
                     err = float(p_tree[f"{k}_error"].array()[0]) if f"{k}_error" in p_tree else 0.0
                     self.parameters.append({
@@ -148,6 +237,8 @@ class FitSummary:
             for b in branches:
                 bname = b.GetName()
                 if not bname.endswith("_error"):
+                    if not self._should_display_parameter(bname):
+                        continue
                     val = float(getattr(p_tree, bname, 0.0))
                     err = float(getattr(p_tree, f"{bname}_error", 0.0))
                     self.parameters.append({
@@ -224,3 +315,4 @@ class FitSummary:
         self.rundir.summary_txt.write_text(txt)
         self.rundir.summary_md.write_text(md)
         return self.rundir.summary_txt, self.rundir.summary_md
+

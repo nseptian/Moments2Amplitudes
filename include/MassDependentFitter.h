@@ -140,8 +140,9 @@ namespace m2pw {
             TString m_str;
             TString base_name;
             int ell_value = -1;
-            bool isPhase;
+            bool isPhase = false;
             
+            ParameterInfo() = default;
             ParameterInfo(const TString& parName);
         };
 

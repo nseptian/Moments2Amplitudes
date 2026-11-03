@@ -68,6 +68,32 @@ class TestSummary(unittest.TestCase):
         self.assertIn("# Fit Summary: test_summary_proj", md_out)
         self.assertIn("| **Mass (a2_1320)** | `MD_a2_1320_Mass` | `1.31820` |", md_out)
 
+    def test_filter_poly_when_poly_order_minus_one(self):
+        from moments2amplitudes.schema import WaveConfig, WaveType, ResonanceConfig
+        cfg = FitConfig()
+        cfg.waves = [
+            WaveConfig(
+                l=2,
+                name="D-wave",
+                type=WaveType.MASS_DEPENDENT,
+                poly_order=-1,
+                resonances=[ResonanceConfig(name="a2_1320")]
+            )
+        ]
+        rundir = RunDirectory(self.temp_dir / "poly_test").ensure_directories()
+        summary = FitSummary(cfg, rundir)
+
+        # Poly parameters should be filtered out
+        self.assertFalse(summary._should_display_parameter("MD_b_2_0_a2_1320_re_0"))
+        self.assertFalse(summary._should_display_parameter("MD_b_2_0_a2_1320_im_0"))
+        self.assertFalse(summary._should_display_parameter("MD_b_2_0_a2_1320_m_threshold"))
+        self.assertFalse(summary._should_display_parameter("MD_b_2_0_a2_1320_m_expansion"))
+
+        # Physical parameters should be kept
+        self.assertTrue(summary._should_display_parameter("MD_b_2_0_a2_1320_k"))
+        self.assertTrue(summary._should_display_parameter("MD_shared_a2_1320_Mass"))
+        self.assertTrue(summary._should_display_parameter("MD_shared_a2_1320_Width"))
+
         txt_file, md_file = summary.save_reports()
         self.assertTrue(txt_file.is_file())
         self.assertTrue(md_file.is_file())

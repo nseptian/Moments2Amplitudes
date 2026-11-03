@@ -117,9 +117,37 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
     mi_l_list = [w.l for w in mi_waves]
     mi_l_str = ", ".join(str(l) for l in mi_l_list)
 
+    max_wave_l = max((w.l for w in config.waves), default=2)
+
     # Determine project directory and brufit path
-    repo_root = Path(__file__).resolve().parent.parent.parent
+    repo_root = os.environ.get("MOMS2AMPS", str(Path(__file__).resolve().parent.parent.parent))
     brufit_path = config.environment.brufit_dir or os.environ.get("BRUFIT", "/d/grid17/septian/brufit_dev/brufit")
+
+    # Explicit formula functions at file scope to avoid Cling lambda-mangler issues
+    formula_functions: List[str] = []
+    formula_registrations: List[str] = []
+
+    for w in md_waves:
+        for res in w.resonances:
+            if w.formula:
+                safe_name = f"{w.l}_{res.name.replace('-', '_')}"
+                func_name = f"eval_formula_{safe_name}"
+                param_lines, expr = translate_formula_to_cpp(w.formula, w.parameters)
+                param_code = "\n    ".join(param_lines)
+                form_esc = w.formula.replace('"', '\\"')
+
+                formula_functions.extend([
+                    f"// Explicit formula for L={w.l} {res.name}: {w.formula}",
+                    f"std::complex<double> {func_name}(double mass, const std::vector<double>& p) {{",
+                    f"    {param_code}",
+                    f"    return {expr};",
+                    "}",
+                    "",
+                ])
+                formula_registrations.extend([
+                    f'    // Explicit formula configured for L={w.l} {res.name}: {w.formula}',
+                    f'    fitter.SetWaveCustomFormula({w.l}, "{res.name}", {func_name}, "{form_esc}");',
+                ])
 
     lines: List[str] = [
         "// Auto-generated ROOT driver macro by Moments2Amplitudes",
@@ -134,6 +162,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         "#include <TStopwatch.h>",
         "",
         '#include "Setup.h"',
+        '#include "ConfigureAmpsNoValues.C"',
         '#include "MomentHelper.h"',
         '#include "MassDependentMoments.h"',
         '#include "MassDependentFitter.h"',
@@ -142,6 +171,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         "using namespace std;",
         "",
         "void EnsureLoaded() {",
+        '    if (TClass::GetClass("m2pw::MassDependentFitter")) return;',
         f'    gSystem->Setenv("MOMS2AMPS", "{repo_root}");',
         f'    gSystem->Setenv("BRUFIT", "{brufit_path}");',
         f'    TString loadScript = Form("{repo_root}/macros/Load.C");',
@@ -150,6 +180,11 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         "    }",
         "}",
         "",
+    ]
+
+    lines.extend(formula_functions)
+
+    lines.extend([
         "void RunWorker(const char* mode = \"single\", int seed = 1, int mcmcStart = 0, int mcmcEnd = -1, const char* outDir = \".\", const char* bestParamsFile = \"\") {",
         "    EnsureLoaded();",
         "    TStopwatch timer;",
@@ -172,8 +207,9 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         "",
         "    // Configure mass-dependent models and moments selection",
         "    MassDependentFitter::MassDependenceConfig massDepConfig;",
+        "    massDepConfig.massDependentWaves.clear();",
         f"    massDepConfig.massIndependentL = {{{mi_l_str}}};",
-    ]
+    ])
 
     # Mass-dependent wave models
     for w in md_waves:
@@ -203,8 +239,8 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         f"    momentsConfig.includedL = {{{inc_l_str}}};",
         f"    momentsConfig.excludedL = {{{exc_l_str}}};",
         "",
-        "    // Create fitter instance",
-        "    Setup fitSetup;",
+        "    // Create fitter instance with configured partial wave setup",
+        f"    auto& fitSetup = ConfigureAmpsNoValues({max_wave_l}, {max_wave_l}, 2);",
         "    MassDependentFitter fitter(fitSetup, massBins, lMax, noise, noUse, massDepConfig, momentsConfig);",
         f"    fitter.SetUseCovarianceMatrix({str(config.dataset.use_covariance).lower()});",
         f"    fitter.SetMinimizerPrintLevel({config.minimizer.print_level});",
@@ -216,19 +252,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
     ])
 
     # Assign explicit formulas to wave models
-    for w in md_waves:
-        for res in w.resonances:
-            if w.formula:
-                param_lines, expr = translate_formula_to_cpp(w.formula, w.parameters)
-                param_code = "\n        ".join(param_lines)
-                form_esc = w.formula.replace('"', '\\"')
-                lines.extend([
-                    f'    // Explicit formula configured for L={w.l} {res.name}: {w.formula}',
-                    f'    fitter.SetWaveCustomFormula({w.l}, "{res.name}", [](double mass, const std::vector<double>& p) -> std::complex<double> {{',
-                    f'        {param_code}',
-                    f'        return {expr};',
-                    f'    }}, "{form_esc}");',
-                ])
+    lines.extend(formula_registrations)
 
     lines.extend([
         "",
@@ -252,7 +276,10 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
     # Add mass-dependent parameters
     for w in md_waves:
         if w.init.strategy == InitStrategy.FROM_FILE and w.init.file_path:
-            lines.append(f'    paramManager.AddMassDependentParameter({{{w.l}}}, "{w.init.file_path}", {w.init.option});')
+            init_file = Path(w.init.file_path)
+            if not init_file.is_absolute():
+                init_file = repo_root / init_file
+            lines.append(f'    paramManager.AddMassDependentParameter({{{w.l}}}, "{init_file}", {w.init.option});')
         else:
             lines.append(f"    paramManager.AddMassDependentParameter({{{w.l}}}, seed, {w.init.option});")
 
@@ -324,10 +351,18 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         "    }",
         "}",
         "",
-        "void generated_driver(const char* mode = \"single\", int seed = 1, int mcmcStart = 0, int mcmcEnd = -1, const char* outDir = \".\", const char* bestParamsFile = \"\") {",
+        f"void {output_macro_path.stem}(const char* mode = \"single\", int seed = 1, int mcmcStart = 0, int mcmcEnd = -1, const char* outDir = \".\", const char* bestParamsFile = \"\") {{",
         "    RunWorker(mode, seed, mcmcStart, mcmcEnd, outDir, bestParamsFile);",
         "}",
     ])
+
+    if output_macro_path.stem != "worker":
+        lines.extend([
+            "",
+            "void worker(const char* mode = \"single\", int seed = 1, int mcmcStart = 0, int mcmcEnd = -1, const char* outDir = \".\", const char* bestParamsFile = \"\") {",
+            "    RunWorker(mode, seed, mcmcStart, mcmcEnd, outDir, bestParamsFile);",
+            "}",
+        ])
 
     with open(output_macro_path, "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -345,15 +380,31 @@ def execute_root_command(macro_path: Path, args: Tuple, log_path: Path) -> Tuple
             arg_strs.append(str(a))
     call_expr = f'{macro_path.name}({", ".join(arg_strs)})'
 
+    repo_root = Path(os.environ.get("MOMS2AMPS", str(Path(__file__).resolve().parent.parent.parent)))
+    load_script = repo_root / "macros" / "Load.C"
+
+    root_bin = "root"
+    if "ROOTSYS" in os.environ:
+        custom_root = Path(os.environ["ROOTSYS"]) / "bin" / "root"
+        if custom_root.is_file():
+            root_bin = str(custom_root)
+
     cmd = [
-        "root",
+        root_bin,
         "-l",
         "-b",
         "-q",
-        f"{macro_path}{call_expr[len(macro_path.name):]}",
     ]
+    if load_script.is_file():
+        cmd.append(str(load_script))
+    cmd.append(f"{macro_path}{call_expr[len(macro_path.name):]}")
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    if "ROOTSYS" in env:
+        rootsys_bin = str(Path(env["ROOTSYS"]) / "bin")
+        env["PATH"] = f"{rootsys_bin}:{env.get('PATH', '')}"
+
     with open(log_path, "w") as log_f:
         proc = subprocess.run(
             cmd,
@@ -361,6 +412,7 @@ def execute_root_command(macro_path: Path, args: Tuple, log_path: Path) -> Tuple
             stderr=subprocess.STDOUT,
             cwd=str(macro_path.parent),
             text=True,
+            env=env,
         )
 
     # Read log
@@ -520,6 +572,8 @@ def run_multi_start(
     summary.elapsed_seconds = elapsed
 
     summary.load_from_root(best_target)
+    if not summary.parameters and valid_results[0].get("log_file"):
+        summary.load_from_log(valid_results[0]["log_file"])
     txt_rep, md_rep = summary.save_reports()
     print(f"\n{summary.generate_ascii_table()}\n")
 

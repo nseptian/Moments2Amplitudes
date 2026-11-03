@@ -41,16 +41,22 @@ pixi install
 cp .env.example .env
 
 # 3. Validate a YAML fit configuration
-pixi run validate configs/s_piecewise_d_bw.yaml
+pixi run validate configs/d_breit_wigner.yaml
 
-# 4. Run multi-start randomized fit to find central global minimum
-pixi run fit configs/s_piecewise_d_bw.yaml
+# 4. Run multi-start randomized fit in parallel (e.g., 20 starts on 8 cores)
+pixi run fit configs/d_breit_wigner.yaml
 
-# 5. Propagate MCMC experimental uncertainty across posterior samples
+# 5. Display formatted physics parameter summary table and inspect results
+pixi run summary configs/d_breit_wigner.yaml
+
+# 6. Generate diagnostic distribution and amplitude plots
+pixi run plot configs/d_breit_wigner.yaml
+
+# 7. Propagate MCMC experimental uncertainty across posterior samples
 pixi run propagate configs/s_piecewise_d_bw.yaml
 ```
 
-See **[`docs/CONFIG_FRAMEWORK.md`](docs/CONFIG_FRAMEWORK.md)** for complete configuration options and schema specifications.
+See **[`docs/CONFIG_FRAMEWORK.md`](docs/CONFIG_FRAMEWORK.md)** for complete configuration options, two-stage fit workflows, and schema specifications.
 
 ---
 
@@ -64,8 +70,16 @@ See **[`docs/CONFIG_FRAMEWORK.md`](docs/CONFIG_FRAMEWORK.md)** for complete conf
 
 ```
 Moments2Amplitudes/
+├── configs/                          # Declarative YAML fit configuration files
+│   ├── d_breit_wigner.yaml           # Stage 1: D-wave Breit-Wigner fit to H4 moments
+│   ├── s_piecewise_d_bw.yaml         # Stage 2: S-wave piecewise + D-wave Breit-Wigner to H0, H2, H4
+│   └── ...
+│
 ├── include/                          # C++ headers for mass-dependent fitting
-│   ├── MassDependentFitter.h         # Core fitter: chi2 calculation, Minuit2 interface, parameter management
+│   ├── MassDependentFitter.h         # Main coordinator and Minuit2 fitting interface
+│   ├── Chi2Engine.h                  # High-performance chi2 computation and covariance inversion
+│   ├── ParameterManager.h            # Parameter mapping, limits, and wave initialization rules
+│   ├── MCMCFitter.h                  # Multi-threaded MCMC posterior uncertainty propagation
 │   ├── MassDependentFunction.h       # Parameterized line shapes (Breit-Wigner, Flatté, polynomials)
 │   ├── MassDependentMoments.h        # Loads moment results and covariances across mass bins
 │   ├── MomentHelper.h                # Per-bin moment data and covariance matrix handler
@@ -74,23 +88,27 @@ Moments2Amplitudes/
 │
 ├── src/                              # C++ implementation files (compiled via ROOT ACLiC)
 │   ├── MassDependentFitter.cpp
+│   ├── Chi2Engine.cpp
+│   ├── ParameterManager.cpp
+│   ├── MCMCFitter.cpp
 │   ├── ParameterHelper.cpp
 │   ├── Equation.cpp / EquationSolver.cpp
 │   └── MomentHelper.cpp
 │
-├── macros/                           # Example fit macros and execution scripts
-│   ├── Load.C                        # Loads required libraries and includes
+├── macros/                           # Fit execution and helper macros
+│   ├── Load.C                        # Loads required libraries, headers, and ACLiC modules
 │   ├── ConfigureAmpsNoValues.C       # Sets up amplitude wave definitions
-│   ├── run_model.sh                  # Shell script for parallel multi-seed fits with organized output
-│   ├── H_two_model.C                 # Example: S + D waves fitting H_0 and H_2 moments
-│   ├── H_four_model.C                # Example: waves up to L=4 (H_0, H_2, H_4)
-│   ├── H_odd_model.C                 # Example: odd moments (P-wave contribution)
-│   ├── Mom2Amp_DBreitWigner.C        # Example: D-wave Breit-Wigner fit
-│   ├── Mom2Amp_SFlatteDBreitWigner.C # Example: S-wave Flatté + D-wave Breit-Wigner
-│   ├── Mom2Amp_SFlattepolyDBreitWigner.C  # Example: S-wave (Flatté + poly) + D-wave (BW)
-│   └── RunGivenBruMoments.C         # Example: Fit using pre-existing moments
+│   └── ...
 │
-├── python/                           # Python analysis tools and post-processing
+├── python/                           # Python analysis tools, driver, CLI, and post-processing
+│   ├── moments2amplitudes/           # Modular package
+│   │   ├── cli.py                    # Unified CLI (`mom2amp validate/fit/summary/plot/propagate`)
+│   │   ├── driver.py                 # Macro generation, worker dispatching, and run orchestration
+│   │   ├── summary.py                # Formatted ASCII and Markdown physics summary tables
+│   │   ├── plotter.py                # Chi2 distribution and diagnostic plotting
+│   │   ├── config.py                 # Configuration loader and parser
+│   │   ├── schema.py                 # Pydantic schema validation
+│   │   └── rundir.py                 # Standardized run directory hierarchy manager
 │   ├── moments_to_amplitudes.py      # Core Moments2Amplitudes analysis class
 │   └── MomentsToAmplitudes.py        # Module alias / backwards-compatibility wrapper
 │
@@ -253,10 +271,13 @@ analyzer.plot_amplitudes_vs_mass(
 
 | Class | Header | Description |
 |---|---|---|
-| `m2pw::MassDependentFitter` | [`include/MassDependentFitter.h`](include/MassDependentFitter.h) | Configures waves, sets up the $\chi^2$ objective function, and executes Minuit2 minimization |
+| `m2pw::MassDependentFitter` | [`include/MassDependentFitter.h`](include/MassDependentFitter.h) | High-level coordinator, wave configuration, and Minuit2 interface |
+| `m2pw::Chi2Engine` | [`include/Chi2Engine.h`](include/Chi2Engine.h) | High-performance $\chi^2$ calculation, pre-compiled routing, covariance matrix inversion, and singular fallback |
+| `m2pw::ParameterManager` | [`include/ParameterManager.h`](include/ParameterManager.h) | Parameter lifecycle, naming conventions, bounds, and wave initialization rules |
+| `m2pw::MCMCFitter` | [`include/MCMCFitter.h`](include/MCMCFitter.h) | Multi-threaded MCMC posterior uncertainty propagation worker management |
 | `m2pw::MassDependentFunction` | [`include/MassDependentFunction.h`](include/MassDependentFunction.h) | Computes complex partial wave amplitudes for Breit-Wigner, Flatté, and polynomial models |
-| `MassDependentMoments` | [`include/MassDependentMoments.h`](include/MassDependentMoments.h) | Loads brufit MCMC moment values and full covariance matrices across all mass bins |
-| `MomentHelper` | [`include/MomentHelper.h`](include/MomentHelper.h) | Interface for extracting moments and covariance matrices per mass bin |
+| `MassDependentMoments` | [`include/MassDependentMoments.h`](include/MassDependentMoments.h) | Loads brufit MCMC moment values and covariance matrices across mass bins |
+| `MomentHelper` | [`include/MomentHelper.h`](include/MomentHelper.h) | Interface for extracting moments and covariance matrices per mass bin from MCMC trees |
 | `Equation` / `EquationSolver` | [`include/Equation.h`](include/Equation.h) | Encodes symbolic/numerical relationships between angular moments and partial wave bilinear products |
 
 ---
