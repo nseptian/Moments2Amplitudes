@@ -28,6 +28,8 @@ namespace m2pw {
                     return "two_breitwigner_plus_polynomial";
                 case 4:
                     return "flatte_breitwigner_plus_polynomial";
+                case 5:
+                    return "custom_formula";
                 default:
                     return Form("unknown_%d", funcType);
             }
@@ -153,12 +155,13 @@ namespace m2pw {
             return parName(prefix.Length(), parName.Length() - prefix.Length());
         }
 
-        bool BuildWaveParameters(
+        template<typename T>
+        bool BuildWaveParametersGeneric(
             const TString& baseName,
             const TString& waveName,
             int funcType,
-            const std::map<TString, std::vector<double>>& massDepPars,
-            std::vector<double>& params) {
+            const std::map<TString, std::vector<T>>& massDepPars,
+            std::vector<T>& params) {
 
             TString key = Form("%s_%s", baseName.Data(), waveName.Data());
             const auto it = massDepPars.find(key);
@@ -180,7 +183,7 @@ namespace m2pw {
                     return false;
                 }
                 
-                std::vector<double> assembled;
+                std::vector<T> assembled;
                 assembled.reserve(params.size() + 4);
                 assembled.push_back(params[0]);         // k
                 assembled.push_back(sharedIt->second[0]); // Mass
@@ -206,7 +209,7 @@ namespace m2pw {
                     return false;
                 }
 
-                std::vector<double> assembled;
+                std::vector<T> assembled;
                 assembled.reserve(params.size() + 2);
                 assembled.push_back(params[0]);         // k
                 assembled.push_back(sharedIt->second[0]); // Mass
@@ -228,7 +231,7 @@ namespace m2pw {
                     return false;
                 }
 
-                std::vector<double> assembled;
+                std::vector<T> assembled;
                 assembled.reserve(params.size() + 4);
                 assembled.push_back(params[0]);           // k1
                 assembled.push_back(sharedIt->second[0]); // Mass1
@@ -253,7 +256,7 @@ namespace m2pw {
                     return false;
                 }
 
-                std::vector<double> assembled;
+                std::vector<T> assembled;
                 assembled.reserve(params.size() + 5);
                 assembled.push_back(params[0]);           // k_fl
                 assembled.push_back(sharedIt->second[0]); // MassFlatte
@@ -268,17 +271,28 @@ namespace m2pw {
                 return true;
             }
 
-            if (params.size() == 1) {
-                auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
-                if (sharedIt == massDepPars.end() || sharedIt->second.size() < 2) {
-                    return false;
-                }
+            if (funcType != static_cast<int>(MassDependenceConfig::ModelType::CustomFormula) && funcType != 5) {
+                if (params.size() == 1) {
+                    auto sharedIt = massDepPars.find(SharedResonanceKeyForWave(waveName));
+                    if (sharedIt == massDepPars.end() || sharedIt->second.size() < 2) {
+                        return false;
+                    }
 
-                params.push_back(sharedIt->second[0]);
-                params.push_back(sharedIt->second[1]);
+                    params.push_back(sharedIt->second[0]);
+                    params.push_back(sharedIt->second[1]);
+                }
             }
 
             return true;
+        }
+
+        bool BuildWaveParameters(
+            const TString& baseName,
+            const TString& waveName,
+            int funcType,
+            const std::map<TString, std::vector<double>>& massDepPars,
+            std::vector<double>& params) {
+            return BuildWaveParametersGeneric(baseName, waveName, funcType, massDepPars, params);
         }
     }
 
@@ -351,17 +365,39 @@ namespace m2pw {
         BuildParameterInfoCache();
         BuildMassDependenceLookupCache();
         BuildParameterEvalPlanCache();
+        BuildIndexVectors();
+    }
+
+    void MassDependentFitter::BuildIndexVectors() {
+        massBinToIndex_.clear();
+        eqnsVec_.clear();
+        parsVec_.clear();
+        eqnsVec_.reserve(massBins_.size());
+        parsVec_.reserve(massBins_.size());
+        for (size_t b = 0; b < massBins_.size(); ++b) {
+            const double mass_bin = massBins_[b];
+            massBinToIndex_[mass_bin] = b;
+            eqnsVec_.push_back(&eqns_[mass_bin]);
+            parsVec_.push_back(&pars_[mass_bin]);
+        }
     }
 
     void MassDependentFitter::BuildEquationLCache() {
         equationLCache_.clear();
-        for (const auto& [mass_bin, equations] : eqns_) {
+        equationLCacheVec_.clear();
+        equationLCacheVec_.resize(massBins_.size());
+        for (size_t b = 0; b < massBins_.size(); ++b) {
+            const double mass_bin = massBins_[b];
+            auto it = eqns_.find(mass_bin);
+            if (it == eqns_.end()) continue;
+            const auto& equations = it->second;
             std::vector<int> lValues;
             lValues.reserve(equations.size());
             for (const auto& eqn : equations) {
                 lValues.push_back(ExtractLFromEquationName(eqn.GetName()));
             }
-            equationLCache_[mass_bin] = std::move(lValues);
+            equationLCache_[mass_bin] = lValues;
+            equationLCacheVec_[b] = std::move(lValues);
         }
     }
 
@@ -495,6 +531,12 @@ namespace m2pw {
                                        bin_width,
                                        funcType,
                                        polyOrder);
+            if (!waveConfig.formula.IsNull()) {
+                massDepFuncs_.back().SetFormulaString(waveConfig.formula.Data());
+            }
+            if (!waveConfig.parameterNames.empty()) {
+                massDepFuncs_.back().SetNCustomParams(static_cast<int>(waveConfig.parameterNames.size()));
+            }
             waveToFunctionIndex_[waveName] = funcIndex;
             if (funcType == static_cast<int>(MassDependenceConfig::ModelType::Polynomial)) {
                 LogFitInfo("MDFUNC", Form("index=%d wave=%s model=%s poly_order=%d",
@@ -518,7 +560,20 @@ namespace m2pw {
         massDependenceConfig_ = config;
         BuildMassDependenceLookupCache();
         BuildParameterEvalPlanCache();
-     }
+    }
+
+    void MassDependentFitter::SetWaveCustomFormula(int ell, const TString& waveName,
+                                                  std::function<std::complex<double>(double, const std::vector<double>&)> formula,
+                                                  const TString& formulaStr) {
+        int funcIndex = GetFunctionIndexForWave(waveName);
+        if (funcIndex >= 0 && funcIndex < static_cast<int>(massDepFuncs_.size())) {
+            massDepFuncs_[funcIndex].SetCustomFormula(formula, formulaStr.Data());
+            LogFitInfo("FORMULA", Form("custom_formula_assigned ell=%d wave=%s formula=%s",
+                ell, waveName.Data(), formulaStr.Data()));
+        } else {
+            LogFitWarn("FORMULA", Form("custom_formula_failed wave=%s not_found", waveName.Data()));
+        }
+    }
 
     void MassDependentFitter::SetMomentsConfig(const MomentsConfig& config) {
         hMomentsConfig_ = config;
@@ -589,9 +644,59 @@ namespace m2pw {
         return n;
     }
 
-    double MassDependentFitter::EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const {
+    double MassDependentFitter::EvaluateChi2ForMassBin(size_t binIdx, ParameterHelper& pars) const {
+        if (binIdx >= eqnsVec_.size() || !eqnsVec_[binIdx]) return 0.0;
         const auto current_vals = pars.CurrentVals();
-        auto& equations = eqns_.at(massBin);
+        auto& equations = *eqnsVec_[binIdx];
+
+        if (useCovarianceMatrix_ && binIdx < binCovarianceCacheVec_.size()) {
+            const auto& cache = binCovarianceCacheVec_[binIdx];
+            if (cache.isValid) {
+                const size_t K = cache.eqnIndices.size();
+                Double_t* delta = cache.deltaVec.GetMatrixArray();
+                for (size_t i = 0; i < K; ++i) {
+                    auto& eqn = equations[cache.eqnIndices[i]];
+                    eqn.SetNeedsRecalc();
+                    delta[i] = eqn.DoEvalResidual(current_vals);
+                }
+                return cache.invCovMatrix.Similarity(cache.deltaVec);
+            }
+        }
+
+        double chi2 = 0.0;
+        const auto& lValues = (binIdx < equationLCacheVec_.size()) ? equationLCacheVec_[binIdx] : std::vector<int>{};
+
+        for (size_t idx = 0; idx < equations.size(); ++idx) {
+            auto& eqn = equations[idx];
+            int L_value = (idx < lValues.size()) ? lValues[idx] : ExtractLFromEquationName(eqn.GetName());
+            
+            // Apply H(L,M)s filtering
+            bool shouldInclude = true;
+            if (L_value >= 0) { // This is an H(L,M) equation
+                shouldInclude = hMomentsConfig_.ShouldIncludeL(L_value);
+            }
+            
+            if (shouldInclude) {
+                eqn.SetNeedsRecalc();
+                double eqn_chi2 = eqn.DoEvalSq(current_vals);
+                chi2 += eqn_chi2;
+            }
+        }
+
+        return chi2;
+    }
+
+    double MassDependentFitter::EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const {
+        auto it = massBinToIndex_.find(massBin);
+        if (it != massBinToIndex_.end()) {
+            return EvaluateChi2ForMassBin(it->second, pars);
+        }
+
+        // Fallback when called with an unindexed mass bin
+        const auto current_vals = pars.CurrentVals();
+        auto eqnsIt = eqns_.find(massBin);
+        if (eqnsIt == eqns_.end()) return 0.0;
+        auto& equations = eqnsIt->second;
 
         if (useCovarianceMatrix_) {
             auto covIt = binCovarianceCache_.find(massBin);
@@ -617,13 +722,11 @@ namespace m2pw {
             if (cacheIt != equationLCache_.end() && idx < cacheIt->second.size()) {
                 L_value = cacheIt->second[idx];
             } else {
-                // Fallback when cache is missing/out-of-sync.
                 L_value = ExtractLFromEquationName(eqn.GetName());
             }
             
-            // Apply H(L,M)s filtering
             bool shouldInclude = true;
-            if (L_value >= 0) { // This is an H(L,M) equation
+            if (L_value >= 0) {
                 shouldInclude = hMomentsConfig_.ShouldIncludeL(L_value);
             }
             
@@ -702,7 +805,7 @@ namespace m2pw {
 
                 const TString& par_name = param_plan->par_name;
                 const int ell_value = param_plan->ell_value;
-                cout << "Pre-caching shared resonance parameter: " << par_name << " (ell=" << ell_value << ")" << endl;
+                // cout << "Pre-caching shared resonance parameter: " << par_name << " (ell=" << ell_value << ")" << endl;
                 const bool isMassDependent = param_plan->isMassDependent;
                 
                 double value = 0.0;
@@ -896,7 +999,15 @@ namespace m2pw {
 
     void MassDependentFitter::SetEquationValues(MassDependentMoments& moms) {
         binCovarianceCache_.clear();
-        for (auto& [mass_bin, equations] : eqns_) {
+        binCovarianceCacheVec_.clear();
+        binCovarianceCacheVec_.resize(massBins_.size());
+
+        for (size_t b = 0; b < massBins_.size(); ++b) {
+            const double mass_bin = massBins_[b];
+            auto eqnsIt = eqns_.find(mass_bin);
+            if (eqnsIt == eqns_.end()) continue;
+            auto& equations = eqnsIt->second;
+
             MomentHelper moments = moms.GetMoments(mass_bin);
             for (auto& eqn : equations) {
                 eqn.FindL();
@@ -958,6 +1069,7 @@ namespace m2pw {
                     cache.isValid = true;
                 }
             }
+            binCovarianceCacheVec_[b] = cache;
             binCovarianceCache_[mass_bin] = std::move(cache);
         }
     }
@@ -1387,7 +1499,338 @@ namespace m2pw {
     }
 
     // Chi2Function implementation
+    MassDependentFitter::Chi2Function::Chi2Function(
+        MassDependentFitter& fitter, 
+        const std::vector<TString>& parIndexNames,
+        const ParameterManager& paramManager)
+        : fitter_(fitter), parIndexNames_(parIndexNames), paramManager_(&paramManager) {
+        BuildPrecompiledPlan();
+    }
+
+    void MassDependentFitter::Chi2Function::BuildPrecompiledPlan() {
+        fastConstraints_.clear();
+        amplitudes_.clear();
+        binRouting_.clear();
+        preassembledWaveParams_.clear();
+
+        if (!paramManager_) {
+            precompiled_ = false;
+            return;
+        }
+
+        // 1. Fast Gaussian Constraints
+        for (const auto& kv : paramManager_->gaussianConstraints) {
+            const TString& pname = kv.first;
+            auto it = paramManager_->nameToIndex.find(pname);
+            if (it != paramManager_->nameToIndex.end() && kv.second.second > 0.0) {
+                FastConstraint fc;
+                fc.minuitIdx = it->second;
+                fc.mean = kv.second.first;
+                fc.invSigmaSq = 1.0 / (kv.second.second * kv.second.second);
+                fastConstraints_.push_back(fc);
+            }
+        }
+
+        // 2. Discover Minuit parameter index mappings
+        std::map<TString, std::map<TString, std::vector<int>>> massIndepParIndices;
+        std::map<TString, std::vector<int>> massDepParIndices;
+
+        for (size_t i = 0; i < parIndexNames_.size(); ++i) {
+            const TString& parName = parIndexNames_[i];
+            if (parName.BeginsWith("MI_")) {
+                int firstUnderscore = parName.Index("_", 3);
+                int secondUnderscore = parName.Index("_", firstUnderscore + 1);
+                int thirdUnderscore = parName.Index("_", secondUnderscore + 1);
+                if (firstUnderscore > 0 && secondUnderscore > 0 && thirdUnderscore > 0) {
+                    TString parKey = parName(firstUnderscore + 1, thirdUnderscore + 2 - firstUnderscore);
+                    TString massBinStr = parName(3, firstUnderscore - 7);
+                    massIndepParIndices[massBinStr][parKey].push_back(static_cast<int>(i));
+                }
+            } else if (parName.BeginsWith("MD_")) {
+                TString parKey = MassDependentBaseKey(parName);
+                massDepParIndices[parKey].push_back(static_cast<int>(i));
+            }
+        }
+
+        // 3. Discover unique amplitudes needed across all mass bins
+        std::map<std::pair<TString, int>, int> ampNameToIdx;
+
+        for (size_t b = 0; b < fitter_.massBins_.size(); ++b) {
+            const double mass_bin = fitter_.massBins_[b];
+            const auto planCacheIt = fitter_.parameterEvalPlanCache_.find(mass_bin);
+            if (planCacheIt == fitter_.parameterEvalPlanCache_.end()) continue;
+
+            for (const auto& plan : planCacheIt->second) {
+                if (!plan.isMassDependent) continue;
+
+                const TString& baseName = plan.base_name;
+                const int ellValue = plan.ell_value;
+                auto key = std::make_pair(baseName, ellValue);
+
+                if (ampNameToIdx.find(key) == ampNameToIdx.end()) {
+                    int newAmpIdx = static_cast<int>(amplitudes_.size());
+                    ampNameToIdx[key] = newAmpIdx;
+
+                    PrecompiledAmplitude pAmp;
+                    pAmp.baseName = baseName;
+                    pAmp.ellValue = ellValue;
+
+                    const std::vector<TString>& waveNames = fitter_.GetMassDependentWaveNames(ellValue);
+                    for (const TString& waveName : waveNames) {
+                        int funcIndex = fitter_.GetFunctionIndexForWave(waveName);
+                        if (funcIndex < 0 || funcIndex >= static_cast<int>(fitter_.massDepFuncs_.size())) {
+                            continue;
+                        }
+
+                        int funcType = fitter_.massDepFuncs_[funcIndex].GetFuncType();
+                        std::vector<int> minuitIndices;
+                        if (!BuildWaveParametersGeneric(baseName, waveName, funcType, massDepParIndices, minuitIndices)) {
+                            continue;
+                        }
+
+                        const TString reflTag = ReflectivityTagFromParameterName(baseName);
+                        bool includeGlobalPhase = false;
+
+                        if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial) || funcType == 4) {
+                            int phaseFlatteIdx = -1;
+                            int phaseBWIdx = -1;
+                            bool foundAny = false;
+
+                            auto flatteIt = massDepParIndices.find(GlobalPhaseComponentKeyForWave(waveName, reflTag, "globalphase_flatte"));
+                            if (flatteIt == massDepParIndices.end() && reflTag.Length() > 0) {
+                                flatteIt = massDepParIndices.find(GlobalPhaseComponentKeyForWave(waveName, "globalphase_flatte"));
+                            }
+                            if (flatteIt != massDepParIndices.end() && !flatteIt->second.empty()) {
+                                phaseFlatteIdx = flatteIt->second[0];
+                                foundAny = true;
+                            }
+
+                            auto bwIt = massDepParIndices.find(GlobalPhaseComponentKeyForWave(waveName, reflTag, "globalphase_bw"));
+                            if (bwIt == massDepParIndices.end() && reflTag.Length() > 0) {
+                                bwIt = massDepParIndices.find(GlobalPhaseComponentKeyForWave(waveName, "globalphase_bw"));
+                            }
+                            if (bwIt != massDepParIndices.end() && !bwIt->second.empty()) {
+                                phaseBWIdx = bwIt->second[0];
+                                foundAny = true;
+                            }
+
+                            includeGlobalPhase = foundAny;
+                            if (includeGlobalPhase) {
+                                minuitIndices.push_back(phaseFlatteIdx);
+                                minuitIndices.push_back(phaseBWIdx);
+                            }
+                        } else {
+                            auto phaseIt = massDepParIndices.find(GlobalPhaseKeyForWave(waveName, reflTag));
+                            if (phaseIt == massDepParIndices.end() && reflTag.Length() > 0) {
+                                phaseIt = massDepParIndices.find(GlobalPhaseKeyForWave(waveName));
+                            }
+
+                            includeGlobalPhase = (phaseIt != massDepParIndices.end() && !phaseIt->second.empty());
+                            if (includeGlobalPhase) {
+                                minuitIndices.push_back(phaseIt->second[0]);
+                            }
+                        }
+
+                        PrecompiledWave pWave;
+                        pWave.funcIndex = funcIndex;
+                        pWave.funcType = funcType;
+                        pWave.includeGlobalPhase = includeGlobalPhase;
+                        pWave.minuitIndices = std::move(minuitIndices);
+                        pAmp.waves.push_back(std::move(pWave));
+                    }
+
+                    amplitudes_.push_back(std::move(pAmp));
+                }
+            }
+        }
+
+        // 4. Build per-bin parameter routing
+        binRouting_.clear();
+        binRouting_.reserve(fitter_.massBins_.size());
+
+        for (size_t b = 0; b < fitter_.massBins_.size(); ++b) {
+            const double mass_bin = fitter_.massBins_[b];
+            const TString mass_bin_str = TString::Format("%1.2f", mass_bin);
+            const auto& pars = *fitter_.parsVec_[b];
+            const auto planCacheIt = fitter_.parameterEvalPlanCache_.find(mass_bin);
+
+            std::vector<BinParamRouting> binRoutings;
+            binRoutings.reserve(pars.Nvars());
+
+            for (int j = 0; j < pars.Nvars(); ++j) {
+                const ParameterEvalPlan* plan = nullptr;
+                if (planCacheIt != fitter_.parameterEvalPlanCache_.end() && j < static_cast<int>(planCacheIt->second.size())) {
+                    plan = &planCacheIt->second[j];
+                }
+                if (!plan) continue;
+
+                BinParamRouting routing;
+                routing.varIdx = j;
+
+                const TString& par_name = plan->par_name;
+                const TString& base_name = plan->base_name;
+                const int ell_value = plan->ell_value;
+                const bool isMassDependent = plan->isMassDependent;
+
+                // Check mass-independent parameters
+                bool foundMI = false;
+                const auto binMIIt = massIndepParIndices.find(mass_bin_str);
+                if (binMIIt != massIndepParIndices.end()) {
+                    const auto parIt = binMIIt->second.find(par_name);
+                    if (parIt != binMIIt->second.end() && !parIt->second.empty()) {
+                        routing.source = ParamRoutingSource::DirectMinuit;
+                        routing.minuitIdx = parIt->second[0];
+                        foundMI = true;
+                    }
+                }
+
+                // If not mass-independent, check mass-dependent amplitude
+                if (!foundMI) {
+                    if (isMassDependent) {
+                        auto itAmp = ampNameToIdx.find({base_name, ell_value});
+                        if (itAmp != ampNameToIdx.end()) {
+                            routing.ampIdx = itAmp->second;
+                            if (!plan->isPhase) {
+                                routing.source = ParamRoutingSource::AmplitudeMagnitude;
+                            } else {
+                                routing.source = ParamRoutingSource::AmplitudePhase;
+                            }
+                        } else {
+                            routing.source = ParamRoutingSource::ConstantValue;
+                            routing.constVal = 0.0;
+                        }
+                    } else {
+                        routing.source = ParamRoutingSource::ConstantValue;
+                        routing.constVal = 0.0;
+                    }
+                }
+
+                binRoutings.push_back(routing);
+            }
+
+            binRouting_.push_back(std::move(binRoutings));
+        }
+
+        // 5. Pre-allocate wave parameter buffer
+        preassembledWaveParams_.resize(amplitudes_.size());
+        for (size_t a = 0; a < amplitudes_.size(); ++a) {
+            preassembledWaveParams_[a].resize(amplitudes_[a].waves.size());
+            for (size_t w = 0; w < amplitudes_[a].waves.size(); ++w) {
+                preassembledWaveParams_[a][w].resize(amplitudes_[a].waves[w].minuitIndices.size(), 0.0);
+            }
+        }
+
+        precompiled_ = true;
+        LogFitInfo("OPT", Form("precompiled_plan_ready nBins=%zu nAmps=%zu nConstraints=%zu",
+                               fitter_.massBins_.size(), amplitudes_.size(), fastConstraints_.size()));
+    }
+
+    double MassDependentFitter::Chi2Function::EvalFast(const double* mass_dep_pars) const {
+        // 1. Gaussian constraint penalties (O(1) direct access)
+        double penalty = 0.0;
+        for (const auto& gc : fastConstraints_) {
+            const double diff = mass_dep_pars[gc.minuitIdx] - gc.mean;
+            penalty += diff * diff * gc.invSigmaSq;
+        }
+
+        // 2. Pre-assemble wave parameter buffers once across all bins
+        for (size_t a = 0; a < amplitudes_.size(); ++a) {
+            const auto& ampMeta = amplitudes_[a];
+            for (size_t w = 0; w < ampMeta.waves.size(); ++w) {
+                const auto& wave = ampMeta.waves[w];
+                auto& pVec = preassembledWaveParams_[a][w];
+                for (size_t p = 0; p < wave.minuitIndices.size(); ++p) {
+                    const int idx = wave.minuitIndices[p];
+                    pVec[p] = (idx >= 0) ? mass_dep_pars[idx] : 0.0;
+                }
+            }
+        }
+
+        // 3. Fast bin evaluation
+        const size_t nBins = fitter_.massBins_.size();
+        double total_chi2 = 0.0;
+
+        auto evaluateBinFast = [&](size_t i) -> double {
+            const double mass_bin = fitter_.massBins_[i];
+            ParameterHelper& pars = *fitter_.parsVec_[i];
+
+            // Evaluate complex amplitudes needed for this bin
+            std::vector<std::complex<double>> binAmps(amplitudes_.size(), std::complex<double>(0.0, 0.0));
+            for (size_t a = 0; a < amplitudes_.size(); ++a) {
+                const auto& ampMeta = amplitudes_[a];
+                std::complex<double> totalAmp(0.0, 0.0);
+                for (size_t w = 0; w < ampMeta.waves.size(); ++w) {
+                    const auto& wave = ampMeta.waves[w];
+                    totalAmp += fitter_.massDepFuncs_[wave.funcIndex].GetAmplitude(
+                        mass_bin, preassembledWaveParams_[a][w], wave.includeGlobalPhase);
+                }
+                binAmps[a] = totalAmp;
+            }
+
+            // Route parameters into ParameterHelper
+            const auto& routingList = binRouting_[i];
+            for (const auto& r : routingList) {
+                double val = 0.0;
+                switch (r.source) {
+                    case ParamRoutingSource::DirectMinuit:
+                        val = mass_dep_pars[r.minuitIdx];
+                        break;
+                    case ParamRoutingSource::AmplitudeMagnitude:
+                        val = std::abs(binAmps[r.ampIdx]);
+                        break;
+                    case ParamRoutingSource::AmplitudePhase:
+                        val = std::arg(binAmps[r.ampIdx]);
+                        break;
+                    case ParamRoutingSource::ConstantValue:
+                        val = r.constVal;
+                        break;
+                }
+                pars.SetCurrentVal(r.varIdx, val);
+            }
+
+            return fitter_.EvaluateChi2ForMassBin(i, pars);
+        };
+
+        const bool useParallel = fitter_.enableParallelization_ && nBins >= 8 && fitter_.numThreads_ != 1;
+        if (useParallel) {
+            const unsigned int hw = std::thread::hardware_concurrency();
+            size_t requestedWorkers = (fitter_.numThreads_ > 0) ? static_cast<size_t>(fitter_.numThreads_) : ((hw > 0) ? static_cast<size_t>(hw) : 2);
+            const size_t nWorkers = std::min(nBins, requestedWorkers);
+            if (nWorkers > 1) {
+                ROOT::TThreadExecutor executor(static_cast<UInt_t>(nWorkers));
+                std::vector<size_t> workerIds(nWorkers);
+                std::iota(workerIds.begin(), workerIds.end(), 0);
+
+                auto evaluateWorker = [&](size_t workerId) -> double {
+                    double localChi2 = 0.0;
+                    for (size_t binIdx = workerId; binIdx < nBins; binIdx += nWorkers) {
+                        localChi2 += evaluateBinFast(binIdx);
+                    }
+                    return localChi2;
+                };
+
+                const std::vector<double> partialChi2 = executor.Map(evaluateWorker, workerIds);
+                total_chi2 = std::accumulate(partialChi2.begin(), partialChi2.end(), 0.0);
+            } else {
+                for (size_t i = 0; i < nBins; ++i) {
+                    total_chi2 += evaluateBinFast(i);
+                }
+            }
+        } else {
+            for (size_t i = 0; i < nBins; ++i) {
+                total_chi2 += evaluateBinFast(i);
+            }
+        }
+
+        fitter_.lastChi2_ = total_chi2;
+        return total_chi2 + penalty;
+    }
+
     double MassDependentFitter::Chi2Function::operator()(const double* mass_dep_pars) const {
+        if (precompiled_) {
+            return EvalFast(mass_dep_pars);
+        }
+
         MapParameters(mass_dep_pars);
         double chi2 = fitter_.DoEval(massDepPars_, massIndepPars_);
 
@@ -1537,6 +1980,9 @@ namespace m2pw {
             paramManager.parsList[parName] = parValues[i];
         }
 
+        // Re-evaluate at best-fit parameters so pars_ and eqns_ reflect final fitted state
+        chi2Function(parValues);
+
         // Store the errors in the parameter manager AND propagate to pars_
         paramManager.StoreResults(minimizer.get());
     }
@@ -1653,14 +2099,32 @@ namespace m2pw {
 
                 const bool targetRequested =
                     std::find(targetELL.begin(), targetELL.end(), ell_value) != targetELL.end();
-                const bool forceFixedZero = targetRequested && ell_value == 1;
 
                 if (!targetRequested) {
                     continue;
                 }
 
+                // Determine initialization rule for this ell_value
+                WaveInitRule initRule;
+                auto ruleIt = waveInitRules.find(ell_value);
+                if (ruleIt != waveInitRules.end()) {
+                    initRule = ruleIt->second;
+                } else {
+                    // Default legacy fallback: ell == 1 is fixed zero; other ells are random positive mag + zero phase
+                    if (ell_value == 1) {
+                        initRule.strategy = WaveInitRule::Strategy::FixedZero;
+                        initRule.isFixed = true;
+                    } else {
+                        initRule.strategy = WaveInitRule::Strategy::RandomPositiveMagnitudeZeroPhase;
+                        initRule.minVal = 0.0;
+                        initRule.maxVal = 200.0;
+                    }
+                }
+
+                const bool isFixed = initRule.isFixed || (initRule.strategy == WaveInitRule::Strategy::FixedZero) || (initRule.strategy == WaveInitRule::Strategy::FixedValue);
+
                 const bool neededForMoments = fitter.ParameterNeededForMoments(ell_value, hConfig);
-                if (!neededForMoments && !forceFixedZero) {
+                if (!neededForMoments && !isFixed) {
                     continue;
                 }
                 
@@ -1680,18 +2144,36 @@ namespace m2pw {
                     continue;
                 }
                 
-                double initialValue = forceFixedZero ? 0.0 : (name.Contains("phi") ? 0.0 : rng.Uniform(0.0, 200.0));
+                const bool isPhase = name.Contains("phi");
+                double initialValue = 0.0;
+                switch (initRule.strategy) {
+                    case WaveInitRule::Strategy::FixedZero:
+                        initialValue = 0.0;
+                        break;
+                    case WaveInitRule::Strategy::FixedValue:
+                        initialValue = initRule.fixedValue;
+                        break;
+                    case WaveInitRule::Strategy::RandomPositiveMagnitudeZeroPhase:
+                        initialValue = isPhase ? 0.0 : rng.Uniform(initRule.minVal, initRule.maxVal);
+                        break;
+                    case WaveInitRule::Strategy::RandomFullPhase:
+                        initialValue = isPhase ? rng.Uniform(-TMath::Pi(), TMath::Pi()) : rng.Uniform(initRule.minVal, initRule.maxVal);
+                        break;
+                    default:
+                        initialValue = isPhase ? 0.0 : rng.Uniform(initRule.minVal, initRule.maxVal);
+                        break;
+                }
 
                 parsList[name] = initialValue;
                 nameToIndex[name] = totalNpars;
                 parIndexNames.push_back(name);
-                if (forceFixedZero) {
+                if (isFixed) {
                     fixedParNames.push_back(name);
                 }
                 totalNpars++;
 
-                LogMIInfo("ADD", Form("param=%s l=%d index=%d value=%g",
-                    name.Data(), ell_value, totalNpars - 1, initialValue));
+                LogMIInfo("ADD", Form("param=%s l=%d index=%d value=%g fixed=%d",
+                    name.Data(), ell_value, totalNpars - 1, initialValue, isFixed ? 1 : 0));
             }
         }
     }
@@ -2005,6 +2487,18 @@ namespace m2pw {
                     paramTypes.push_back(Form("im_%d", i));
                 }
             }
+        } else if (funcType == static_cast<int>(MT::CustomFormula) || funcType == 5) {
+            for (const auto& [ell, wConfigs] : fitter.GetMassDependenceConfig().massDependentWaves) {
+                for (const auto& wc : wConfigs) {
+                    if (fitter.GetFunctionIndexForWave(wc.waveName) == funcIndex && !wc.parameterNames.empty()) {
+                        paramTypes = wc.parameterNames;
+                        return paramTypes;
+                    }
+                }
+            }
+            if (paramTypes.empty()) {
+                paramTypes = {"k", "Mass", "Width"};
+            }
         }
 
         return paramTypes;
@@ -2070,41 +2564,15 @@ namespace m2pw {
                     LogMDWarn("INIT", Form("wave=%s reason=missing_function_index using_defaults=1", waveName.Data()));
                 }
 
-                // Check if this wave uses conformal polynomial coefficients.
-                // bool isConformal = false;
-                // bool isFlattePlusConformal = false;
-                // int polyOrder = 2;
                 int funcType = -1;
                 if (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size())) {
                     funcType = fitter.massDepFuncs_[funcIndex].GetFuncType();
-                    // isConformal = (funcType == static_cast<int>(MassDependenceConfig::ModelType::Polynomial));
-                    // isFlattePlusConformal =
-                    //     (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlattePlusPolynomial));
-                    // if (isConformal || isFlattePlusConformal) {
-                    //     polyOrder = fitter.massDepFuncs_[funcIndex].GetPolyOrder();
-                    // }
                 }
-                cout << "Determining parameters for wave " << waveName << " with function type " << funcType << endl;
+                LogMDInfo("INIT", Form("wave=%s funcType=%d model=%s",
+                    waveName.Data(), funcType, ModelTypeName(funcType).Data()));
 
-                // Determine which parameter types to add
+                // Determine parameter types to add for this wave model
                 std::vector<TString> paramTypes = BuildParamTypesForWave(funcType, funcIndex);
-                // Note: BuildParamTypesForWave will consult massDepFuncs_ via fitter to
-                // decide if polynomial blocks should be appended based on polyOrder.
-                // The previous inline logic for conformal/Flatté/BW was centralized here.
-                // if (isConformal && polyOrder >= 0) {
-                //     // Conformal polynomial: add re_i and im_i for i=0 to polyOrder
-                //     // Parameters: m_threshold, m_expansion, re_i, im_i
-                //     // BuildParamTypesForWave already covers this, so nothing more to do.
-                //     LogMDInfo("MODE", Form("wave=%s model=conformal order=%d n_params=%zu",
-                //         waveName.Data(), polyOrder, paramTypes.size()));
-                // } else if (isFlattePlusConformal && polyOrder >= 0) {
-                //     LogMDInfo("MODE", Form("wave=%s model=flatte_plus_conformal order=%d n_params=%zu",
-                //         waveName.Data(), polyOrder, paramTypes.size()));
-                // } else if (isFlattePlusConformal) {
-                //     LogMDInfo("MODE", Form("wave=%s model=flatte order=NA n_params=%zu",
-                //         waveName.Data(), paramTypes.size()));
-                // }
-                // BuildParamTypesForWave covered BW, TwoBW, Flatté, Polynomial, and defaults.
 
                 for (const TString& paramType : paramTypes) {
                     TString name;
@@ -2334,16 +2802,16 @@ namespace m2pw {
                         continue;
                     }
 
-                    // Try to read the parameter value from the tree using TLeaf
+                    // Try to read the parameter value from the tree using TLeaf (support legacy parameter names as fallback)
                     double value = 0.0;
                     TLeaf* leaf = tree->GetLeaf(name);
-                    // if (!leaf && isSharedResonanceParam) {
-                    //     TString legacyParamType = paramType;
-                    //     legacyParamType.ReplaceAll("Mass", "M");
-                    //     legacyParamType.ReplaceAll("Width", "width");
-                    //     TString legacyName = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), legacyParamType.Data());
-                    //     leaf = tree->GetLeaf(legacyName);
-                    // }
+                    if (!leaf && isSharedResonanceParam) {
+                        TString legacyParamType = paramType;
+                        legacyParamType.ReplaceAll("Mass", "M");
+                        legacyParamType.ReplaceAll("Width", "width");
+                        TString legacyName = Form("MD_%s_%s_%s", parName.Data(), waveName.Data(), legacyParamType.Data());
+                        leaf = tree->GetLeaf(legacyName);
+                    }
                     if (leaf) {
                         value = leaf->GetValue();
                         LogMDInfo("LOAD", Form("param=%s source=file value=%g", name.Data(), value));

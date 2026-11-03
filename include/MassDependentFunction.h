@@ -1,8 +1,17 @@
 #pragma once
 
+#if __has_include("TMath.h")
 #include "TMath.h"
+#else
+#include <cmath>
+namespace TMath {
+    inline double Sqrt(double x) { return std::sqrt(x); }
+}
+#endif
 #include <complex>
 #include <vector>
+#include <functional>
+#include <string>
 
 using namespace std;
 
@@ -10,6 +19,8 @@ namespace m2pw{
 
   class MassDependentFunction{
     public:
+        using CustomFormulaFunc = std::function<complex<double>(double mass, const vector<double>& params)>;
+
         MassDependentFunction() = default;
         MassDependentFunction(const MassDependentFunction&) = default;
         MassDependentFunction(MassDependentFunction&&) = default;
@@ -23,6 +34,27 @@ namespace m2pw{
             _MassBinWidth(MassBinWidth),
             _FuncType(FuncType),
             _PolyOrder(PolyOrder) {}
+
+        void SetCustomFormula(CustomFormulaFunc func, const string& formulaStr = "", int nParams = 0) {
+            _customFormula = func;
+            _formulaString = formulaStr;
+            _nCustomParams = nParams;
+            _isCustom = true;
+        }
+
+        bool HasCustomFormula() const { return _isCustom && (_customFormula != nullptr); }
+        const string& GetFormulaString() const { return _formulaString; }
+        void SetFormulaString(const string& str) { _formulaString = str; }
+        void SetNCustomParams(int n) { _nCustomParams = n; }
+
+        static double PhaseSpaceFactor(double mass, double m1, double m2) {
+            double s = mass * mass;
+            double threshold_sq = (m1 + m2) * (m1 + m2);
+            if (s <= threshold_sq) return 0.0;
+            double diff_sq = (m1 - m2) * (m1 - m2);
+            double k = TMath::Sqrt((s - threshold_sq) * (s - diff_sq)) / (2.0 * mass);
+            return 2.0 * k / mass;
+        }
 
         // Single parameter version
         double GetPWMagnitude(double mass, const double params) const {
@@ -57,6 +89,9 @@ namespace m2pw{
         // Get number of parameters needed for this function type
         // If _PolyOrder == -1 the polynomial block is disabled and contributes 0 parameters.
         int GetNParameters() const {
+            if (_isCustom && _nCustomParams > 0) {
+                return _nCustomParams;
+            }
             int base = 0;
             switch (_FuncType) {
                 case 0: // Polynomial (pure conformal polynomial)
@@ -74,6 +109,8 @@ namespace m2pw{
                 case 4: // Flatte + Breit-Wigner + polynomial
                     base = 8; // k_fl, g_etapi, g_KK, g_etaprimepi, M_fl, k_bw, M_bw, width_bw
                     break;
+                case 5: // Custom formula
+                    return _nCustomParams;
             }
 
             int polyBlock = 0;
@@ -90,15 +127,15 @@ namespace m2pw{
         }
 
     private:
-        // static constexpr double kDefaultFlatteMass = 1.001;
-        // static constexpr double kPolynomialThresholdMass = 0.683;
-        // static constexpr double kPolynomialExpansionMass = 0.98;
-
         int _NMassBins = 0;
         double _FirstMassBinCenter = 0.0;
         double _MassBinWidth = 0.0;
         int _FuncType = 0;
-        int _PolyOrder = 2;  // Polynomial order for conformal polynomial (used when ModelType indicates polynomial)
+        int _PolyOrder = 2;  // Polynomial order for conformal polynomial
+        bool _isCustom = false;
+        int _nCustomParams = 0;
+        string _formulaString = "";
+        CustomFormulaFunc _customFormula = nullptr;
 
         // Core amplitude calculation
         complex<double> ComputeAmplitude(double mass, const vector<double>& params, bool include_globalphase) const {
@@ -110,6 +147,10 @@ namespace m2pw{
             int bin = static_cast<int>((mass - _FirstMassBinCenter) / _MassBinWidth);
             if (bin < 0 || bin >= _NMassBins) {
                 return complex<double>(0.0, 0.0);
+            }
+
+            if (_isCustom && _customFormula) {
+                return _customFormula(mass, params);
             }
 
             vector<double> coreParams = params;

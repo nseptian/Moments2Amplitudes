@@ -40,17 +40,20 @@ namespace m2pw {
                 FlattePlusPolynomial = 1,
                 BreitWignerPlusPolynomial = 2,
                 TwoBreitWignerPlusPolynomial = 3,
-                FlatteBreitWignerPlusPolynomial = 4
+                FlatteBreitWignerPlusPolynomial = 4,
+                CustomFormula = 5
             };
 
             struct WaveModelConfig {
                 TString waveName;
                 ModelType modelType = ModelType::BreitWignerPlusPolynomial;
                 int polyOrder = 2;
+                TString formula = "";                           // Explicit formula expression
+                std::vector<TString> parameterNames = {};       // List of parameter names
 
                 WaveModelConfig() = default;
-                WaveModelConfig(const TString& name, ModelType type, int order = 2)
-                    : waveName(name), modelType(type), polyOrder(order) {}
+                WaveModelConfig(const TString& name, ModelType type, int order = 2, const TString& form = "", const std::vector<TString>& params = {})
+                    : waveName(name), modelType(type), polyOrder(order), formula(form), parameterNames(params) {}
             };
 
             std::map<int, std::vector<WaveModelConfig>> massDependentWaves;  // ELL -> list of wave model configs
@@ -203,6 +206,9 @@ namespace m2pw {
         
         // Method to set/update configuration
         void SetMassDependenceConfig(const MassDependenceConfig& config);
+        void SetWaveCustomFormula(int ell, const TString& waveName,
+                                 std::function<std::complex<double>(double, const std::vector<double>&)> formula,
+                                 const TString& formulaStr = "");
         void SetMomentsConfig(const MomentsConfig& config);
         void SetMinimizerPrintLevel(int level);
         void SetMaxFunctionCalls(int maxCalls);
@@ -366,6 +372,31 @@ namespace m2pw {
             return MomentsConfig(); // Include all by default
         }
 
+        /**
+         * @brief Configuration for initial parameter value assignment and fixing per angular momentum L
+         */
+        struct WaveInitRule {
+            enum class Strategy {
+                Default,                          // S-wave: positive mag [0, 200], phase 0; P-wave: fixed 0; others: random
+                FixedZero,                        // Fixed to 0.0
+                FixedValue,                       // Fixed to fixedValue
+                RandomPositiveMagnitudeZeroPhase, // Magnitudes ~ Uniform(minVal, maxVal), phases = 0.0
+                RandomFullPhase,                 // Magnitudes ~ Uniform(minVal, maxVal), phases ~ Uniform(-pi, pi)
+                FromFile                          // Loaded from result tree file
+            };
+
+            Strategy strategy = Strategy::Default;
+            double minVal = 0.0;
+            double maxVal = 200.0;
+            double fixedValue = 0.0;
+            bool isFixed = false;
+            TString filePath = "";
+
+            WaveInitRule() = default;
+            WaveInitRule(Strategy strat, double minV = 0.0, double maxV = 200.0, double fixedV = 0.0, bool fix = false)
+                : strategy(strat), minVal(minV), maxVal(maxV), fixedValue(fixedV), isFixed(fix) {}
+        };
+
         // Parameter management and minimization
         struct ParameterManager {
             std::vector<TString> parIndexNames;
@@ -380,8 +411,48 @@ namespace m2pw {
             TRandom3 rng{0};
             MassDependentFitter& fitter;  // Reference to parent fitter
 
+            // Per-L wave initialization rules (e.g. 0 -> S-wave, 1 -> P-wave)
+            std::map<int, WaveInitRule> waveInitRules;
+
             // Constructor
             ParameterManager(MassDependentFitter& f) : fitter(f) {}
+
+            // Set wave initialization rules
+            void SetWaveInitRule(int ell, const WaveInitRule& rule) { waveInitRules[ell] = rule; }
+            void SetWaveInitRules(const std::map<int, WaveInitRule>& rules) { waveInitRules = rules; }
+
+            // Accessor helpers
+            bool HasParameter(const TString& parName) const {
+                return parsList.find(parName) != parsList.end();
+            }
+            double GetValue(const TString& parName) const {
+                auto it = parsList.find(parName);
+                if (it != parsList.end()) return it->second;
+                return 0.0;
+            }
+            double GetError(const TString& parName) const {
+                auto it = nameToIndex.find(parName);
+                if (it != nameToIndex.end() && it->second >= 0 && it->second < static_cast<int>(parErrors.size())) {
+                    return parErrors[it->second];
+                }
+                return 0.0;
+            }
+            bool IsFixed(const TString& parName) const {
+                return std::find(fixedParNames.begin(), fixedParNames.end(), parName) != fixedParNames.end();
+            }
+            bool FixParameter(const TString& parName) {
+                if (parsList.find(parName) == parsList.end()) return false;
+                if (!IsFixed(parName)) fixedParNames.push_back(parName);
+                return true;
+            }
+            bool FreeParameter(const TString& parName) {
+                auto it = std::find(fixedParNames.begin(), fixedParNames.end(), parName);
+                if (it != fixedParNames.end()) {
+                    fixedParNames.erase(it);
+                    return true;
+                }
+                return false;
+            }
 
             // Add mass-independent parameters for selected L values with random initialization.
             void AddMassIndependentParameter(const std::vector<int>& targetELL,
@@ -444,6 +515,41 @@ namespace m2pw {
 
         void MakeResultTree(const ParameterManager& paramManager, const TString& fileName) const;
 
+        // Structures for fast precompiled parameter routing and evaluation
+        enum class ParamRoutingSource {
+            DirectMinuit,
+            AmplitudeMagnitude,
+            AmplitudePhase,
+            ConstantValue
+        };
+
+        struct BinParamRouting {
+            int varIdx = -1;
+            ParamRoutingSource source = ParamRoutingSource::ConstantValue;
+            int minuitIdx = -1;
+            int ampIdx = -1;
+            double constVal = 0.0;
+        };
+
+        struct PrecompiledWave {
+            int funcIndex = -1;
+            int funcType = -1;
+            bool includeGlobalPhase = false;
+            std::vector<int> minuitIndices;
+        };
+
+        struct PrecompiledAmplitude {
+            TString baseName;
+            int ellValue = -1;
+            std::vector<PrecompiledWave> waves;
+        };
+
+        struct FastConstraint {
+            int minuitIdx = -1;
+            double mean = 0.0;
+            double invSigmaSq = 0.0;
+        };
+
         // Chi2 function class for minimization
         class Chi2Function {
         private:
@@ -454,15 +560,24 @@ namespace m2pw {
             mutable std::map<TString, std::map<TString, std::vector<double>>> massIndepPars_;
             mutable std::map<TString, double> currentValues_;
 
+            // Precompiled execution plan
+            bool precompiled_ = false;
+            std::vector<FastConstraint> fastConstraints_;
+            std::vector<PrecompiledAmplitude> amplitudes_;
+            std::vector<std::vector<BinParamRouting>> binRouting_;
+            mutable std::vector<std::vector<std::vector<double>>> preassembledWaveParams_;
+
         public:
             Chi2Function(MassDependentFitter& fitter, 
                         const std::vector<TString>& parIndexNames,
-                        const ParameterManager& paramManager)
-                : fitter_(fitter), parIndexNames_(parIndexNames), paramManager_(&paramManager) {}
+                        const ParameterManager& paramManager);
 
             double operator()(const double* mass_dep_pars) const;
+            double EvalFast(const double* mass_dep_pars) const;
+            bool IsPrecompiled() const { return precompiled_; }
 
         private:
+            void BuildPrecompiledPlan();
             void MapParameters(const double* mass_dep_pars) const;
             void MapMassIndependentParameter(const TString& parName, double value) const;
             void MapMassDependentParameter(const TString& parName, double value) const;
@@ -519,6 +634,13 @@ private:
     // Covariance matrix evaluation
     bool useCovarianceMatrix_ = true;
     std::map<double, BinCovarianceCache> binCovarianceCache_;
+    std::vector<BinCovarianceCache> binCovarianceCacheVec_;
+
+    // Fast vector indexing for O(1) bin evaluations
+    std::vector<equation_t*> eqnsVec_;
+    std::vector<ParameterHelper*> parsVec_;
+    std::vector<std::vector<int>> equationLCacheVec_;
+    std::map<double, size_t> massBinToIndex_;
 
     // Helper methods
     void InitializeMassBins(const std::vector<double>& mass_bins);
@@ -527,6 +649,7 @@ private:
     void BuildParameterInfoCache();
     void BuildMassDependenceLookupCache();
     void BuildParameterEvalPlanCache();
+    void BuildIndexVectors();
 
     bool IsMassDependentEll(int ell_value) const;
     const std::vector<TString>& GetMassDependentWaveNames(int ell_value) const;
@@ -534,6 +657,7 @@ private:
     std::unique_ptr<ParameterInfo> ParseParameterName(const TString& parName) const;
 
     // Chi2 calculation
+    double EvaluateChi2ForMassBin(size_t binIdx, ParameterHelper& pars) const;
     double EvaluateChi2ForMassBin(double massBin, ParameterHelper& pars) const;
 
     // Helper methods for amplitude-level evaluation (single or multiple waves)

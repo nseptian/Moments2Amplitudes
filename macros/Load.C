@@ -13,16 +13,30 @@ void Load(){
   // Ensure BruFit environment and classes (e.g. RooHSSphHarmonic) are loaded
   if (!TClass::GetClass("RooHSSphHarmonic")) {
     TString brufitDir = gSystem->Getenv("BRUFIT");
+    if (brufitDir.IsNull()) {
+      if (gSystem->AccessPathName("/d/grid17/septian/brufit_dev/brufit/macros/LoadBru.C") == 0) {
+        brufitDir = "/d/grid17/septian/brufit_dev/brufit";
+      } else if (gSystem->AccessPathName("/d/home/septian/brufit/macros/LoadBru.C") == 0) {
+        brufitDir = "/d/home/septian/brufit";
+      }
+    }
     if (!brufitDir.IsNull() && gSystem->AccessPathName(brufitDir + "/macros/LoadBru.C") == 0) {
       gROOT->ProcessLine(Form(".x %s/macros/LoadBru.C", brufitDir.Data()));
-    } else if (gSystem->AccessPathName("/d/grid17/septian/brufit_dev/brufit/macros/LoadBru.C") == 0) {
-      gROOT->ProcessLine(".x /d/grid17/septian/brufit_dev/brufit/macros/LoadBru.C");
     }
   }
 
-  // Prefer the run-time project directory, then fall back to the legacy env var.
-  TString projectDir = "/d/grid17/septian/Moments2Amplitudes/";
-  // cout << "Using project directory: " << projectDir << endl;
+  // Determine repository root directory
+  TString projectDir = gSystem->Getenv("MOMS2AMPS");
+  if (projectDir.IsNull()) {
+    TString currentDir = gSystem->WorkingDirectory();
+    if (gSystem->AccessPathName(currentDir + "/src/MassDependentFitter.cpp") == 0) {
+      projectDir = currentDir;
+    } else if (gSystem->AccessPathName(currentDir + "/../src/MassDependentFitter.cpp") == 0) {
+      projectDir = gSystem->DirName(currentDir);
+    } else {
+      projectDir = "/d/home/septian/Moments2Amplitudes";
+    }
+  }
   TString srcDir = projectDir + "/src";
 
   // CleanAclicArtifacts(srcDir);

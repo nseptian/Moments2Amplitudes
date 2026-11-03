@@ -29,7 +29,30 @@ Supported parameterizations in `MassDependentFunction`:
 
 ---
 
-## Requirements
+## Configuration-Driven Framework & Pixi Integration
+
+Moments2Amplitudes provides a human-readable, declarative YAML configuration system and a command-line interface (`mom2amp`) integrated with **Pixi**:
+
+```bash
+# 1. Install dependencies with Pixi
+pixi install
+
+# 2. Configure BruFit and ROOT (copy .env.example -> .env or set $BRUFIT)
+cp .env.example .env
+
+# 3. Validate a YAML fit configuration
+pixi run validate configs/s_piecewise_d_bw.yaml
+
+# 4. Run multi-start randomized fit to find central global minimum
+pixi run fit configs/s_piecewise_d_bw.yaml
+
+# 5. Propagate MCMC experimental uncertainty across posterior samples
+pixi run propagate configs/s_piecewise_d_bw.yaml
+```
+
+See **[`docs/CONFIG_FRAMEWORK.md`](docs/CONFIG_FRAMEWORK.md)** for complete configuration options and schema specifications.
+
+---
 
 - [ROOT](https://root.cern/) (v6.28+, with Minuit2 and ACLiC enabled)
 - [brufit](https://github.com/dglazier/brufit/tree/R6.34Test) (PWA-moment relations and MCMC fitting)
