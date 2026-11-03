@@ -11,6 +11,8 @@ propagate = "python -m moments2amplitudes.cli propagate"
 validate = "python -m moments2amplitudes.cli validate"
 plot = "python -m moments2amplitudes.cli plot"
 summary = "python -m moments2amplitudes.cli summary"
+cross-section = "python -m moments2amplitudes.cli cs"
+cs = "python -m moments2amplitudes.cli cs"
 test = "python -m unittest discover -s tests -v"
 mom2amp = "python -m moments2amplitudes.cli"
 

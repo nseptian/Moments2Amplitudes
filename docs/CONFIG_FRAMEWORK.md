@@ -94,7 +94,22 @@ pixi run plot configs/s_piecewise_d_bw.yaml --n-lowest-chi2 10 --moments L=2
 ```
 Saves publication-ready PNG and PDF figures in `<output_dir>/plots/` and individual moments in `<output_dir>/plots/moments/`.
 
-### 5. MCMC Posterior Uncertainty Propagation
+### 5. Calculate Reflectivity-Separated Cross-Section
+Calculate acceptance-corrected yields and differential cross section \(\frac{d\sigma}{dt}\) separated by reflectivity for a fitted resonance (e.g. \(a_2(1320)\)):
+```bash
+pixi run cs configs/s_piecewise_d_bw.yaml
+```
+Optional CLI overrides:
+```bash
+pixi run cs configs/s_piecewise_d_bw.yaml --resonance a2_1320 --t-min 0.1 --t-max 0.2 --luminosity 257.4
+```
+For multi-\(t\)-bin analysis, pass multiple run directories:
+```bash
+pixi run cs configs/s_piecewise_d_bw.yaml --runs logs_t010020 logs_t020032 logs_t032050 logs_t050075
+```
+Saves reports to `<output_dir>/reports/cross_section_{resonance}.txt`, `.md`, `.json`, and publication plot `<output_dir>/plots/{resonance}_CrossSection_vs_t.png` and `.pdf`.
+
+### 6. MCMC Posterior Uncertainty Propagation
 Propagate experimental uncertainty across MCMC posterior samples using the global minimum best parameters:
 ```bash
 pixi run propagate configs/s_piecewise_d_bw.yaml
@@ -104,7 +119,7 @@ Optional CLI overrides:
 pixi run propagate configs/s_piecewise_d_bw.yaml --n-workers 8 --max-entries 200
 ```
 
-### 6. End-to-End Pipeline
+### 7. End-to-End Pipeline
 Run multi-start fitting followed directly by MCMC propagation:
 ```bash
 pixi run mom2amp run configs/s_piecewise_d_bw.yaml
@@ -305,6 +320,18 @@ plotting:
   moments: ["all"]          # "all", "L=2", "L=4", or list: ["H_0_0_0", "H_0_2_0"]
   formats: ["png", "pdf"]
 
+# Reflectivity-Separated Resonance Cross-Section Settings
+cross_section:
+  enabled: true
+  resonance: "a2_1320"      # Target resonance name from waves[].resonances
+  branching_ratio: 0.0565   # Total BR: BR(res -> final state) * BR(final state decay)
+  luminosity: 257.4         # Integrated luminosity in pb^-1
+  luminosity_unit: "pb^-1"  # "pb^-1" (factor 1e6 to mub^-1), "mub^-1", or "nb^-1"
+  t_min: 0.1                # Minimum -t in GeV^2 (auto-detected from run directory if omitted)
+  t_max: 0.2                # Maximum -t in GeV^2
+  mass_limits: [0.8, 2.0]   # Integration limits [m_min, m_max] in GeV
+  phase1_comparison: true   # Overlay published Phase-1 PWA values
+
 # MCMC Uncertainty Propagation
 mcmc_propagation:
   enabled: true
@@ -456,7 +483,50 @@ Generated Figures:
 
 ---
 
-## 10. Modular C++ Architecture & Optimization
+## 10. Reflectivity-Separated Resonance Cross-Section Calculation
+
+The framework extracts the physical acceptance-corrected yields and differential cross section \(\frac{d\sigma}{dt}\) separated by natural parity exchange (positive reflectivity \(\epsilon = +1\)) and unnatural parity exchange (negative reflectivity \(\epsilon = -1\)) from the fitted mass-dependent resonance parameters.
+
+### 1. Mathematical Formalism
+For each partial wave \(w\) carrying the resonance (e.g. \(D\)-waves \(a_2^m\) for \(\epsilon=+1\) and \(b_2^m\) for \(\epsilon=-1\)), the resonance coupling \(k_w\) is extracted from `mass_dependent_params`.
+
+1. **Acceptance-Corrected Resonance Yield per Wave**:
+   The acceptance-corrected yield attributed to the resonance in wave \(w\) is obtained by integrating the continuous Breit-Wigner intensity over the mass spectrum and normalizing by the invariant mass bin width \(\Delta m\):
+   $$Y_w = \frac{1}{\Delta m} \int_{m_{\text{min}}}^{m_{\text{max}}} \frac{k_w^2}{(m^2 - M^2)^2 + (M \Gamma)^2} \, dm$$
+   Because \(Y_w \propto k_w^2\), error propagation from the Minuit symmetric parameter error \(\sigma(k_w)\) yields:
+   $$\sigma(Y_w) = 2 \frac{Y_w}{|k_w|} \sigma(k_w)$$
+
+2. **Reflectivity Sums**:
+   Yields are summed independently over positive (\(a_L^m\)) and negative (\(b_L^m\)) reflectivity waves:
+   $$Y^{(+)} = \sum_{w \in \text{PosRefl}} Y_w, \quad \sigma(Y^{(+)}) = \sqrt{\sum_{w \in \text{PosRefl}} \sigma^2(Y_w)}$$
+   $$Y^{(-)} = \sum_{w \in \text{NegRefl}} Y_w, \quad \sigma(Y^{(-)}) = \sqrt{\sum_{w \in \text{NegRefl}} \sigma^2(Y_w)}$$
+   $$Y^{(\text{tot})} = Y^{(+)} + Y^{(-)}, \quad \sigma(Y^{(\text{tot})}) = \sqrt{\sigma^2(Y^{(+)}) + \sigma^2(Y^{(-)})}$$
+
+3. **Differential Cross Section \(\frac{d\sigma}{dt}\)**:
+   The differential cross section in \(\mu\text{b} / \text{GeV}^2\) is given by:
+   $$\frac{d\sigma^{(\pm, \text{tot})}}{dt} = \frac{Y^{(\pm, \text{tot})}}{\text{den\_factor} \cdot \mathcal{L} \cdot \Delta t \cdot \mathcal{B}}$$
+   where:
+   - \(\mathcal{L}\) is the integrated luminosity (in \(\text{pb}^{-1}\), with \(\text{den\_factor} = 10^6\ \text{pb}/\mu\text{b}\)).
+   - \(\Delta t = t_{\text{max}} - t_{\text{min}}\) is the \(-t\) bin width (in \(\text{GeV}^2\)).
+   - \(\mathcal{B}\) is the total product branching fraction (e.g. \(\mathcal{B}(a_2 \to \eta\pi^0) \times \mathcal{B}(\eta \to 2\gamma) \times \mathcal{B}(\pi^0 \to 2\gamma) \approx 0.0565\)).
+
+4. **Production Reflectivity Fraction**:
+   $$F^{(+)} = \frac{Y^{(+)}}{Y^{(\text{tot})}} = \frac{d\sigma^{(+)}/dt}{d\sigma^{(\text{tot})}/dt}$$
+
+### 2. CLI Execution & Multi-\(t\)-bin Evaluation
+Run on a single fit result:
+```bash
+pixi run cs configs/s_piecewise_d_bw.yaml
+```
+Run across multiple \(-t\) bins simultaneously to generate the cross section vs \(-t\) distribution:
+```bash
+pixi run cs configs/s_piecewise_d_bw.yaml --runs logs_t010020 logs_t020032 logs_t032050 logs_t050075
+```
+Automatically overlays published Phase-1 PWA benchmarks (stat and syst error boxes) and theoretical model bands (`Phys. Rev. D 102, 014003`), saving figures to `<output_dir>/plots/{resonance}_CrossSection_vs_t.png` and `.pdf`.
+
+---
+
+## 11. Modular C++ Architecture & Optimization
 
 The core C++ engine is organized into focused, modular components:
 
@@ -487,7 +557,7 @@ The core C++ engine is organized into focused, modular components:
 
 ---
 
-## 11. Multi-Start Parallel Execution
+## 12. Multi-Start Parallel Execution
 
 Non-linear partial-wave amplitude fits to angular moments possess multiple local minima and saddle points. A multi-start randomized strategy is critical to ensure discovery of the true global minimum:
 

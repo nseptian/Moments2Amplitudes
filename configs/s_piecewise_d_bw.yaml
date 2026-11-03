@@ -102,4 +102,16 @@ plotting:
   moments: ["all"]
   formats: ["png", "pdf"]
 
+cross_section:
+  enabled: true
+  resonance: "a2_1320"
+  branching_ratio: 0.0565
+  luminosity: 257.4
+  luminosity_unit: "pb^-1"
+  t_min: 0.1
+  t_max: 0.2
+  mass_limits: [0.8, 2.0]
+  phase1_comparison: true
+
+
 

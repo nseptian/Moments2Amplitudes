@@ -217,6 +217,103 @@ def cmd_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cross_section(args: argparse.Namespace) -> int:
+    """Calculate reflectivity-separated cross section for a fitted resonance."""
+    config_path = Path(args.config)
+    try:
+        cfg = load_config(config_path)
+    except Exception as e:
+        print(f"[ERROR] Failed to load configuration: {e}")
+        return 1
+
+    # Overrides
+    if hasattr(args, "resonance") and args.resonance:
+        cfg.cross_section.resonance = args.resonance
+    if hasattr(args, "luminosity") and args.luminosity is not None:
+        cfg.cross_section.luminosity = args.luminosity
+    if hasattr(args, "branching_ratio") and args.branching_ratio is not None:
+        cfg.cross_section.branching_ratio = args.branching_ratio
+    if hasattr(args, "t_min") and args.t_min is not None:
+        cfg.cross_section.t_min = args.t_min
+    if hasattr(args, "t_max") and args.t_max is not None:
+        cfg.cross_section.t_max = args.t_max
+    if hasattr(args, "delta_t") and args.delta_t is not None:
+        cfg.cross_section.delta_t = args.delta_t
+
+    from .cross_section import (
+        calculate_resonance_cross_section,
+        format_cross_section_table,
+        save_cross_section_reports,
+        plot_cross_section_vs_t,
+        CrossSectionResult,
+    )
+
+    results: List[CrossSectionResult] = []
+
+    if hasattr(args, "runs") and args.runs:
+        print(f"\nCalculating cross-section across {len(args.runs)} run directories...")
+        for r_dir in args.runs:
+            rundir = RunDirectory(r_dir)
+            try:
+                res = calculate_resonance_cross_section(
+                    cfg,
+                    rundir,
+                    resonance_name=cfg.cross_section.resonance,
+                    luminosity=cfg.cross_section.luminosity,
+                    branching_ratio=cfg.cross_section.branching_ratio,
+                )
+                results.append(res)
+                print(f"[{res.t_min:.3f} < -t < {res.t_max:.3f}] dsigma/dt: Total={res.cs_total:.4f}, Pos={res.cs_pos:.4f}, Neg={res.cs_neg:.4f} mub/GeV^2")
+            except Exception as e:
+                print(f"[WARNING] Could not process run dir {r_dir}: {e}")
+
+        if not results:
+            print("[ERROR] No cross-section results evaluated.")
+            return 1
+
+        primary_rundir = RunDirectory(args.runs[0])
+        plot_cross_section_vs_t(
+            results,
+            primary_rundir.plots_dir,
+            phase1_comparison=not getattr(args, "no_phase1", False),
+            theory_band_file=getattr(args, "theory_band", None),
+        )
+        return 0
+
+    run_dir = getattr(args, "run_dir", None) or getattr(args, "output_dir", None)
+    rundir = get_run_directory(cfg, run_dir)
+    print(f"\nCalculating cross section from run directory: {rundir.root}")
+
+    try:
+        res = calculate_resonance_cross_section(
+            cfg,
+            rundir,
+            resonance_name=cfg.cross_section.resonance,
+            t_min=cfg.cross_section.t_min,
+            t_max=cfg.cross_section.t_max,
+            luminosity=cfg.cross_section.luminosity,
+            branching_ratio=cfg.cross_section.branching_ratio,
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to calculate cross section: {e}")
+        return 1
+
+    print(f"\n{format_cross_section_table(res)}\n")
+    txt_p, md_p, json_p = save_cross_section_reports(res, rundir.reports_dir)
+    print(f"[OK] Saved reports:")
+    print(f"  - Text:     {txt_p}")
+    print(f"  - Markdown: {md_p}")
+    print(f"  - JSON:     {json_p}")
+
+    plot_cross_section_vs_t(
+        [res],
+        rundir.plots_dir,
+        phase1_comparison=not getattr(args, "no_phase1", False),
+        theory_band_file=getattr(args, "theory_band", None),
+    )
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="mom2amp",
@@ -259,6 +356,20 @@ def main():
     p_sum.add_argument("config", help="Path to config.yaml")
     p_sum.add_argument("--run-dir", "--output-dir", dest="run_dir", type=str, default=None, help="Run directory")
 
+    # Cross-Section
+    p_cs = subparsers.add_parser("cross-section", aliases=["cs"], help="Calculate reflectivity-separated cross-section for a fitted resonance")
+    p_cs.add_argument("config", help="Path to config.yaml")
+    p_cs.add_argument("--resonance", type=str, default=None, help="Target resonance name (default: from config or a2_1320)")
+    p_cs.add_argument("--luminosity", type=float, default=None, help="Integrated luminosity in pb^-1")
+    p_cs.add_argument("--br", "--branching-ratio", dest="branching_ratio", type=float, default=None, help="Total branching ratio")
+    p_cs.add_argument("--t-min", type=float, default=None, help="Minimum -t (GeV^2)")
+    p_cs.add_argument("--t-max", type=float, default=None, help="Maximum -t (GeV^2)")
+    p_cs.add_argument("--delta-t", type=float, default=None, help="Bin width delta t (GeV^2)")
+    p_cs.add_argument("--run-dir", "--output-dir", dest="run_dir", type=str, default=None, help="Run directory")
+    p_cs.add_argument("--runs", nargs="*", default=None, help="Multiple run directories to calculate cross section across t-bins")
+    p_cs.add_argument("--theory-band", type=str, default=None, help="Path to theory prediction band file")
+    p_cs.add_argument("--no-phase1", action="store_true", help="Disable overlay of published Phase-1 values")
+
     # Run (All in one)
     p_run = subparsers.add_parser("run", help="Run full pipeline (multi-start fit + MCMC propagation)")
     p_run.add_argument("config", help="Path to config.yaml")
@@ -285,6 +396,8 @@ def main():
         sys.exit(cmd_plot(args))
     elif args.command == "summary":
         sys.exit(cmd_summary(args))
+    elif args.command in ("cross-section", "cs"):
+        sys.exit(cmd_cross_section(args))
     elif args.command == "run":
         sys.exit(cmd_run(args))
     else:

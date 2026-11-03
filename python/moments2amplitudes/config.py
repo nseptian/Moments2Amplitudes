@@ -30,6 +30,7 @@ from .schema import (
     MultiStartConfig,
     MCMCPropagationConfig,
     PlottingConfig,
+    CrossSectionConfig,
 )
 
 
@@ -294,6 +295,24 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         log_dir=mcmc_dict.get("log_dir", "logs_mcmc"),
     )
 
+    # CrossSection
+    cs_dict = data.get("cross_section", {})
+    mass_lims = cs_dict.get("mass_limits", [0.8, 2.0])
+    cross_section = CrossSectionConfig(
+        enabled=bool(cs_dict.get("enabled", True)),
+        resonance=cs_dict.get("resonance", "a2_1320"),
+        branching_ratio=float(cs_dict.get("branching_ratio", 0.0565)),
+        luminosity=float(cs_dict.get("luminosity", 257.4)),
+        luminosity_unit=cs_dict.get("luminosity_unit", "pb^-1"),
+        t_min=float(cs_dict["t_min"]) if "t_min" in cs_dict and cs_dict["t_min"] is not None else None,
+        t_max=float(cs_dict["t_max"]) if "t_max" in cs_dict and cs_dict["t_max"] is not None else None,
+        delta_t=float(cs_dict["delta_t"]) if "delta_t" in cs_dict and cs_dict["delta_t"] is not None else None,
+        mass_limits=(float(mass_lims[0]), float(mass_lims[1])) if len(mass_lims) == 2 else (0.8, 2.0),
+        mass_bin_width=float(cs_dict["mass_bin_width"]) if "mass_bin_width" in cs_dict and cs_dict["mass_bin_width"] is not None else None,
+        theory_band_file=cs_dict.get("theory_band_file"),
+        phase1_comparison=bool(cs_dict.get("phase1_comparison", True)),
+    )
+
     return FitConfig(
         project=project,
         environment=environment,
@@ -304,6 +323,7 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         multi_start=multi_start,
         mcmc_propagation=mcmc_propagation,
         plotting=plotting,
+        cross_section=cross_section,
     )
 
 

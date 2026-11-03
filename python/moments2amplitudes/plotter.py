@@ -634,6 +634,28 @@ def run_all_diagnostics_and_plots(
         )
         plot_files.extend(mom_plots)
 
+    # Generate resonance cross-section report and plot if enabled
+    if getattr(config, "cross_section", None) and config.cross_section.enabled:
+        try:
+            from .cross_section import (
+                calculate_resonance_cross_section,
+                save_cross_section_reports,
+                plot_cross_section_vs_t,
+            )
+            cs_res = calculate_resonance_cross_section(config, rundir)
+            txt_p, md_p, json_p = save_cross_section_reports(cs_res, rundir.reports_dir)
+            report_files.extend([txt_p, md_p, json_p])
+            cs_plots = plot_cross_section_vs_t(
+                [cs_res],
+                rundir.plots_dir,
+                formats=formats,
+                phase1_comparison=config.cross_section.phase1_comparison,
+                theory_band_file=config.cross_section.theory_band_file,
+            )
+            plot_files.extend(cs_plots)
+        except Exception as e:
+            print(f"[WARNING] Cross-section calculation skipped: {e}")
+
     return {
         "summary": summary,
         "reports": report_files,

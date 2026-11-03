@@ -162,6 +162,22 @@ class PlottingConfig:
 
 
 @dataclass
+class CrossSectionConfig:
+    enabled: bool = True
+    resonance: str = "a2_1320"
+    branching_ratio: float = 0.0565
+    luminosity: float = 257.4
+    luminosity_unit: str = "pb^-1"
+    t_min: Optional[float] = None
+    t_max: Optional[float] = None
+    delta_t: Optional[float] = None
+    mass_limits: Tuple[float, float] = (0.8, 2.0)
+    mass_bin_width: Optional[float] = None
+    theory_band_file: Optional[str] = None
+    phase1_comparison: bool = True
+
+
+@dataclass
 class MCMCPropagationConfig:
     enabled: bool = False
     mcmc_tree_path: str = ""
@@ -190,6 +206,7 @@ class FitConfig:
     multi_start: MultiStartConfig = field(default_factory=MultiStartConfig)
     mcmc_propagation: MCMCPropagationConfig = field(default_factory=MCMCPropagationConfig)
     plotting: PlottingConfig = field(default_factory=PlottingConfig)
+    cross_section: CrossSectionConfig = field(default_factory=CrossSectionConfig)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

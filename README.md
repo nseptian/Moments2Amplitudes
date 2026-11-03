@@ -54,7 +54,12 @@ pixi run plot configs/d_breit_wigner.yaml
 # Optional: overlay N lowest chi2 fit curves and filter specific moments
 pixi run plot configs/s_piecewise_d_bw.yaml --n-lowest-chi2 10 --moments L=2
 
-# 7. Propagate MCMC experimental uncertainty across posterior samples
+# 7. Calculate reflectivity-separated resonance cross sections
+pixi run cs configs/s_piecewise_d_bw.yaml
+# Multi-t bin evaluation:
+# pixi run cs configs/s_piecewise_d_bw.yaml --runs logs_t010020 logs_t020032 logs_t032050 logs_t050075
+
+# 8. Propagate MCMC experimental uncertainty across posterior samples
 pixi run propagate configs/s_piecewise_d_bw.yaml
 ```
 
