@@ -488,12 +488,12 @@ Generated Figures:
 The framework extracts the physical acceptance-corrected yields and differential cross section \(\frac{d\sigma}{dt}\) separated by natural parity exchange (positive reflectivity \(\epsilon = +1\)) and unnatural parity exchange (negative reflectivity \(\epsilon = -1\)) from the fitted mass-dependent resonance parameters.
 
 ### 1. Mathematical Formalism
-For each partial wave \(w\) carrying the resonance (e.g. \(D\)-waves \(a_2^m\) for \(\epsilon=+1\) and \(b_2^m\) for \(\epsilon=-1\)), the resonance coupling \(k_w\) is extracted from `mass_dependent_params`.
+For each partial wave \(w\) carrying the resonance (e.g. \(D\)-waves \(a_2^m\) for \(\epsilon=+1\) and \(b_2^m\) for \(\epsilon=-1\)), the resonance coupling \(k_w\) is extracted from `mass_dependent_params` (or `mcmc_params`).
 
 1. **Acceptance-Corrected Resonance Yield per Wave**:
    The acceptance-corrected yield attributed to the resonance in wave \(w\) is obtained by integrating the continuous Breit-Wigner intensity over the mass spectrum and normalizing by the invariant mass bin width \(\Delta m\):
    $$Y_w = \frac{1}{\Delta m} \int_{m_{\text{min}}}^{m_{\text{max}}} \frac{k_w^2}{(m^2 - M^2)^2 + (M \Gamma)^2} \, dm$$
-   Because \(Y_w \propto k_w^2\), error propagation from the Minuit symmetric parameter error \(\sigma(k_w)\) yields:
+   Because \(Y_w \propto k_w^2\), linear error propagation from the Minuit symmetric parameter error \(\sigma(k_w)\) yields:
    $$\sigma(Y_w) = 2 \frac{Y_w}{|k_w|} \sigma(k_w)$$
 
 2. **Reflectivity Sums**:
@@ -513,16 +513,29 @@ For each partial wave \(w\) carrying the resonance (e.g. \(D\)-waves \(a_2^m\) f
 4. **Production Reflectivity Fraction**:
    $$F^{(+)} = \frac{Y^{(+)}}{Y^{(\text{tot})}} = \frac{d\sigma^{(+)}/dt}{d\sigma^{(\text{tot})}/dt}$$
 
+5. **MCMC Posterior Uncertainty Propagation**:
+   While Minuit error propagation assumes linearity and uncorrelated waves around the minimum, MCMC uncertainty propagation evaluates the full non-linear integral for each posterior sample \(j \in [1, N]\) from the `mcmc_params` tree:
+   $$Y_{w, j} = \frac{1}{\Delta m} \int_{m_{\text{min}}}^{m_{\text{max}}} \frac{k_{w, j}^2}{(m^2 - M_j^2)^2 + (M_j \Gamma_j)^2} \, dm$$
+   $$Y^{(+)}_{j} = \sum_{w \in \text{PosRefl}} Y_{w, j}, \quad Y^{(-)}_{j} = \sum_{w \in \text{NegRefl}} Y_{w, j}, \quad \left(\frac{d\sigma}{dt}\right)_j = \frac{Y_j}{\text{den\_factor} \cdot \mathcal{L} \cdot \Delta t \cdot \mathcal{B}}$$
+   From the resulting \(N\) posterior samples, the empirical standard deviation and asymmetric 68% credible intervals (16th and 84th percentiles) are calculated:
+   $$\sigma_{\text{MCMC}}\left(\frac{d\sigma}{dt}\right) = \text{std}\left(\left\{\left(\frac{d\sigma}{dt}\right)_j\right\}\right), \quad \Delta_{-\text{mcmc}} = \text{median} - p_{16}, \quad \Delta_{+\text{mcmc}} = p_{84} - \text{median}$$
+   This captures the exact correlations and covariances between partial waves and resonance mass/width without Gaussian approximations.
+
 ### 2. CLI Execution & Multi-\(t\)-bin Evaluation
-Run on a single fit result:
+Run on a single fit result (automatically auto-detecting MCMC propagated files):
 ```bash
 pixi run cs configs/s_piecewise_d_bw.yaml
+```
+Optionally provide an explicit MCMC file or disable MCMC propagation:
+```bash
+pixi run cs configs/s_piecewise_d_bw.yaml --mcmc-file mcmc_propagation_spiecewise_results.root
+pixi run cs configs/s_piecewise_d_bw.yaml --no-mcmc
 ```
 Run across multiple \(-t\) bins simultaneously to generate the cross section vs \(-t\) distribution:
 ```bash
 pixi run cs configs/s_piecewise_d_bw.yaml --runs logs_t010020 logs_t020032 logs_t032050 logs_t050075
 ```
-Automatically overlays published Phase-1 PWA benchmarks (stat and syst error boxes) and theoretical model bands (`Phys. Rev. D 102, 014003`), saving figures to `<output_dir>/plots/{resonance}_CrossSection_vs_t.png` and `.pdf`.
+Automatically overlays published Phase-1 PWA benchmarks (stat and syst error boxes) and theoretical model bands (`Phys. Rev. D 102, 014003`), plotting MCMC propagated statistical uncertainties on current points and saving figures to `<output_dir>/plots/{resonance}_CrossSection_vs_t.png` and `.pdf`.
 
 ---
 

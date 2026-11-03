@@ -311,6 +311,8 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         mass_bin_width=float(cs_dict["mass_bin_width"]) if "mass_bin_width" in cs_dict and cs_dict["mass_bin_width"] is not None else None,
         theory_band_file=cs_dict.get("theory_band_file"),
         phase1_comparison=bool(cs_dict.get("phase1_comparison", True)),
+        mcmc_file=cs_dict.get("mcmc_file"),
+        propagate_mcmc=bool(cs_dict.get("propagate_mcmc", True)),
     )
 
     return FitConfig(

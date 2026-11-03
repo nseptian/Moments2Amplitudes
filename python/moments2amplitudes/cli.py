@@ -248,6 +248,9 @@ def cmd_cross_section(args: argparse.Namespace) -> int:
         CrossSectionResult,
     )
 
+    mcmc_file = getattr(args, "mcmc_file", None)
+    propagate_mcmc = not getattr(args, "no_mcmc", False)
+
     results: List[CrossSectionResult] = []
 
     if hasattr(args, "runs") and args.runs:
@@ -261,9 +264,12 @@ def cmd_cross_section(args: argparse.Namespace) -> int:
                     resonance_name=cfg.cross_section.resonance,
                     luminosity=cfg.cross_section.luminosity,
                     branching_ratio=cfg.cross_section.branching_ratio,
+                    mcmc_root_file=mcmc_file,
+                    propagate_mcmc=propagate_mcmc,
                 )
                 results.append(res)
-                print(f"[{res.t_min:.3f} < -t < {res.t_max:.3f}] dsigma/dt: Total={res.cs_total:.4f}, Pos={res.cs_pos:.4f}, Neg={res.cs_neg:.4f} mub/GeV^2")
+                err_str = f"± {res.cs_total_mcmc_err:.4f} (MCMC)" if res.has_mcmc else f"± {res.cs_total_err:.4f} (Minuit)"
+                print(f"[{res.t_min:.3f} < -t < {res.t_max:.3f}] dsigma/dt: Total={res.cs_total:.4f} {err_str}, Pos={res.cs_pos:.4f}, Neg={res.cs_neg:.4f} mub/GeV^2")
             except Exception as e:
                 print(f"[WARNING] Could not process run dir {r_dir}: {e}")
 
@@ -293,6 +299,8 @@ def cmd_cross_section(args: argparse.Namespace) -> int:
             t_max=cfg.cross_section.t_max,
             luminosity=cfg.cross_section.luminosity,
             branching_ratio=cfg.cross_section.branching_ratio,
+            mcmc_root_file=mcmc_file,
+            propagate_mcmc=propagate_mcmc,
         )
     except Exception as e:
         print(f"[ERROR] Failed to calculate cross section: {e}")
@@ -369,6 +377,8 @@ def main():
     p_cs.add_argument("--runs", nargs="*", default=None, help="Multiple run directories to calculate cross section across t-bins")
     p_cs.add_argument("--theory-band", type=str, default=None, help="Path to theory prediction band file")
     p_cs.add_argument("--no-phase1", action="store_true", help="Disable overlay of published Phase-1 values")
+    p_cs.add_argument("--mcmc-file", type=str, default=None, help="Path to MCMC propagated ROOT file for posterior statistical uncertainty")
+    p_cs.add_argument("--no-mcmc", action="store_true", help="Disable MCMC uncertainty propagation even if MCMC file is found")
 
     # Run (All in one)
     p_run = subparsers.add_parser("run", help="Run full pipeline (multi-start fit + MCMC propagation)")

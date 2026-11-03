@@ -52,6 +52,10 @@ class WaveResonanceYield:
     coupling_error: float
     yield_val: float
     yield_err: float
+    coupling_mcmc_err: float = 0.0
+    yield_mcmc_err: float = 0.0
+    yield_mcmc_err_lo: float = 0.0
+    yield_mcmc_err_hi: float = 0.0
 
 
 @dataclass
@@ -83,6 +87,38 @@ class CrossSectionResult:
     pos_refl_fraction: float   # Y(+) / Y(tot)
     wave_yields: Dict[str, WaveResonanceYield] = field(default_factory=dict)
     run_dir: str = ""
+
+    # MCMC posterior uncertainty propagation fields
+    has_mcmc: bool = False
+    mcmc_samples_count: int = 0
+    mcmc_file: Optional[str] = None
+    pos_refl_yield_mcmc_err: float = 0.0
+    pos_refl_yield_mcmc_err_lo: float = 0.0
+    pos_refl_yield_mcmc_err_hi: float = 0.0
+    neg_refl_yield_mcmc_err: float = 0.0
+    neg_refl_yield_mcmc_err_lo: float = 0.0
+    neg_refl_yield_mcmc_err_hi: float = 0.0
+    total_yield_mcmc_err: float = 0.0
+    total_yield_mcmc_err_lo: float = 0.0
+    total_yield_mcmc_err_hi: float = 0.0
+    cs_pos_mcmc_err: float = 0.0
+    cs_pos_mcmc_err_lo: float = 0.0
+    cs_pos_mcmc_err_hi: float = 0.0
+    cs_neg_mcmc_err: float = 0.0
+    cs_neg_mcmc_err_lo: float = 0.0
+    cs_neg_mcmc_err_hi: float = 0.0
+    cs_total_mcmc_err: float = 0.0
+    cs_total_mcmc_err_lo: float = 0.0
+    cs_total_mcmc_err_hi: float = 0.0
+    pos_refl_fraction_mcmc_err: float = 0.0
+    cs_pos_mcmc_mean: float = 0.0
+    cs_pos_mcmc_median: float = 0.0
+    cs_neg_mcmc_mean: float = 0.0
+    cs_neg_mcmc_median: float = 0.0
+    cs_total_mcmc_mean: float = 0.0
+    cs_total_mcmc_median: float = 0.0
+    pos_refl_fraction_mcmc_mean: float = 0.0
+    pos_refl_fraction_mcmc_median: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -207,6 +243,262 @@ def extract_resonance_parameters_from_root(
     return data
 
 
+def find_mcmc_root_file(
+    config: Optional[FitConfig] = None,
+    rundir: Optional[RunDirectory] = None,
+    explicit_file: Optional[Path | str] = None,
+) -> Optional[Path]:
+    """
+    Locate an MCMC propagated ROOT file from explicit argument, config, rundir,
+    or standard working directory locations.
+    """
+    if explicit_file:
+        p = Path(explicit_file).resolve()
+        if p.is_file():
+            return p
+
+    if config and hasattr(config, "cross_section") and config.cross_section:
+        if config.cross_section.mcmc_file:
+            p = Path(config.cross_section.mcmc_file).resolve()
+            if p.is_file():
+                return p
+
+    candidates: List[Path] = []
+    if rundir:
+        candidates.append(rundir.mcmc_propagated_root)
+        candidates.append(rundir.root / "mcmc_propagation_spiecewise_results.root")
+        candidates.append(rundir.root / "mcmc_propagation_results.root")
+        candidates.append(rundir.root / "mcmc" / "mcmc_worker_0.root")
+
+    if config and config.mcmc_propagation and config.mcmc_propagation.output_file:
+        candidates.append(Path(config.mcmc_propagation.output_file).resolve())
+        if rundir:
+            candidates.append(rundir.root / config.mcmc_propagation.output_file)
+
+    # Current working directory fallbacks
+    candidates.append(Path("mcmc_propagation_spiecewise_results.root").resolve())
+    candidates.append(Path("mcmc_propagation_results.root").resolve())
+
+    for c in candidates:
+        if c and c.is_file():
+            return c
+
+    return None
+
+
+def extract_mcmc_resonance_parameters_from_root(
+    mcmc_root_file: Path | str,
+    resonance_name: str,
+    config: Optional[FitConfig] = None,
+    tree_name: str = "mcmc_params",
+) -> Dict[str, Any]:
+    """
+    Extract MCMC sample couplings, mass, width, and fit status for a resonance from ROOT.
+    Decoupled from PyROOT ABI via macros/ExportMCMCResonanceCouplings.C.
+    """
+    mcmc_p = Path(mcmc_root_file).resolve()
+    if not mcmc_p.is_file():
+        raise FileNotFoundError(f"MCMC ROOT file not found: {mcmc_p}")
+
+    repo_root = Path(os.environ.get("MOMS2AMPS", str(Path(__file__).resolve().parent.parent.parent)))
+    export_macro = repo_root / "macros" / "ExportMCMCResonanceCouplings.C"
+    if not export_macro.is_file():
+        raise FileNotFoundError(f"Export macro not found at: {export_macro}")
+
+    json_tmp = mcmc_p.parent / f".export_mcmc_resonance_{resonance_name}_{os.getpid()}.json"
+    root_bin = get_root_binary(config)
+
+    cmd = [
+        root_bin,
+        "-l",
+        "-b",
+        "-q",
+        f'{export_macro}("{mcmc_p}", "{resonance_name}", "{json_tmp}", "{tree_name}")'
+    ]
+
+    env = os.environ.copy()
+    if "ROOTSYS" in env and "LD_LIBRARY_PATH" not in env:
+        env["LD_LIBRARY_PATH"] = f"{env['ROOTSYS']}/lib"
+
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    if proc.returncode != 0 or not json_tmp.is_file():
+        raise RuntimeError(f"ExportMCMCResonanceCouplings failed (code {proc.returncode}):\n{proc.stderr}\n{proc.stdout}")
+
+    try:
+        with open(json_tmp, "r") as f:
+            data = json.load(f)
+    finally:
+        if json_tmp.is_file():
+            json_tmp.unlink()
+
+    return data
+
+
+def propagate_mcmc_cross_section(
+    res: CrossSectionResult,
+    mcmc_data: Dict[str, Any],
+    mass_limits: Optional[Tuple[float, float]] = None,
+    bin_width: Optional[float] = None,
+    filter_valid: bool = True,
+    mcmc_file_path: Optional[str] = None,
+) -> CrossSectionResult:
+    """
+    Propagate MCMC sample couplings into reflectivity-separated yields and cross section.
+    Calculates sample distributions, standard deviations, and 68% credible intervals.
+    """
+    import numpy as np
+
+    waves = mcmc_data.get("waves", [])
+    refls = mcmc_data.get("reflectivities", [])
+    couplings = mcmc_data.get("couplings", {})
+    n_entries = mcmc_data.get("entries_count", 0)
+
+    if n_entries == 0 or not waves or not couplings:
+        return res
+
+    # Filter valid entries
+    if filter_valid and "is_valid" in mcmc_data:
+        val_arr = np.array(mcmc_data["is_valid"], dtype=bool)
+        status_arr = np.array(mcmc_data.get("status", [0] * n_entries), dtype=int)
+        mask = (val_arr == True) & (status_arr == 0)
+        if not np.any(mask):
+            mask = (val_arr == True)
+        if not np.any(mask):
+            mask = np.ones(n_entries, dtype=bool)
+    else:
+        mask = np.ones(n_entries, dtype=bool)
+
+    valid_indices = np.where(mask)[0]
+    n_valid = len(valid_indices)
+    if n_valid == 0:
+        return res
+
+    m_lims = mass_limits or (0.8, 2.0)
+    b_w = bin_width if bin_width is not None and bin_width > 0 else 0.04
+
+    # Resolve mass and width per entry
+    masses = np.array(mcmc_data.get("mass", []), dtype=float)
+    widths = np.array(mcmc_data.get("width", []), dtype=float)
+
+    if len(masses) != n_entries or np.all(masses <= 0):
+        masses = np.full(n_entries, res.mass)
+    if len(widths) != n_entries or np.all(widths <= 0):
+        widths = np.full(n_entries, res.width)
+
+    val_masses = masses[valid_indices]
+    val_widths = widths[valid_indices]
+
+    # Evaluate Breit-Wigner integral factor I0 per entry
+    is_const_mw = np.allclose(val_masses, val_masses[0]) and np.allclose(val_widths, val_widths[0])
+    if is_const_mw:
+        i0 = compute_bw_integral(1.0, float(val_masses[0]), float(val_widths[0]), m_lims[0], m_lims[1], b_w)
+        i0_arr = np.full(n_valid, i0)
+    else:
+        i0_arr = np.array([
+            compute_bw_integral(1.0, float(val_masses[i]), float(val_widths[i]), m_lims[0], m_lims[1], b_w)
+            for i in range(n_valid)
+        ])
+
+    # Calculate wave yields for each MCMC sample
+    y_pos_arr = np.zeros(n_valid)
+    y_neg_arr = np.zeros(n_valid)
+
+    for w_name, refl in zip(waves, refls):
+        if w_name not in couplings:
+            continue
+        k_vals = np.array(couplings[w_name], dtype=float)[valid_indices]
+        y_w_arr = (k_vals ** 2) * i0_arr
+
+        # Wave statistics
+        k_mcmc_err = float(np.std(k_vals))
+        y_mcmc_err = float(np.std(y_w_arr))
+        y_med = float(np.median(y_w_arr))
+        y_p16, y_p84 = float(np.percentile(y_w_arr, 16)), float(np.percentile(y_w_arr, 84))
+
+        if w_name in res.wave_yields:
+            w_yield = res.wave_yields[w_name]
+            w_yield.coupling_mcmc_err = k_mcmc_err
+            w_yield.yield_mcmc_err = y_mcmc_err
+            w_yield.yield_mcmc_err_lo = max(0.0, y_med - y_p16)
+            w_yield.yield_mcmc_err_hi = max(0.0, y_p84 - y_med)
+
+        if refl == 1:
+            y_pos_arr += y_w_arr
+        else:
+            y_neg_arr += y_w_arr
+
+    y_tot_arr = y_pos_arr + y_neg_arr
+
+    # Cross sections per sample
+    denom = res.den_factor * res.luminosity * res.delta_t * res.branching_ratio
+    if denom <= 0:
+        denom = 1.0
+
+    cs_pos_arr = y_pos_arr / denom
+    cs_neg_arr = y_neg_arr / denom
+    cs_tot_arr = y_tot_arr / denom
+    pos_frac_arr = np.where(y_tot_arr > 0, y_pos_arr / y_tot_arr, 0.5)
+
+    def calc_stats(arr: np.ndarray) -> Tuple[float, float, float, float]:
+        med = float(np.median(arr))
+        mean = float(np.mean(arr))
+        p16 = float(np.percentile(arr, 16))
+        p84 = float(np.percentile(arr, 84))
+        return mean, med, max(0.0, med - p16), max(0.0, p84 - med)
+
+    y_pos_mean, y_pos_med, y_pos_lo, y_pos_hi = calc_stats(y_pos_arr)
+    y_neg_mean, y_neg_med, y_neg_lo, y_neg_hi = calc_stats(y_neg_arr)
+    y_tot_mean, y_tot_med, y_tot_lo, y_tot_hi = calc_stats(y_tot_arr)
+
+    cs_pos_mean, cs_pos_med, cs_pos_lo, cs_pos_hi = calc_stats(cs_pos_arr)
+    cs_neg_mean, cs_neg_med, cs_neg_lo, cs_neg_hi = calc_stats(cs_neg_arr)
+    cs_tot_mean, cs_tot_med, cs_tot_lo, cs_tot_hi = calc_stats(cs_tot_arr)
+
+    pf_mean, pf_med, pf_lo, pf_hi = calc_stats(pos_frac_arr)
+
+    res.has_mcmc = True
+    res.mcmc_samples_count = n_valid
+    res.mcmc_file = str(mcmc_file_path) if mcmc_file_path else None
+
+    res.pos_refl_yield_mcmc_err = float(np.std(y_pos_arr))
+    res.pos_refl_yield_mcmc_err_lo = y_pos_lo
+    res.pos_refl_yield_mcmc_err_hi = y_pos_hi
+
+    res.neg_refl_yield_mcmc_err = float(np.std(y_neg_arr))
+    res.neg_refl_yield_mcmc_err_lo = y_neg_lo
+    res.neg_refl_yield_mcmc_err_hi = y_neg_hi
+
+    res.total_yield_mcmc_err = float(np.std(y_tot_arr))
+    res.total_yield_mcmc_err_lo = y_tot_lo
+    res.total_yield_mcmc_err_hi = y_tot_hi
+
+    res.cs_pos_mcmc_err = float(np.std(cs_pos_arr))
+    res.cs_pos_mcmc_err_lo = cs_pos_lo
+    res.cs_pos_mcmc_err_hi = cs_pos_hi
+
+    res.cs_neg_mcmc_err = float(np.std(cs_neg_arr))
+    res.cs_neg_mcmc_err_lo = cs_neg_lo
+    res.cs_neg_mcmc_err_hi = cs_neg_hi
+
+    res.cs_total_mcmc_err = float(np.std(cs_tot_arr))
+    res.cs_total_mcmc_err_lo = cs_tot_lo
+    res.cs_total_mcmc_err_hi = cs_tot_hi
+
+    res.pos_refl_fraction_mcmc_err = float(np.std(pos_frac_arr))
+
+    res.cs_pos_mcmc_mean = cs_pos_mean
+    res.cs_pos_mcmc_median = cs_pos_med
+    res.cs_neg_mcmc_mean = cs_neg_mean
+    res.cs_neg_mcmc_median = cs_neg_med
+    res.cs_total_mcmc_mean = cs_tot_mean
+    res.cs_total_mcmc_median = cs_tot_med
+
+    res.pos_refl_fraction_mcmc_mean = pf_mean
+    res.pos_refl_fraction_mcmc_median = pf_med
+
+    return res
+
+
 def calculate_resonance_cross_section(
     config: FitConfig,
     rundir: RunDirectory,
@@ -216,9 +508,12 @@ def calculate_resonance_cross_section(
     luminosity: Optional[float] = None,
     branching_ratio: Optional[float] = None,
     mass_limits: Optional[Tuple[float, float]] = None,
+    mcmc_root_file: Optional[Path | str] = None,
+    propagate_mcmc: Optional[bool] = None,
 ) -> CrossSectionResult:
     """
     Calculate reflectivity-separated resonance yields and differential cross section dsigma/dt.
+    Propagates Minuit parabolic parameter errors and MCMC posterior sample uncertainties.
     """
     cs_cfg = getattr(config, "cross_section", CrossSectionConfig())
     target_res = resonance_name or cs_cfg.resonance
@@ -346,7 +641,7 @@ def calculate_resonance_cross_section(
 
     pos_frac = (pos_yield / total_yield) if total_yield > 0 else 0.5
 
-    return CrossSectionResult(
+    res = CrossSectionResult(
         resonance=target_res,
         mass=mass,
         mass_error=mass_err,
@@ -376,43 +671,98 @@ def calculate_resonance_cross_section(
         run_dir=str(rundir.root),
     )
 
+    # Propagate MCMC uncertainties if requested
+    do_mcmc = propagate_mcmc if propagate_mcmc is not None else getattr(cs_cfg, "propagate_mcmc", True)
+    if do_mcmc:
+        mcmc_target = find_mcmc_root_file(config=config, rundir=rundir, explicit_file=mcmc_root_file)
+        if mcmc_target:
+            try:
+                mcmc_data = extract_mcmc_resonance_parameters_from_root(mcmc_target, target_res, config)
+                res = propagate_mcmc_cross_section(
+                    res,
+                    mcmc_data,
+                    mass_limits=m_lims,
+                    bin_width=bin_width,
+                    mcmc_file_path=str(mcmc_target),
+                )
+                print(f"[OK] Propagated MCMC statistical uncertainty from: {mcmc_target} ({res.mcmc_samples_count} converged samples)")
+            except Exception as e:
+                print(f"[WARNING] Could not propagate MCMC cross-section uncertainty from {mcmc_target}: {e}")
+
+    return res
+
 
 def format_cross_section_table(res: CrossSectionResult) -> str:
     """Format a clean, informative ASCII table of the cross-section calculation."""
     lines = [
-        "========================================================================================",
+        "========================================================================================================================",
         f" Reflectivity-Separated Cross-Section: {res.resonance.upper()}",
-        "========================================================================================",
+        "========================================================================================================================",
         f" Resonance Mass:       {res.mass:.4f} ± {res.mass_error:.4f} GeV",
         f" Resonance Width:      {res.width:.4f} ± {res.width_error:.4f} GeV",
         f" -t Binning:           {res.t_min:.3f} < -t < {res.t_max:.3f} GeV^2  (Delta t = {res.delta_t:.3f}, Center = {res.t_center:.4f})",
         f" Integrated Lumi:      {res.luminosity:.2f} pb^-1  (factor: {res.den_factor:.0e} to mub^-1)",
         f" Branching Fraction:   {res.branching_ratio:.4e}",
-        "----------------------------------------------------------------------------------------",
-        " Wave Breakdown & Acceptance-Corrected Yields:",
-        f" {'Wave':<10} | {'Refl':^6} | {'Coupling k':^14} | {'Error':^12} | {'Yield':^14} | {'Yield Err':^12}",
-        "----------------------------------------------------------------------------------------",
     ]
 
-    for w_name, w_info in sorted(res.wave_yields.items(), key=lambda x: (x[1].reflectivity, x[0])):
-        refl_str = "+1" if w_info.reflectivity == 1 else "-1"
-        lines.append(
-            f" {w_name:<10} | {refl_str:^6} | {w_info.coupling:14.4f} | {w_info.coupling_error:12.4f} | "
-            f"{w_info.yield_val:14.1f} | {w_info.yield_err:12.1f}"
-        )
+    if res.has_mcmc:
+        mcmc_src = Path(res.mcmc_file).name if res.mcmc_file else "MCMC Tree"
+        lines.append(f" MCMC Propagation:     Enabled ({res.mcmc_samples_count} samples from {mcmc_src})")
+    else:
+        lines.append(" MCMC Propagation:     Disabled / Not available (Minuit parabolic error propagation)")
 
     lines.extend([
-        "----------------------------------------------------------------------------------------",
-        " Reflectivity-Separated Cross-Section Results:",
-        f"  * Positive Reflectivity (+): Yield = {res.pos_refl_yield:12.1f} ± {res.pos_refl_yield_err:10.1f}",
-        f"                               dsigma/dt = {res.cs_pos:.5f} ± {res.cs_pos_err:.5f} mub / GeV^2",
-        f"  * Negative Reflectivity (-): Yield = {res.neg_refl_yield:12.1f} ± {res.neg_refl_yield_err:10.1f}",
-        f"                               dsigma/dt = {res.cs_neg:.5f} ± {res.cs_neg_err:.5f} mub / GeV^2",
-        f"  * Total Cross Section:       Yield = {res.total_yield:12.1f} ± {res.total_yield_err:10.1f}",
-        f"                               dsigma/dt = {res.cs_total:.5f} ± {res.cs_total_err:.5f} mub / GeV^2",
-        f"  * Positive Reflectivity Fraction: {res.pos_refl_fraction * 100:.2f} %",
-        "========================================================================================",
+        "------------------------------------------------------------------------------------------------------------------------",
+        " Wave Breakdown & Acceptance-Corrected Yields:",
     ])
+
+    if res.has_mcmc:
+        lines.append(f" {'Wave':<10} | {'Refl':^6} | {'Coupling k':^12} | {'Minuit Err':^10} | {'MCMC Err':^10} | {'Yield':^13} | {'Minuit Err':^10} | {'MCMC Err':^10}")
+        lines.append("------------------------------------------------------------------------------------------------------------------------")
+        for w_name, w_info in sorted(res.wave_yields.items(), key=lambda x: (x[1].reflectivity, x[0])):
+            refl_str = "+1" if w_info.reflectivity == 1 else "-1"
+            lines.append(
+                f" {w_name:<10} | {refl_str:^6} | {w_info.coupling:12.4f} | {w_info.coupling_error:10.4f} | {w_info.coupling_mcmc_err:10.4f} | "
+                f"{w_info.yield_val:13.1f} | {w_info.yield_err:10.1f} | {w_info.yield_mcmc_err:10.1f}"
+            )
+    else:
+        lines.append(f" {'Wave':<10} | {'Refl':^6} | {'Coupling k':^14} | {'Error':^12} | {'Yield':^14} | {'Yield Err':^12}")
+        lines.append("------------------------------------------------------------------------------------------------------------------------")
+        for w_name, w_info in sorted(res.wave_yields.items(), key=lambda x: (x[1].reflectivity, x[0])):
+            refl_str = "+1" if w_info.reflectivity == 1 else "-1"
+            lines.append(
+                f" {w_name:<10} | {refl_str:^6} | {w_info.coupling:14.4f} | {w_info.coupling_error:12.4f} | "
+                f"{w_info.yield_val:14.1f} | {w_info.yield_err:12.1f}"
+            )
+
+    lines.append("------------------------------------------------------------------------------------------------------------------------")
+    lines.append(" Reflectivity-Separated Cross-Section Results:")
+
+    if res.has_mcmc:
+        lines.extend([
+            f"  * Positive Reflectivity (+): Yield = {res.pos_refl_yield:12.1f} ± {res.pos_refl_yield_err:8.1f} (Minuit) ± {res.pos_refl_yield_mcmc_err:8.1f} (MCMC)",
+            f"                               dsigma/dt = {res.cs_pos:.5f} ± {res.cs_pos_err:.5f} (Minuit) ± {res.cs_pos_mcmc_err:.5f} (MCMC) mub / GeV^2",
+            f"                               [MCMC 68% CI: {res.cs_pos_mcmc_median:.5f} (-{res.cs_pos_mcmc_err_lo:.5f}, +{res.cs_pos_mcmc_err_hi:.5f})]",
+            f"  * Negative Reflectivity (-): Yield = {res.neg_refl_yield:12.1f} ± {res.neg_refl_yield_err:8.1f} (Minuit) ± {res.neg_refl_yield_mcmc_err:8.1f} (MCMC)",
+            f"                               dsigma/dt = {res.cs_neg:.5f} ± {res.cs_neg_err:.5f} (Minuit) ± {res.cs_neg_mcmc_err:.5f} (MCMC) mub / GeV^2",
+            f"                               [MCMC 68% CI: {res.cs_neg_mcmc_median:.5f} (-{res.cs_neg_mcmc_err_lo:.5f}, +{res.cs_neg_mcmc_err_hi:.5f})]",
+            f"  * Total Cross Section:       Yield = {res.total_yield:12.1f} ± {res.total_yield_err:8.1f} (Minuit) ± {res.total_yield_mcmc_err:8.1f} (MCMC)",
+            f"                               dsigma/dt = {res.cs_total:.5f} ± {res.cs_total_err:.5f} (Minuit) ± {res.cs_total_mcmc_err:.5f} (MCMC) mub / GeV^2",
+            f"                               [MCMC 68% CI: {res.cs_total_mcmc_median:.5f} (-{res.cs_total_mcmc_err_lo:.5f}, +{res.cs_total_mcmc_err_hi:.5f})]",
+            f"  * Positive Reflectivity Fraction: {res.pos_refl_fraction * 100:.2f} % (Nominal) | {res.pos_refl_fraction_mcmc_mean * 100:.2f} ± {res.pos_refl_fraction_mcmc_err * 100:.2f} % (MCMC)",
+        ])
+    else:
+        lines.extend([
+            f"  * Positive Reflectivity (+): Yield = {res.pos_refl_yield:12.1f} ± {res.pos_refl_yield_err:10.1f}",
+            f"                               dsigma/dt = {res.cs_pos:.5f} ± {res.cs_pos_err:.5f} mub / GeV^2",
+            f"  * Negative Reflectivity (-): Yield = {res.neg_refl_yield:12.1f} ± {res.neg_refl_yield_err:10.1f}",
+            f"                               dsigma/dt = {res.cs_neg:.5f} ± {res.cs_neg_err:.5f} mub / GeV^2",
+            f"  * Total Cross Section:       Yield = {res.total_yield:12.1f} ± {res.total_yield_err:10.1f}",
+            f"                               dsigma/dt = {res.cs_total:.5f} ± {res.cs_total_err:.5f} mub / GeV^2",
+            f"  * Positive Reflectivity Fraction: {res.pos_refl_fraction * 100:.2f} %",
+        ])
+
+    lines.append("========================================================================================================================")
     return "\n".join(lines)
 
 
@@ -436,23 +786,50 @@ def save_cross_section_reports(res: CrossSectionResult, output_dir: Path | str) 
         f"- **Resonance:** `{res.resonance}` (Mass = {res.mass:.4f} GeV, Width = {res.width:.4f} GeV)",
         f"- **Kinematics:** ${res.t_min:.3f} < -t < {res.t_max:.3f}$ GeV$^2$ (Center = {res.t_center:.4f} GeV$^2$, $\\Delta t = {res.delta_t:.3f}$)",
         f"- **Luminosity:** ${res.luminosity:.2f}\\ \\text{{pb}}^{{-1}}$, **Total BR:** `{res.branching_ratio:.4e}`",
+    ]
+
+    if res.has_mcmc:
+        md_lines.append(f"- **MCMC Propagation:** `{res.mcmc_samples_count}` converged posterior fits from `{Path(res.mcmc_file).name if res.mcmc_file else 'MCMC Tree'}`")
+
+    md_lines.extend([
         "",
         "## Cross-Section Results",
         "",
-        "| Quantity | Yield (Events) | $d\\sigma/dt$ ($\\mu\\text{b}/\\text{GeV}^2$) | Fraction |",
-        "|---|---|---|---|",
-        f"| **Positive Reflectivity (+)** | {res.pos_refl_yield:.1f} ± {res.pos_refl_yield_err:.1f} | **{res.cs_pos:.5f} ± {res.cs_pos_err:.5f}** | {res.pos_refl_fraction*100:.1f}% |",
-        f"| **Negative Reflectivity (-)** | {res.neg_refl_yield:.1f} ± {res.neg_refl_yield_err:.1f} | **{res.cs_neg:.5f} ± {res.cs_neg_err:.5f}** | {(1.0-res.pos_refl_fraction)*100:.1f}% |",
-        f"| **Total Cross Section** | {res.total_yield:.1f} ± {res.total_yield_err:.1f} | **{res.cs_total:.5f} ± {res.cs_total_err:.5f}** | 100.0% |",
-        "",
-        "## Wave Decomposition",
-        "",
-        "| Wave | Reflectivity | Coupling $k$ | Error | Yield |",
-        "|---|---|---|---|---|",
-    ]
-    for w_name, w_info in sorted(res.wave_yields.items(), key=lambda x: (x[1].reflectivity, x[0])):
-        refl_str = "$+1$" if w_info.reflectivity == 1 else "$-1$"
-        md_lines.append(f"| `{w_name}` | {refl_str} | {w_info.coupling:.4f} | {w_info.coupling_error:.4f} | {w_info.yield_val:.1f} ± {w_info.yield_err:.1f} |")
+    ])
+
+    if res.has_mcmc:
+        md_lines.extend([
+            "| Quantity | Yield (Events) | Minuit Err | MCMC Stat Err | $d\\sigma/dt$ ($\\mu\\text{b}/\\text{GeV}^2$) | Minuit Err | MCMC Stat Err | MCMC 68% CI | Fraction |",
+            "|---|---|---|---|---|---|---|---|---|",
+            f"| **Positive Reflectivity (+)** | {res.pos_refl_yield:.1f} | ±{res.pos_refl_yield_err:.1f} | ±{res.pos_refl_yield_mcmc_err:.1f} | **{res.cs_pos:.5f}** | ±{res.cs_pos_err:.5f} | **±{res.cs_pos_mcmc_err:.5f}** | [-{res.cs_pos_mcmc_err_lo:.5f}, +{res.cs_pos_mcmc_err_hi:.5f}] | {res.pos_refl_fraction*100:.1f}% |",
+            f"| **Negative Reflectivity (-)** | {res.neg_refl_yield:.1f} | ±{res.neg_refl_yield_err:.1f} | ±{res.neg_refl_yield_mcmc_err:.1f} | **{res.cs_neg:.5f}** | ±{res.cs_neg_err:.5f} | **±{res.cs_neg_mcmc_err:.5f}** | [-{res.cs_neg_mcmc_err_lo:.5f}, +{res.cs_neg_mcmc_err_hi:.5f}] | {(1.0-res.pos_refl_fraction)*100:.1f}% |",
+            f"| **Total Cross Section** | {res.total_yield:.1f} | ±{res.total_yield_err:.1f} | ±{res.total_yield_mcmc_err:.1f} | **{res.cs_total:.5f}** | ±{res.cs_total_err:.5f} | **±{res.cs_total_mcmc_err:.5f}** | [-{res.cs_total_mcmc_err_lo:.5f}, +{res.cs_total_mcmc_err_hi:.5f}] | 100.0% |",
+            "",
+            "## Wave Decomposition",
+            "",
+            "| Wave | Reflectivity | Coupling $k$ | Minuit Err | MCMC Err | Yield | Minuit Err | MCMC Err |",
+            "|---|---|---|---|---|---|---|---|",
+        ])
+        for w_name, w_info in sorted(res.wave_yields.items(), key=lambda x: (x[1].reflectivity, x[0])):
+            refl_str = "$+1$" if w_info.reflectivity == 1 else "$-1$"
+            md_lines.append(f"| `{w_name}` | {refl_str} | {w_info.coupling:.4f} | {w_info.coupling_error:.4f} | {w_info.coupling_mcmc_err:.4f} | {w_info.yield_val:.1f} | ±{w_info.yield_err:.1f} | ±{w_info.yield_mcmc_err:.1f} |")
+    else:
+        md_lines.extend([
+            "| Quantity | Yield (Events) | $d\\sigma/dt$ ($\\mu\\text{b}/\\text{GeV}^2$) | Fraction |",
+            "|---|---|---|---|",
+            f"| **Positive Reflectivity (+)** | {res.pos_refl_yield:.1f} ± {res.pos_refl_yield_err:.1f} | **{res.cs_pos:.5f} ± {res.cs_pos_err:.5f}** | {res.pos_refl_fraction*100:.1f}% |",
+            f"| **Negative Reflectivity (-)** | {res.neg_refl_yield:.1f} ± {res.neg_refl_yield_err:.1f} | **{res.cs_neg:.5f} ± {res.cs_neg_err:.5f}** | {(1.0-res.pos_refl_fraction)*100:.1f}% |",
+            f"| **Total Cross Section** | {res.total_yield:.1f} ± {res.total_yield_err:.1f} | **{res.cs_total:.5f} ± {res.cs_total_err:.5f}** | 100.0% |",
+            "",
+            "## Wave Decomposition",
+            "",
+            "| Wave | Reflectivity | Coupling $k$ | Error | Yield |",
+            "|---|---|---|---|---|",
+        ])
+        for w_name, w_info in sorted(res.wave_yields.items(), key=lambda x: (x[1].reflectivity, x[0])):
+            refl_str = "$+1$" if w_info.reflectivity == 1 else "$-1$"
+            md_lines.append(f"| `{w_name}` | {refl_str} | {w_info.coupling:.4f} | {w_info.coupling_error:.4f} | {w_info.yield_val:.1f} ± {w_info.yield_err:.1f} |")
+
     md_p.write_text("\n".join(md_lines))
 
     # JSON
@@ -472,6 +849,7 @@ def plot_cross_section_vs_t(
     """
     Plot differential cross-section dsigma/dt vs -t separated by reflectivity.
     Overlays published Phase-1 PWA benchmarks and theoretical model bands.
+    Plots MCMC propagated posterior statistical uncertainties when available.
     """
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -494,11 +872,14 @@ def plot_cross_section_vs_t(
     sorted_res = sorted(results, key=lambda x: x.t_center)
     t_centers = [r.t_center for r in sorted_res]
     cs_pos = [r.cs_pos for r in sorted_res]
-    cs_pos_err = [r.cs_pos_err for r in sorted_res]
     cs_neg = [r.cs_neg for r in sorted_res]
-    cs_neg_err = [r.cs_neg_err for r in sorted_res]
     cs_tot = [r.cs_total for r in sorted_res]
-    cs_tot_err = [r.cs_total_err for r in sorted_res]
+
+    # Use MCMC propagated uncertainty if available, fallback to Minuit
+    has_mcmc_any = any(r.has_mcmc for r in sorted_res)
+    cs_pos_err = [(r.cs_pos_mcmc_err if r.has_mcmc else r.cs_pos_err) for r in sorted_res]
+    cs_neg_err = [(r.cs_neg_mcmc_err if r.has_mcmc else r.cs_neg_err) for r in sorted_res]
+    cs_tot_err = [(r.cs_total_mcmc_err if r.has_mcmc else r.cs_total_err) for r in sorted_res]
 
     fig, ax = plt.subplots(figsize=(10, 6), dpi=300)
 
@@ -568,6 +949,42 @@ def plot_cross_section_vs_t(
 
     # 3. Current Extraction Points (inverted triangles with error bars)
     curr_x = [x + (0.008 if has_phase1 else 0.0) for x in t_centers]
+    err_note = " (MCMC stat)" if has_mcmc_any else ""
+
+    ax.errorbar(
+        curr_x, cs_tot, yerr=cs_tot_err,
+        fmt="v", markersize=7, color="black", ecolor="black", capsize=4, elinewidth=1.6,
+        label=f"Total ({sorted_res[0].resonance}){err_note}", zorder=5
+    )
+    ax.errorbar(
+        curr_x, cs_pos, yerr=cs_pos_err,
+        fmt="v", markersize=7, color="red", ecolor="red", capsize=4, elinewidth=1.6,
+        label=f"Positive Refl (+){err_note}", zorder=5
+    )
+    ax.errorbar(
+        curr_x, cs_neg, yerr=cs_neg_err,
+        fmt="v", markersize=7, color="blue", ecolor="blue", capsize=4, elinewidth=1.6,
+        label=f"Negative Refl (-){err_note}", zorder=5
+    )
+
+    ax.set_xlabel(r"$-t\ [\mathrm{GeV}^2]$", fontsize=13)
+    ax.set_ylabel(r"$\frac{d\sigma}{dt}\ [\mu\mathrm{b} / \mathrm{GeV}^2]$", fontsize=13)
+    res_label = sorted_res[0].resonance.replace("_", " ").upper()
+    ax.set_title(f"Differential Cross Section vs $-t$ for {res_label}", fontsize=14, fontweight="bold")
+    ax.set_xlim(0.08, max(t_centers) + 0.15)
+    ax.set_ylim(0, max(cs_tot + ([0.3] if not cs_tot else [])) * 1.35)
+    ax.legend(frameon=True, fontsize=10, loc="upper right")
+    ax.grid(True, linestyle=":", alpha=0.5)
+
+    base_name = f"{sorted_res[0].resonance}_CrossSection_vs_t"
+    for fmt in formats:
+        p = out_dir / f"{base_name}.{fmt}"
+        fig.savefig(p, bbox_inches="tight")
+        generated.append(p)
+    plt.close(fig)
+
+    print(f"[OK] Saved cross-section vs -t plot to: {out_dir / base_name}.png")
+    return generated
 
     ax.errorbar(
         curr_x, cs_tot, yerr=cs_tot_err,
@@ -603,3 +1020,4 @@ def plot_cross_section_vs_t(
 
     print(f"[OK] Saved cross-section vs -t plot to: {out_dir / base_name}.png")
     return generated
+

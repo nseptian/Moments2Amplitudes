@@ -25,8 +25,10 @@ void ExportResonanceCouplings(
     }
 
     TTree* t = (TTree*)f->Get("mass_dependent_params");
+    if (!t) t = (TTree*)f->Get("central_params");
+    if (!t) t = (TTree*)f->Get("all_params");
     if (!t) {
-        std::cerr << "Error: tree 'mass_dependent_params' not found in " << rootFilePath << std::endl;
+        std::cerr << "Error: tree 'mass_dependent_params' (or 'central_params'/'all_params') not found in " << rootFilePath << std::endl;
         f->Close();
         delete f;
         return;
@@ -111,3 +113,4 @@ void ExportResonanceCouplings(
 
     std::cout << "[OK] Exported resonance couplings to: " << outJsonPath << std::endl;
 }
+

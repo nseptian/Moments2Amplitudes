@@ -175,6 +175,8 @@ class CrossSectionConfig:
     mass_bin_width: Optional[float] = None
     theory_band_file: Optional[str] = None
     phase1_comparison: bool = True
+    mcmc_file: Optional[str] = None
+    propagate_mcmc: bool = True
 
 
 @dataclass
