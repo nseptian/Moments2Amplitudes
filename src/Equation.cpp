@@ -24,6 +24,7 @@ namespace m2pw{
 
     _localNdim = _indices.size();
     _localX.resize(_localNdim);
+    _origForm = TFormula(GetName() + "_OrigFormula", _rooFormulaVar.expression());
 
   }
   //////////////////////////////////////////////////
@@ -45,6 +46,10 @@ namespace m2pw{
     
     //now make the formula to be minimised
     _formula=TFormula(GetName()+"_Eqn",equation);
+    if (!_origForm.IsValid()) {
+      _origForm = TFormula(GetName()+"_OrigFormula", _rooFormulaVar.expression());
+    }
+    SetNeedsRecalc();
   }
 
   void Equation::SetEquationValue(Double_t val, Double_t error){
@@ -65,6 +70,10 @@ namespace m2pw{
     // cout << equation << endl;
     //now make the formula to be minimised
     _formula=TFormula(GetName()+"_Eqn",equation);
+    if (!_origForm.IsValid()) {
+      _origForm = TFormula(GetName()+"_OrigFormula", _rooFormulaVar.expression());
+    }
+    SetNeedsRecalc();
   }
   
   ////////////////////////////////////////////////////
@@ -74,21 +83,11 @@ namespace m2pw{
     if(NeedsRecalc()==kFALSE) return _cachedVal;
     OrganiseVariables(x);
 
-    // cout << "Equation::DoEval() : " << GetName() << ", val = " << *x << " NeedsRecalc :" << NeedsRecalc() << endl;
-    // for (UInt_t i=0;i<_localNdim;i++){
-      // cout << "  _localX[" << i << "] = " << _localX[i] << endl;
-    // }
-    // _formula.Print();
-    _cachedVal = _formula.EvalPar( _localX.data());
+    _origFormulaVal = _origForm.EvalPar(_localX.data());
+    _cachedVal = (_eqnError > 0.0) ? (_origFormulaVal - _eqnValue) / _eqnError : (_origFormulaVal - _eqnValue);
     SetNoRecalc();
-
-    TString orig_equation(_rooFormulaVar.expression());
-
-    TFormula origForm = TFormula(GetName()+"_OrigFormula", orig_equation);
-    // origForm.Print();
-    _origFormulaVal = origForm.EvalPar(_localX.data());
     
-    return  _cachedVal; 
+    return _cachedVal; 
   }
   //////////////////////////////////////////////////////////////////////////
   ///Find my dependencies so can use their current value

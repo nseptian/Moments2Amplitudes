@@ -59,6 +59,10 @@ namespace m2pw{
     void Print(const TString opt="") const;
     void SetEquationValue(Double_t val);
     void SetEquationValue(Double_t val, Double_t error);
+    void SetTargetValue(Double_t val) {
+      _eqnValue = val;
+      SetNeedsRecalc();
+    }
     RooFormulaVar* GetRooFormulaVar() { return &_rooFormulaVar; }
 
   protected:
@@ -86,6 +90,7 @@ namespace m2pw{
     
     RooFormulaVar _rooFormulaVar; //from RooFormulaVar
     TFormula _formula; //constraint equation (origformula - eqnValue)
+    TFormula _origForm; //original formula compiled once
     TString _name;
     TString _origFormula; //original formula string
 
