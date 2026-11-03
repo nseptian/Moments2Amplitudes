@@ -11,6 +11,9 @@ Generates:
 from __future__ import annotations
 import math
 import os
+import json
+import subprocess
+import shutil
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
 
@@ -19,6 +22,66 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp")
 
 from .schema import FitConfig
 from .rundir import RunDirectory
+
+
+def get_root_binary(config: Optional[FitConfig] = None) -> str:
+    """Find the ROOT binary executable path."""
+    if "ROOTSYS" in os.environ:
+        cand = Path(os.environ["ROOTSYS"]) / "bin" / "root"
+        if cand.is_file():
+            return str(cand)
+    if config and config.environment.root_dir:
+        cand = Path(config.environment.root_dir) / "bin" / "root"
+        if cand.is_file():
+            return str(cand)
+    default_root = Path("/d/grid17/septian/root_v6-36-08_cuda_install/bin/root")
+    if default_root.is_file():
+        return str(default_root)
+    which_root = shutil.which("root")
+    if which_root:
+        return which_root
+    return "root"
+
+
+def discover_lowest_chi2_fits(rundir: RunDirectory, n_lowest: int = 10) -> List[Tuple[float, Path]]:
+    """
+    Discover completed fit runs in fit_starts_dir, sort by chi2 ascending,
+    and return the top n_lowest (chi2, root_file) tuples.
+    """
+    valid_fits: List[Tuple[float, Path]] = []
+
+    if rundir.fit_starts_dir.is_dir():
+        for log_f in rundir.fit_starts_dir.glob("fit_seed_*.log"):
+            try:
+                with open(log_f, "r") as f:
+                    for line in f:
+                        if "[RESULT]" in line:
+                            tokens = dict(part.split("=") for part in line.strip().split() if "=" in part)
+                            if "CHI2" in tokens and "VALID" in tokens and "STATUS" in tokens:
+                                is_valid = tokens["VALID"] == "1"
+                                status = int(tokens["STATUS"])
+                                chi2_val = float(tokens["CHI2"])
+                                seed_val = int(tokens.get("SEED", 0))
+
+                                if is_valid and status == 0 and chi2_val < 1e8:
+                                    cand1 = rundir.fit_starts_dir / f"MassDependentResults_{seed_val}.root"
+                                    cand2 = rundir.get_seed_root_file(seed_val)
+                                    root_cand = cand1 if cand1.is_file() else (cand2 if cand2.is_file() else None)
+                                    if root_cand:
+                                        valid_fits.append((chi2_val, root_cand))
+            except Exception:
+                pass
+
+    valid_fits.sort(key=lambda x: x[0])
+
+    # Ensure nominal_best is included as the primary best fit if available
+    if rundir.nominal_best_root.is_file():
+        has_nominal = any(f[1].resolve() == rundir.nominal_best_root.resolve() for f in valid_fits)
+        if not has_nominal:
+            best_chi2 = valid_fits[0][0] if valid_fits else 0.0
+            valid_fits.insert(0, (best_chi2, rundir.nominal_best_root))
+
+    return valid_fits[:n_lowest]
 
 
 def plot_multistart_landscape(
@@ -231,6 +294,284 @@ def plot_amplitudes_and_bands(
     return generated
 
 
+def plot_moments_comparison(
+    config: FitConfig,
+    rundir: RunDirectory,
+    n_lowest_chi2: Optional[int] = None,
+    moments: Optional[List[str]] = None,
+    unnormalized_moments_file: Optional[Path | str] = None,
+    formats: Tuple[str, ...] = ("png", "pdf"),
+) -> List[Path]:
+    """
+    Plot experimental unnormalized moments (from MCMC) vs mass-dependent model fit results.
+    Overlays the N lowest chi2 fit results (Rank 1 solid red, ranks 2..N semi-transparent red).
+    Generates both individual moment plots and a multi-panel overview grid.
+    """
+    generated: List[Path] = []
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        print("[WARNING] matplotlib not found. Skipping moment comparison plots.")
+        return generated
+
+    # Resolve number of lowest chi2 results to draw
+    n_lowest = n_lowest_chi2
+    if n_lowest is None and getattr(config, "plotting", None):
+        n_lowest = getattr(config.plotting, "n_lowest_chi2", None)
+    if n_lowest is None and getattr(config, "multi_start", None):
+        n_lowest = getattr(config.multi_start, "n_lowest_chi2", None)
+    if n_lowest is None or n_lowest <= 0:
+        n_lowest = 10
+
+    # Resolve unnormalized moments file
+    unnorm_path: Optional[Path] = None
+    if unnormalized_moments_file:
+        cand = Path(unnormalized_moments_file)
+        if cand.is_file():
+            unnorm_path = cand
+    elif getattr(config, "plotting", None) and config.plotting.unnormalized_moments_file:
+        cand = Path(config.plotting.unnormalized_moments_file)
+        if cand.is_file():
+            unnorm_path = cand
+    elif config.dataset.moments_dir:
+        for fname in ["UnnormalizedMoments_vs_Mass.root", "UnnormalizedMomentsvMass.root", "UnnormalizedMoments.root"]:
+            cand = Path(config.dataset.moments_dir) / fname
+            if cand.is_file():
+                unnorm_path = cand
+                break
+
+    if not unnorm_path or not unnorm_path.is_file():
+        print(f"[WARNING] Unnormalized moments file not found in {config.dataset.moments_dir}. Skipping moment comparison plots.")
+        return generated
+
+    # Resolve lowest chi2 fit files
+    best_fits = discover_lowest_chi2_fits(rundir, n_lowest=n_lowest)
+    if not best_fits and rundir.nominal_best_root.is_file():
+        best_fits = [(0.0, rundir.nominal_best_root)]
+
+    if not best_fits:
+        print(f"[WARNING] No fit result ROOT files found to overlay in {rundir.fit_dir}.")
+        return generated
+
+    fit_files = [str(f[1].resolve()) for f in best_fits]
+    files_str = ",".join(fit_files)
+
+    # Locate ExportMomentComparison.C
+    repo_root = Path(os.environ.get("MOMS2AMPS", str(Path(__file__).resolve().parent.parent.parent)))
+    export_macro = repo_root / "macros" / "ExportMomentComparison.C"
+    if not export_macro.is_file():
+        print(f"[WARNING] Export macro not found at {export_macro}. Skipping moment comparison plots.")
+        return generated
+
+    cache_dir = rundir.root / ".cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    json_path = cache_dir / "moment_comparison_data.json"
+
+    root_bin = get_root_binary(config)
+    cmd = [
+        root_bin,
+        "-l",
+        "-b",
+        "-q",
+        f'{export_macro}("{unnorm_path.resolve()}", "{files_str}", "{json_path.resolve()}")'
+    ]
+
+    env = os.environ.copy()
+    if "ROOTSYS" in env and "LD_LIBRARY_PATH" not in env:
+        env["LD_LIBRARY_PATH"] = f"{env['ROOTSYS']}/lib"
+
+    run_res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    if run_res.returncode != 0 or not json_path.is_file():
+        print(f"[WARNING] ExportMomentComparison failed:\n{run_res.stderr}\n{run_res.stdout}")
+        return generated
+
+    try:
+        with open(json_path, "r") as f:
+            comp_data = json.load(f)
+    except Exception as e:
+        print(f"[WARNING] Could not parse exported moment comparison JSON: {e}")
+        return generated
+
+    data_moments: Dict[str, Any] = comp_data.get("data", {})
+    fits_list: List[Dict[str, Any]] = comp_data.get("fits", [])
+
+    if not data_moments:
+        print(f"[WARNING] No moment data found in {unnorm_path}.")
+        return generated
+
+    # Filter requested moments
+    req_moments = moments if moments is not None else getattr(config.plotting, "moments", ["all"])
+    if not req_moments:
+        req_moments = ["all"]
+
+    selected_moments: List[str] = []
+    if any(m.lower().strip() == "all" for m in req_moments):
+        selected_moments = list(data_moments.keys())
+    else:
+        for m_req in req_moments:
+            m_str = m_req.strip()
+            m_lower = m_str.lower()
+            if m_lower.startswith("l="):
+                try:
+                    target_l = int(m_lower.replace("l=", ""))
+                    for k in data_moments.keys():
+                        parts = k.split("_")
+                        if len(parts) >= 4 and int(parts[2]) == target_l:
+                            if k not in selected_moments:
+                                selected_moments.append(k)
+                except ValueError:
+                    pass
+            elif m_str in data_moments:
+                if m_str not in selected_moments:
+                    selected_moments.append(m_str)
+            else:
+                if not m_str.startswith("H_"):
+                    alt = f"H_{m_str}"
+                    if alt in data_moments and alt not in selected_moments:
+                        selected_moments.append(alt)
+
+    def sort_key(name: str):
+        parts = name.split("_")
+        if len(parts) >= 4:
+            try:
+                return (int(parts[1]), int(parts[2]), int(parts[3]))
+            except ValueError:
+                pass
+        return (999, 999, 999)
+
+    selected_moments.sort(key=sort_key)
+
+    if not selected_moments:
+        print(f"[WARNING] No moments matched filter {req_moments}.")
+        return generated
+
+    moments_out_dir = rundir.moments_plots_dir
+    moments_out_dir.mkdir(parents=True, exist_ok=True)
+
+    draw_fits = getattr(config.plotting, "draw_best_fits", True)
+
+    # 1. Individual moment plots
+    for mom_name in selected_moments:
+        d_val = data_moments[mom_name]
+        m_data = d_val.get("mass", [])
+        y_data = d_val.get("val", [])
+        e_data = d_val.get("err", [])
+
+        parts = mom_name.split("_")
+        if len(parts) >= 4:
+            alpha, l_val, m_val = parts[1], parts[2], parts[3]
+            latex_title = f"H_{{{alpha}}}({l_val},{m_val})"
+        else:
+            latex_title = mom_name
+
+        fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
+        ax.errorbar(
+            m_data, y_data, yerr=e_data,
+            fmt="o", color="black", markersize=3.5,
+            capsize=1.5, elinewidth=1.0,
+            label="Data (MCMC)", zorder=3
+        )
+
+        if draw_fits and fits_list:
+            for idx, fit in enumerate(fits_list):
+                if mom_name in fit.get("moments", {}):
+                    f_mom = fit["moments"][mom_name]
+                    mf = f_mom.get("mass", [])
+                    yf = f_mom.get("val", [])
+                    if idx == 0:
+                        ax.plot(
+                            mf, yf, "-", color="red", linewidth=2.0, alpha=0.9,
+                            label=f"Rank 1 ($\chi^2 = {fit.get('chi2', 0):.1f}$)", zorder=5
+                        )
+                    else:
+                        lbl = f"Top {len(fits_list)} Lowest $\chi^2$" if idx == 1 else None
+                        ax.plot(
+                            mf, yf, "-", color="#d62728", linewidth=1.0, alpha=0.35,
+                            label=lbl, zorder=4
+                        )
+
+        ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=12)
+        ax.set_ylabel("Unnormalized Moment", fontsize=12)
+        ax.set_title(f"{config.project.name} - ${latex_title}$", fontsize=13, fontweight="bold")
+        ax.legend(frameon=True, fontsize=10, loc="best")
+        ax.grid(True, linestyle=":", alpha=0.5)
+
+        for fmt in formats:
+            p = moments_out_dir / f"{mom_name}.{fmt}"
+            fig.savefig(p, bbox_inches="tight")
+            generated.append(p)
+        plt.close(fig)
+
+    # 2. Multi-panel overview grid
+    if len(selected_moments) > 1:
+        K = len(selected_moments)
+        ncols = min(4, K)
+        nrows = math.ceil(K / ncols)
+
+        fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 3.2 * nrows), dpi=200)
+        axes_flat = np.array(axes).reshape(-1)
+
+        for idx, mom_name in enumerate(selected_moments):
+            ax = axes_flat[idx]
+            d_val = data_moments[mom_name]
+            m_data = d_val.get("mass", [])
+            y_data = d_val.get("val", [])
+            e_data = d_val.get("err", [])
+
+            parts = mom_name.split("_")
+            if len(parts) >= 4:
+                alpha, l_val, m_val = parts[1], parts[2], parts[3]
+                latex_title = f"H_{{{alpha}}}({l_val},{m_val})"
+            else:
+                latex_title = mom_name
+
+            ax.errorbar(
+                m_data, y_data, yerr=e_data,
+                fmt="o", color="black", markersize=2.2,
+                capsize=1.0, elinewidth=0.8, zorder=3
+            )
+
+            if draw_fits and fits_list:
+                for f_idx, fit in enumerate(fits_list):
+                    if mom_name in fit.get("moments", {}):
+                        f_mom = fit["moments"][mom_name]
+                        mf = f_mom.get("mass", [])
+                        yf = f_mom.get("val", [])
+                        if f_idx == 0:
+                            ax.plot(mf, yf, "-", color="red", linewidth=1.4, alpha=0.9, zorder=5)
+                        else:
+                            ax.plot(mf, yf, "-", color="#d62728", linewidth=0.8, alpha=0.35, zorder=4)
+
+            ax.set_title(f"${latex_title}$", fontsize=11, fontweight="bold")
+            ax.grid(True, linestyle=":", alpha=0.4)
+            if idx >= (nrows - 1) * ncols:
+                ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=9)
+
+        for idx in range(K, len(axes_flat)):
+            axes_flat[idx].set_visible(False)
+
+        fig.suptitle(
+            f"{config.project.name} - Unnormalized Moments vs Mass (Top {len(fits_list)} Lowest $\chi^2$ Fits)",
+            fontsize=14,
+            fontweight="bold",
+            y=0.995,
+        )
+        plt.tight_layout()
+
+        for fmt in formats:
+            p_grid = rundir.plots_dir / f"moments_overview.{fmt}"
+            fig.savefig(p_grid, bbox_inches="tight")
+            generated.append(p_grid)
+        plt.close(fig)
+
+    print(f"[OK] Generated {len(generated)} moment comparison plot files in {rundir.plots_dir}")
+    return generated
+
+
 def run_all_diagnostics_and_plots(
     config: FitConfig,
     rundir: RunDirectory,
@@ -283,6 +624,15 @@ def run_all_diagnostics_and_plots(
                 formats=formats,
             )
             plot_files.extend(ms_plots)
+
+    # Generate moment comparison plots if enabled
+    if getattr(config, "plotting", None) and config.plotting.enabled:
+        mom_plots = plot_moments_comparison(
+            config,
+            rundir,
+            formats=formats,
+        )
+        plot_files.extend(mom_plots)
 
     return {
         "summary": summary,

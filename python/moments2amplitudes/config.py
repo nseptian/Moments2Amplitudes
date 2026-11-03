@@ -29,6 +29,7 @@ from .schema import (
     MinimizerConfig,
     MultiStartConfig,
     MCMCPropagationConfig,
+    PlottingConfig,
 )
 
 
@@ -257,6 +258,7 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
 
     # MultiStart
     ms_dict = data.get("multi_start", {})
+    n_lowest_ms = ms_dict.get("n_lowest_chi2", 10)
     multi_start = MultiStartConfig(
         enabled=bool(ms_dict.get("enabled", True)),
         n_starts=int(ms_dict.get("n_starts", 100)),
@@ -264,6 +266,19 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         output_dir=ms_dict.get("output_dir", "logs"),
         plateau_delta_chi2=float(ms_dict.get("plateau_delta_chi2", 0.05)),
         seed_offset=int(ms_dict.get("seed_offset", 1)),
+        n_lowest_chi2=int(n_lowest_ms),
+    )
+
+    # Plotting
+    plot_dict = data.get("plotting", {})
+    n_lowest_plot = plot_dict.get("n_lowest_chi2", n_lowest_ms)
+    plotting = PlottingConfig(
+        enabled=bool(plot_dict.get("enabled", True)),
+        n_lowest_chi2=int(n_lowest_plot),
+        draw_best_fits=bool(plot_dict.get("draw_best_fits", True)),
+        unnormalized_moments_file=plot_dict.get("unnormalized_moments_file"),
+        moments=plot_dict.get("moments", ["all"]),
+        formats=plot_dict.get("formats", ["png", "pdf"]),
     )
 
     # MCMCPropagation
@@ -288,6 +303,7 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         minimizer=minimizer,
         multi_start=multi_start,
         mcmc_propagation=mcmc_propagation,
+        plotting=plotting,
     )
 
 

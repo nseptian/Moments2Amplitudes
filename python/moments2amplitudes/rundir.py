@@ -36,6 +36,7 @@ class RunDirectory:
         self.mcmc_dir = self.root / "mcmc"
         self.mcmc_workers_dir = self.mcmc_dir / "workers"
         self.plots_dir = self.root / "plots"
+        self.moments_plots_dir = self.plots_dir / "moments"
         self.reports_dir = self.root / "reports"
 
         # Key file paths
@@ -53,6 +54,7 @@ class RunDirectory:
         self.fit_starts_dir.mkdir(parents=True, exist_ok=True)
         self.mcmc_workers_dir.mkdir(parents=True, exist_ok=True)
         self.plots_dir.mkdir(parents=True, exist_ok=True)
+        self.moments_plots_dir.mkdir(parents=True, exist_ok=True)
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         return self
 

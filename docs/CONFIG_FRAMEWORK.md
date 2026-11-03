@@ -83,12 +83,16 @@ Optional output specification:
 pixi run summary configs/d_breit_wigner.yaml --fit-file logs_dbw/fit/nominal_best.root
 ```
 
-### 4. Generate Diagnostic Plots
-Plot the \(\chi^2\) distribution across all randomized starts and visualize the global minimum plateau:
+### 4. Generate Diagnostic Plots & Moment Comparison
+Plot the \(\chi^2\) distribution landscape, fitted amplitude magnitudes, and overlay mass-dependent fit moments against experimental unnormalized MCMC moments:
 ```bash
 pixi run plot configs/d_breit_wigner.yaml
 ```
-Saves both publication-ready PNG and PDF figures in `<output_dir>/plots/`.
+Optional CLI overrides:
+```bash
+pixi run plot configs/s_piecewise_d_bw.yaml --n-lowest-chi2 10 --moments L=2
+```
+Saves publication-ready PNG and PDF figures in `<output_dir>/plots/` and individual moments in `<output_dir>/plots/moments/`.
 
 ### 5. MCMC Posterior Uncertainty Propagation
 Propagate experimental uncertainty across MCMC posterior samples using the global minimum best parameters:
@@ -290,6 +294,16 @@ multi_start:
   output_dir: "logs_spiecewise"
   plateau_delta_chi2: 0.05
   seed_offset: 1
+  n_lowest_chi2: 10
+
+# Moment & Amplitude Plotting Settings
+plotting:
+  enabled: true
+  n_lowest_chi2: 10          # Number of lowest chi2 fit curves to draw
+  draw_best_fits: true      # Overlay best fit curves on data moments
+  unnormalized_moments_file: "/path/to/UnnormalizedMoments_vs_Mass.root" # (optional, auto-detected)
+  moments: ["all"]          # "all", "L=2", "L=4", or list: ["H_0_0_0", "H_0_2_0"]
+  formats: ["png", "pdf"]
 
 # MCMC Uncertainty Propagation
 mcmc_propagation:
@@ -412,16 +426,33 @@ The report provides:
    - Plain ASCII: `<output_dir>/reports/fit_summary.txt`
    - GitHub-flavored Markdown: `<output_dir>/reports/fit_summary.md`
 
-### Diagnostic Plots (`mom2amp plot`)
-The `plot` command evaluates all randomized starts in `<output_dir>/fit/starts/`:
+### Diagnostic Plots & Moment Comparison (`mom2amp plot`)
+The `plot` command evaluates the nominal best fit, all randomized starts in `<output_dir>/fit/starts/`, and compares reconstructed moments with experimental MCMC moments:
 
 ```bash
-pixi run plot configs/d_breit_wigner.yaml
+pixi run plot configs/s_piecewise_d_bw.yaml
 ```
 
-- Produces a histogram of minimized \(\chi^2\) values.
-- Highlights the global minimum plateau (all starts within \(\Delta\chi^2 \le \text{plateau\_delta\_chi2}\) of the best fit).
-- Exports publication-quality figures to `<output_dir>/plots/chi2_distribution.png` and `chi2_distribution.pdf`.
+CLI options:
+- `--n-lowest-chi2 <N>`: Draw the top \(N\) lowest \(\chi^2\) fit curves (Rank 1 solid red, ranks 2..N semi-transparent red).
+- `--moments <filter>`: Filter moments to plot (`"all"`, `"L=2"`, `"L=4"`, or comma-separated list `"H_0_0_0,H_0_2_0"`).
+- `--unnormalized-moments-file <path>`: Path to `UnnormalizedMoments_vs_Mass.root` (auto-detected if omitted).
+- `--formats <png,pdf>`: Output graphic formats (default: `png,pdf`).
+
+Generated Figures:
+1. **Multi-Start \(\chi^2\) Landscape**:
+   - Histogram of minimized \(\chi^2\) values across starts.
+   - Highlights the global minimum plateau (all starts within \(\Delta\chi^2 \le \text{plateau\_delta\_chi2}\) of the best fit).
+   - Saved to `<output_dir>/plots/multistart_chi2_landscape.png` and `.pdf`.
+2. **Individual Moment Comparison Figures**:
+   - Experimental MCMC moments plotted as black markers with error bars.
+   - Top \(N\) lowest \(\chi^2\) mass-dependent fit curves overlaid: Rank 1 (solid red line) and Ranks 2..N (semi-transparent red lines).
+   - Saved to `<output_dir>/plots/moments/{moment_name}.png` and `.pdf` (e.g. `H_0_0_0.png`, `H_0_2_0.png`).
+3. **Multi-Panel Moments Overview Grid**:
+   - Comprehensive multi-panel overview grid of all requested angular moments.
+   - Saved to `<output_dir>/plots/moments_overview.png` and `.pdf`.
+4. **Fitted Amplitude Magnitudes & Phases**:
+   - Saved to `<output_dir>/plots/amplitudes_magnitude_vs_mass.png` and `amplitudes_phase_vs_mass.png` with MCMC credible intervals if propagated.
 
 ---
 

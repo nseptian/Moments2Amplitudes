@@ -95,3 +95,11 @@ mcmc_propagation:
   output_file: "mcmc_propagation_spiecewise_results.root"
   log_dir: "logs_spiecewise/mcmc_fits"
 
+plotting:
+  enabled: true
+  n_lowest_chi2: 10
+  draw_best_fits: true
+  moments: ["all"]
+  formats: ["png", "pdf"]
+
+

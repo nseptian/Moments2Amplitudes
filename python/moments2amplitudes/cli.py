@@ -155,6 +155,13 @@ def cmd_plot(args: argparse.Namespace) -> int:
         print(f"[ERROR] Failed to load configuration: {e}")
         return 1
 
+    if hasattr(args, "n_lowest_chi2") and args.n_lowest_chi2 is not None:
+        cfg.plotting.n_lowest_chi2 = args.n_lowest_chi2
+    if hasattr(args, "unnormalized_moments_file") and args.unnormalized_moments_file:
+        cfg.plotting.unnormalized_moments_file = args.unnormalized_moments_file
+    if hasattr(args, "moments") and args.moments:
+        cfg.plotting.moments = [m.strip() for m in args.moments.split(",")]
+
     run_dir = getattr(args, "run_dir", None) or getattr(args, "output_dir", None)
     rundir = get_run_directory(cfg, run_dir)
     print(f"\nGenerating plots from run directory: {rundir.root}")
@@ -243,6 +250,9 @@ def main():
     p_plot.add_argument("config", help="Path to config.yaml")
     p_plot.add_argument("--run-dir", "--output-dir", dest="run_dir", type=str, default=None, help="Run directory")
     p_plot.add_argument("--formats", type=str, default="png,pdf", help="Image output formats (comma-separated, default: png,pdf)")
+    p_plot.add_argument("--n-lowest-chi2", type=int, default=None, help="Number of lowest chi2 fit curves to draw (default: from config or 10)")
+    p_plot.add_argument("--unnormalized-moments-file", type=str, default=None, help="Path to UnnormalizedMoments_vs_Mass.root")
+    p_plot.add_argument("--moments", type=str, default=None, help="Moments to plot (e.g. 'all', 'L=2', 'H_0_0_0,H_0_2_0')")
 
     # Summary
     p_sum = subparsers.add_parser("summary", help="Display fit parameter summary and save report tables")

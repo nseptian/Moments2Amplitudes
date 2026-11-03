@@ -148,6 +148,17 @@ class MultiStartConfig:
     output_dir: str = "logs"
     plateau_delta_chi2: float = 0.05
     seed_offset: int = 1
+    n_lowest_chi2: int = 10
+
+
+@dataclass
+class PlottingConfig:
+    enabled: bool = True
+    n_lowest_chi2: int = 10
+    draw_best_fits: bool = True
+    unnormalized_moments_file: Optional[str] = None
+    moments: List[str] = field(default_factory=lambda: ["all"])
+    formats: List[str] = field(default_factory=lambda: ["png", "pdf"])
 
 
 @dataclass
@@ -178,6 +189,7 @@ class FitConfig:
     minimizer: MinimizerConfig = field(default_factory=MinimizerConfig)
     multi_start: MultiStartConfig = field(default_factory=MultiStartConfig)
     mcmc_propagation: MCMCPropagationConfig = field(default_factory=MCMCPropagationConfig)
+    plotting: PlottingConfig = field(default_factory=PlottingConfig)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

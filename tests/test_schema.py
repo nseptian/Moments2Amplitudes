@@ -13,6 +13,7 @@ from moments2amplitudes.schema import (
     ResonanceConfig,
     MultiStartConfig,
     MCMCPropagationConfig,
+    PlottingConfig,
     EnvironmentConfig,
     WaveType,
     ModelType,
@@ -58,6 +59,14 @@ class TestSchema(unittest.TestCase):
     def test_invalid_mass_binning(self):
         with self.assertRaises(ValueError):
             MassBinsConfig().get_bin_centers()
+
+    def test_plotting_config(self):
+        plot_cfg = PlottingConfig(n_lowest_chi2=15, moments=["H_0_0_0", "H_0_2_0"])
+        self.assertTrue(plot_cfg.enabled)
+        self.assertEqual(plot_cfg.n_lowest_chi2, 15)
+        self.assertEqual(plot_cfg.moments, ["H_0_0_0", "H_0_2_0"])
+        self.assertTrue(plot_cfg.draw_best_fits)
+        self.assertEqual(plot_cfg.formats, ["png", "pdf"])
 
 
 if __name__ == "__main__":

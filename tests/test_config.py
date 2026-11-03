@@ -47,6 +47,9 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.project.name, "EtaPi0_SPiecewise_DBreitWigner_Stage2")
         s_wave = next(w for w in cfg.waves if w.l == 0)
         self.assertEqual(s_wave.type, WaveType.PIECEWISE)
+        self.assertTrue(cfg.plotting.enabled)
+        self.assertEqual(cfg.plotting.n_lowest_chi2, 10)
+        self.assertEqual(cfg.plotting.moments, ["all"])
 
     def test_validation_errors(self):
         cfg = FitConfig()

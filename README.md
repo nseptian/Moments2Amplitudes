@@ -49,8 +49,10 @@ pixi run fit configs/d_breit_wigner.yaml
 # 5. Display formatted physics parameter summary table and inspect results
 pixi run summary configs/d_breit_wigner.yaml
 
-# 6. Generate diagnostic distribution and amplitude plots
+# 6. Generate diagnostic distribution, amplitude plots, and moment comparisons with MCMC
 pixi run plot configs/d_breit_wigner.yaml
+# Optional: overlay N lowest chi2 fit curves and filter specific moments
+pixi run plot configs/s_piecewise_d_bw.yaml --n-lowest-chi2 10 --moments L=2
 
 # 7. Propagate MCMC experimental uncertainty across posterior samples
 pixi run propagate configs/s_piecewise_d_bw.yaml
