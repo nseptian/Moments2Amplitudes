@@ -10,6 +10,9 @@ from pathlib import Path
 
 from .config import load_config, validate_config
 from .driver import run_multi_start, run_mcmc_propagation
+from .rundir import get_run_directory
+from .summary import FitSummary
+from .plotter import run_all_diagnostics_and_plots
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -143,6 +146,66 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_plot(args: argparse.Namespace) -> int:
+    """Generate publication amplitude and phase plots with MCMC error bands."""
+    config_path = Path(args.config)
+    try:
+        cfg = load_config(config_path)
+    except Exception as e:
+        print(f"[ERROR] Failed to load configuration: {e}")
+        return 1
+
+    run_dir = getattr(args, "run_dir", None) or getattr(args, "output_dir", None)
+    rundir = get_run_directory(cfg, run_dir)
+    print(f"\nGenerating plots from run directory: {rundir.root}")
+    
+    if not rundir.nominal_best_root.is_file():
+        legacy_best = rundir.root / "central_best_params.root"
+        if legacy_best.is_file():
+            rundir.save_nominal_best(legacy_best)
+        else:
+            print(f"[ERROR] No nominal best fit found at {rundir.nominal_best_root}")
+            return 1
+
+    formats = tuple(args.formats.split(",")) if hasattr(args, "formats") and args.formats else ("png", "pdf")
+    res = run_all_diagnostics_and_plots(cfg, rundir, formats=formats)
+    print(f"[SUCCESS] Generated {len(res['plots'])} plot files in: {rundir.plots_dir}")
+    return 0
+
+
+def cmd_summary(args: argparse.Namespace) -> int:
+    """Display fit summary table and save reports."""
+    config_path = Path(args.config)
+    try:
+        cfg = load_config(config_path)
+    except Exception as e:
+        print(f"[ERROR] Failed to load configuration: {e}")
+        return 1
+
+    run_dir = getattr(args, "run_dir", None) or getattr(args, "output_dir", None)
+    rundir = get_run_directory(cfg, run_dir)
+
+    target_root = rundir.nominal_best_root
+    if not target_root.is_file():
+        legacy_best = rundir.root / "central_best_params.root"
+        if legacy_best.is_file():
+            target_root = legacy_best
+        else:
+            print(f"[ERROR] No fit results found in {rundir.root}")
+            return 1
+
+    mcmc_target = rundir.mcmc_propagated_root if rundir.mcmc_propagated_root.is_file() else None
+
+    summary = FitSummary(cfg, rundir)
+    summary.load_from_root(target_root, mcmc_target)
+    txt_path, md_path = summary.save_reports()
+    print(f"\n{summary.generate_ascii_table()}\n")
+    print(f"[OK] Saved reports:")
+    print(f"  - Text:     {txt_path}")
+    print(f"  - Markdown: {md_path}")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="mom2amp",
@@ -159,7 +222,7 @@ def main():
     p_fit.add_argument("config", help="Path to config.yaml")
     p_fit.add_argument("--n-starts", type=int, default=None, help="Number of randomized starts")
     p_fit.add_argument("--n-threads", type=int, default=None, help="Parallel worker threads")
-    p_fit.add_argument("--output-dir", type=str, default=None, help="Output directory for fit results")
+    p_fit.add_argument("--output-dir", "--run-dir", dest="output_dir", type=str, default=None, help="Run / output directory")
 
     # Propagate
     p_prop = subparsers.add_parser("propagate", help="Run MCMC posterior uncertainty propagation")
@@ -169,13 +232,25 @@ def main():
     p_prop.add_argument("--n-workers", type=int, default=None, help="Number of parallel workers")
     p_prop.add_argument("--max-entries", type=int, default=None, help="Max posterior entries to propagate")
     p_prop.add_argument("--output-file", type=str, default=None, help="Output merged ROOT file")
+    p_prop.add_argument("--run-dir", type=str, default=None, help="Run directory")
+
+    # Plot
+    p_plot = subparsers.add_parser("plot", help="Generate publication amplitude plots and error bands")
+    p_plot.add_argument("config", help="Path to config.yaml")
+    p_plot.add_argument("--run-dir", "--output-dir", dest="run_dir", type=str, default=None, help="Run directory")
+    p_plot.add_argument("--formats", type=str, default="png,pdf", help="Image output formats (comma-separated, default: png,pdf)")
+
+    # Summary
+    p_sum = subparsers.add_parser("summary", help="Display fit parameter summary and save report tables")
+    p_sum.add_argument("config", help="Path to config.yaml")
+    p_sum.add_argument("--run-dir", "--output-dir", dest="run_dir", type=str, default=None, help="Run directory")
 
     # Run (All in one)
     p_run = subparsers.add_parser("run", help="Run full pipeline (multi-start fit + MCMC propagation)")
     p_run.add_argument("config", help="Path to config.yaml")
     p_run.add_argument("--n-starts", type=int, default=None, help="Number of randomized starts")
     p_run.add_argument("--n-threads", type=int, default=None, help="Parallel worker threads")
-    p_run.add_argument("--output-dir", type=str, default=None, help="Output directory")
+    p_run.add_argument("--output-dir", "--run-dir", dest="output_dir", type=str, default=None, help="Run directory")
     p_run.add_argument("--propagate", action="store_true", help="Force MCMC propagation even if disabled in config")
     p_run.add_argument("--n-workers", type=int, default=None, help="Number of MCMC workers")
     p_run.add_argument("--max-entries", type=int, default=None, help="Max posterior entries to propagate")
@@ -192,6 +267,10 @@ def main():
         sys.exit(cmd_fit(args))
     elif args.command == "propagate":
         sys.exit(cmd_propagate(args))
+    elif args.command == "plot":
+        sys.exit(cmd_plot(args))
+    elif args.command == "summary":
+        sys.exit(cmd_summary(args))
     elif args.command == "run":
         sys.exit(cmd_run(args))
     else:

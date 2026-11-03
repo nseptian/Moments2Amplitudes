@@ -20,6 +20,9 @@ from .schema import (
     ModelType,
     InitStrategy,
 )
+from .rundir import RunDirectory, get_run_directory
+from .plotter import plot_multistart_landscape, plot_amplitudes_and_bands, run_all_diagnostics_and_plots
+from .summary import FitSummary
 
 
 def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[str], str]:
@@ -374,20 +377,22 @@ def run_multi_start(
     n_starts: Optional[int] = None,
     n_threads: Optional[int] = None,
     output_dir: Optional[str] = None,
+    config_source_path: Optional[Path | str] = None,
 ) -> Dict[str, Any]:
     """
     Run parallel multi-start randomized fits to find the central global minimum.
     Generates summary plots, identifies the plateau, and saves central_best_params.root.
     """
+    rundir = get_run_directory(config, output_dir)
+    rundir.ensure_directories()
+
+    if config_source_path:
+        rundir.save_config_snapshot(config_source_path)
+
     starts = n_starts if n_starts is not None else config.multi_start.n_starts
     threads = n_threads if n_threads is not None else config.multi_start.n_threads
-    out_dir = Path(output_dir or config.multi_start.output_dir).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
 
-    central_fits_dir = out_dir / "central_fits"
-    central_fits_dir.mkdir(parents=True, exist_ok=True)
-
-    macro_path = out_dir / "generated_driver.C"
+    macro_path = rundir.worker_macro
     generate_root_macro(config, macro_path)
 
     print(f"\n=======================================================")
@@ -395,7 +400,7 @@ def run_multi_start(
     print(f" Project:      {config.project.name}")
     print(f" Total Trials: {starts}")
     print(f" Threads:      {threads}")
-    print(f" Output Dir:   {out_dir}")
+    print(f" Run Dir:      {rundir.root}")
     print(f"=======================================================\n")
 
     seeds = [config.multi_start.seed_offset + i for i in range(starts)]
@@ -405,10 +410,10 @@ def run_multi_start(
     import concurrent.futures
 
     def run_seed_task(seed_val: int) -> Dict[str, Any]:
-        log_f = central_fits_dir / f"fit_seed_{seed_val}.log"
+        log_f = rundir.get_seed_log_file(seed_val)
         ret_code, output = execute_root_command(
             macro_path,
-            ("single", seed_val, 0, -1, str(central_fits_dir), ""),
+            ("single", seed_val, 0, -1, str(rundir.fit_starts_dir), ""),
             log_f,
         )
 
@@ -416,7 +421,7 @@ def run_multi_start(
         chi2 = 1e9
         is_valid = False
         status = -1
-        out_root = str(central_fits_dir / f"MassDependentResults_{seed_val}.root")
+        out_root = str(rundir.fit_starts_dir / f"MassDependentResults_{seed_val}.root")
 
         for line in output.splitlines():
             if "[RESULT]" in line and f"SEED={seed_val}" in line:
@@ -469,8 +474,8 @@ def run_multi_start(
     print(f" Multi-Start Summary: {len(valid_results)}/{starts} converged in {elapsed:.1f}s")
 
     if not valid_results:
-        print("[ERROR] No fits converged cleanly. Check logs in:", central_fits_dir)
-        return {"converged": False, "results": results}
+        print("[ERROR] No fits converged cleanly. Check logs in:", rundir.fit_starts_dir)
+        return {"converged": False, "results": results, "rundir": rundir}
 
     min_chi2 = valid_results[0]["chi2"]
     best_seed = valid_results[0]["seed"]
@@ -483,52 +488,40 @@ def run_multi_start(
     print(f" Plateau Count (<= {plateau_thresh:.4f}): {len(plateau_fits)}/{len(valid_results)}")
     print("-------------------------------------------------------\n")
 
-    # Copy best params
-    best_target = out_dir / "central_best_params.root"
+    # Save nominal best root file
+    best_target = rundir.save_nominal_best(best_file)
+    # Also write central_best_params.root in root dir for backward compatibility
+    legacy_best = rundir.root / "central_best_params.root"
     if Path(best_file).is_file():
         import shutil
-        shutil.copyfile(best_file, best_target)
-        print(f"[OK] Saved central best parameters to: {best_target}")
+        shutil.copyfile(best_file, legacy_best)
+        print(f"[OK] Saved nominal best parameters to: {best_target}")
 
-    # Write summary text file
-    summary_path = out_dir / "central_fits_summary.txt"
-    with open(summary_path, "w") as sf:
-        sf.write(f"Project: {config.project.name}\n")
-        sf.write(f"Total Trials: {starts}\n")
-        sf.write(f"Converged: {len(valid_results)}\n")
-        sf.write(f"Best Chi2: {min_chi2:.4f} (Seed {best_seed})\n")
-        sf.write(f"Plateau Delta Chi2: {config.multi_start.plateau_delta_chi2}\n")
-        sf.write(f"Plateau Fits Count: {len(plateau_fits)}\n\n")
-        sf.write("Rank | Seed | Chi2 | Valid | Status | RootFile\n")
-        for i, r in enumerate(valid_results):
-            sf.write(f"{i+1:4d} | {r['seed']:4d} | {r['chi2']:10.4f} | {r['is_valid']} | {r['status']:2d} | {r['root_file']}\n")
-
-    # Plot Chi2 distribution using matplotlib
+    # Plot multi-start landscape using plotter
     try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
-        chi2_vals = [r["chi2"] for r in valid_results]
-        fig, ax = plt.subplots(figsize=(8, 6), dpi=150)
-        ax.hist(chi2_vals, bins=30, color="#2b5c8f", edgecolor="black", alpha=0.8)
-        ax.axvline(min_chi2, color="red", linestyle="--", linewidth=2, label=f"Best $\\chi^2 = {min_chi2:.2f}$")
-        ax.axvline(plateau_thresh, color="orange", linestyle=":", linewidth=2, label=f"Plateau threshold ($\\Delta \\chi^2 \\le {config.multi_start.plateau_delta_chi2}$)")
-        ax.set_title(f"{config.project.name} - $\\chi^2$ Distribution ({len(valid_results)} converged)", fontsize=13)
-        ax.set_xlabel("$\\chi^2$", fontsize=11)
-        ax.set_ylabel("Count", fontsize=11)
-        ax.grid(True, linestyle="--", alpha=0.5)
-        ax.legend(fontsize=10)
-
-        dist_png = out_dir / "central_chi2_distribution.png"
-        dist_pdf = out_dir / "central_chi2_distribution.pdf"
-        fig.tight_layout()
-        fig.savefig(dist_png)
-        fig.savefig(dist_pdf)
-        plt.close(fig)
-        print(f"[OK] Generated Chi2 distribution plot: {dist_png}")
+        plot_multistart_landscape(
+            valid_results,
+            output_dir=rundir.plots_dir,
+            project_name=config.project.name,
+            plateau_delta=config.multi_start.plateau_delta_chi2,
+        )
     except Exception as e:
-        print(f"[WARNING] Could not generate matplotlib plot: {e}")
+        print(f"[WARNING] Could not generate multi-start plot: {e}")
+
+    # Generate summary report tables
+    summary = FitSummary(config, rundir)
+    summary.chi2 = min_chi2
+    summary.status = valid_results[0]["status"]
+    summary.is_valid = valid_results[0]["is_valid"]
+    summary.best_seed = best_seed
+    summary.total_starts = starts
+    summary.converged_starts = len(valid_results)
+    summary.plateau_count = len(plateau_fits)
+    summary.elapsed_seconds = elapsed
+
+    summary.load_from_root(best_target)
+    txt_rep, md_rep = summary.save_reports()
+    print(f"\n{summary.generate_ascii_table()}\n")
 
     return {
         "converged": True,
@@ -536,8 +529,10 @@ def run_multi_start(
         "best_chi2": min_chi2,
         "plateau_count": len(plateau_fits),
         "best_file": str(best_target),
-        "summary_file": str(summary_path),
+        "summary_file": str(txt_rep),
+        "markdown_report": str(md_rep),
         "valid_count": len(valid_results),
+        "rundir": rundir,
     }
 
 
@@ -547,26 +542,31 @@ def run_mcmc_propagation(
     n_workers: Optional[int] = None,
     max_entries: Optional[int] = None,
     output_file: Optional[str] = None,
+    run_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run parallel MCMC posterior uncertainty propagation across workers and merge with hadd.
     """
+    rundir = get_run_directory(config, run_dir)
+    rundir.ensure_directories()
+
     workers = n_workers if n_workers is not None else config.mcmc_propagation.n_workers
     total_entries = max_entries if max_entries is not None else config.mcmc_propagation.max_entries
     burn_in = config.mcmc_propagation.burn_in
-    out_file = Path(output_file or config.mcmc_propagation.output_file).resolve()
-    log_dir = Path(config.mcmc_propagation.log_dir).resolve()
-    log_dir.mkdir(parents=True, exist_ok=True)
+    out_file = Path(output_file or rundir.mcmc_propagated_root).resolve()
 
     # Determine best parameters file
     if not best_params_file:
-        candidate = Path(config.multi_start.output_dir) / "central_best_params.root"
-        if candidate.is_file():
-            best_params_file = str(candidate)
+        if rundir.nominal_best_root.is_file():
+            best_params_file = str(rundir.nominal_best_root)
         else:
-            raise FileNotFoundError("Best parameters file not found. Run multi-start fit first or pass --best-params-file.")
+            candidate = rundir.root / "central_best_params.root"
+            if candidate.is_file():
+                best_params_file = str(candidate)
+            else:
+                raise FileNotFoundError("Best parameters file not found. Run multi-start fit first or pass --best-params-file.")
 
-    macro_path = log_dir / "generated_driver.C"
+    macro_path = rundir.worker_macro
     generate_root_macro(config, macro_path)
 
     print(f"\n=======================================================")
@@ -591,13 +591,13 @@ def run_mcmc_propagation(
 
     def run_worker_task(w_info: Tuple[int, int, int]) -> Dict[str, Any]:
         wid, wstart, wend = w_info
-        log_f = log_dir / f"mcmc_worker_{wid}.log"
+        log_f = rundir.get_mcmc_worker_log_file(wid)
         ret_code, output = execute_root_command(
             macro_path,
-            ("mcmc", wid, wstart, wend, str(log_dir), str(best_params_file)),
+            ("mcmc", wid, wstart, wend, str(rundir.mcmc_workers_dir), str(best_params_file)),
             log_f,
         )
-        out_root = str(log_dir / f"mcmc_worker_{wid}.root")
+        out_root = str(rundir.mcmc_workers_dir / f"mcmc_worker_{wid}.root")
         return {"worker_id": wid, "ret_code": ret_code, "output_file": out_root, "entries": wend - wstart}
 
     start_time = time.time()
@@ -624,5 +624,13 @@ def run_mcmc_propagation(
         raise RuntimeError(f"hadd failed with exit code {hadd_res.returncode}")
 
     print(f"[SUCCESS] Successfully created merged MCMC propagation results: {out_file}")
-    return {"output_file": str(out_file), "merged_workers": len(worker_outputs)}
+
+    # Generate full diagnostics and plots with MCMC error bands
+    try:
+        diag_res = run_all_diagnostics_and_plots(config, rundir)
+        print(f"[OK] Generated amplitude plots and updated diagnostics in: {rundir.plots_dir}")
+    except Exception as e:
+        print(f"[WARNING] Diagnostic plot generation encountered: {e}")
+
+    return {"output_file": str(out_file), "merged_workers": len(worker_outputs), "rundir": rundir}
 

@@ -1,6 +1,9 @@
 # Ignore run outputs
 run/
-test_*
+runs/
+/test_*
+test_*.root
+macros/test_output/
 plots*
 data*
 brufit*
