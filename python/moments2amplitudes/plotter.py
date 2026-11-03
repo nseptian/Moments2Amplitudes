@@ -10,8 +10,12 @@ Generates:
 
 from __future__ import annotations
 import math
+import os
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
+
+# Ensure matplotlib has a writable config directory
+os.environ.setdefault("MPLCONFIGDIR", "/tmp")
 
 from .schema import FitConfig
 from .rundir import RunDirectory
@@ -49,7 +53,7 @@ def plot_multistart_landscape(
     counts, bins, patches = ax.hist(chi2s, bins=40, color="#1f77b4", edgecolor="black", alpha=0.7, label=f"Trials (N={len(chi2s)})")
 
     ax.axvline(min_chi2, color="red", linestyle="--", linewidth=2.0, label=f"Global Min $\\chi^2 = {min_chi2:.2f}$")
-    ax.axvspan(min_chi2, plateau_thresh, color="green", alpha=0.2, label=f"Plateau $\\le +{plateau_delta:.1f}$")
+    ax.axvspan(min_chi2, plateau_thresh, color="green", alpha=0.2, label=f"Plateau $\\leq +{plateau_delta:.1f}$")
 
     ax.set_xlabel(r"Total $\chi^2$", fontsize=12)
     ax.set_ylabel("Number of Starts", fontsize=12)
@@ -251,6 +255,34 @@ def run_all_diagnostics_and_plots(
         config,
         formats=formats,
     )
+
+    # Generate multi-start landscape plot if starts exist
+    if rundir.fit_starts_dir.is_dir():
+        ms_results = []
+        for log_f in rundir.fit_starts_dir.glob("fit_seed_*.log"):
+            try:
+                with open(log_f, "r") as f:
+                    for line in f:
+                        if "[RESULT] SEED=" in line:
+                            tokens = dict(part.split("=") for part in line.strip().split() if "=" in part)
+                            if "CHI2" in tokens and "VALID" in tokens:
+                                ms_results.append({
+                                    "seed": int(tokens.get("SEED", 0)),
+                                    "chi2": float(tokens["CHI2"]),
+                                    "is_valid": tokens["VALID"] == "1",
+                                    "status": int(tokens.get("STATUS", -1)),
+                                })
+            except Exception:
+                pass
+        if ms_results:
+            ms_plots = plot_multistart_landscape(
+                ms_results,
+                output_dir=rundir.plots_dir,
+                project_name=config.project.name,
+                plateau_delta=config.multi_start.plateau_delta_chi2,
+                formats=formats,
+            )
+            plot_files.extend(ms_plots)
 
     return {
         "summary": summary,
