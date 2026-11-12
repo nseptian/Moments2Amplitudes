@@ -4,6 +4,8 @@
 #include <TBranch.h>
 #include <TObjArray.h>
 #include <TString.h>
+#include <TGraphErrors.h>
+#include <TKey.h>
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -15,7 +17,8 @@
 void ExportAmplitudes(
     const char* nominalRootFile,
     const char* mcmcRootFile,
-    const char* outJsonFile
+    const char* outJsonFile,
+    const char* unnormMomentsFile = ""
 ) {
     std::ofstream out(outJsonFile);
     if (!out.is_open()) {
@@ -48,6 +51,12 @@ void ExportAmplitudes(
     std::vector<std::string> ampNames;
     std::map<std::string, double> branchBuffers;
 
+    bool hasH0Model = (t_nom->GetBranch("H_0_0_0") != nullptr);
+    double h0ModelBuf = 0.0;
+    if (hasH0Model) {
+        t_nom->SetBranchAddress("H_0_0_0", &h0ModelBuf);
+    }
+
     TObjArray* branches = t_nom->GetListOfBranches();
     for (int i = 0; i < branches->GetEntries(); ++i) {
         TBranch* br = dynamic_cast<TBranch*>(branches->At(i));
@@ -63,6 +72,7 @@ void ExportAmplitudes(
     }
 
     std::vector<double> massBins;
+    std::vector<double> h0ModelValues;
     std::map<std::string, std::vector<double>> nominalValues;
     for (const auto& name : ampNames) {
         nominalValues[name] = std::vector<double>();
@@ -71,6 +81,9 @@ void ExportAmplitudes(
     for (Long64_t e = 0; e < nEntries; ++e) {
         t_nom->GetEntry(e);
         massBins.push_back(mass_val);
+        if (hasH0Model) {
+            h0ModelValues.push_back(h0ModelBuf);
+        }
         for (const auto& name : ampNames) {
             nominalValues[name].push_back(branchBuffers[name]);
         }
@@ -255,5 +268,59 @@ void ExportAmplitudes(
     } else {
         out << "  }\n";
     }
-    out << "}\n";
+
+    if (hasH0Model) {
+        out << ",\n  \"h0_model\": {\n";
+        out << "    \"mass\": [";
+        for (size_t i = 0; i < massBins.size(); ++i) {
+            if (i > 0) out << ", ";
+            out << std::setprecision(6) << massBins[i];
+        }
+        out << "],\n    \"val\": [";
+        for (size_t i = 0; i < h0ModelValues.size(); ++i) {
+            if (i > 0) out << ", ";
+            out << std::setprecision(6) << h0ModelValues[i];
+        }
+        out << "]\n  }";
+    }
+
+    if (unnormMomentsFile && strlen(unnormMomentsFile) > 0) {
+        TFile* f_unnorm = TFile::Open(unnormMomentsFile);
+        if (f_unnorm && !f_unnorm->IsZombie()) {
+            TGraphErrors* gr = dynamic_cast<TGraphErrors*>(f_unnorm->Get("gr_unnormalized_moments_0_0_0_vs_mass"));
+            if (!gr) {
+                TList* ukeys = f_unnorm->GetListOfKeys();
+                for (int i = 0; i < ukeys->GetSize(); ++i) {
+                    TKey* uk = (TKey*)ukeys->At(i);
+                    TString ukname = uk->GetName();
+                    if (ukname.Contains("unnormalized_moments_0_0_0") || ukname.Contains("H_0_0_0")) {
+                        gr = dynamic_cast<TGraphErrors*>(f_unnorm->Get(ukname));
+                        if (gr) break;
+                    }
+                }
+            }
+            if (gr) {
+                out << ",\n  \"h0_data\": {\n";
+                out << "    \"mass\": [";
+                for (int p = 0; p < gr->GetN(); ++p) {
+                    if (p > 0) out << ", ";
+                    out << std::setprecision(6) << gr->GetPointX(p);
+                }
+                out << "],\n    \"val\": [";
+                for (int p = 0; p < gr->GetN(); ++p) {
+                    if (p > 0) out << ", ";
+                    out << std::setprecision(6) << gr->GetPointY(p);
+                }
+                out << "],\n    \"err\": [";
+                for (int p = 0; p < gr->GetN(); ++p) {
+                    if (p > 0) out << ", ";
+                    out << std::setprecision(6) << gr->GetErrorY(p);
+                }
+                out << "]\n  }";
+            }
+            f_unnorm->Close();
+        }
+    }
+
+    out << "\n}\n";
 }

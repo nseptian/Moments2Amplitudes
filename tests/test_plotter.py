@@ -240,6 +240,8 @@ class TestPlotter(unittest.TestCase):
             only_distributions=True,
             only_amplitudes=False,
             style="default",
+            rundir=self.rundir,
+            unnormalized_moments_file=None,
         )
 
         # 2. only_propagated=True
@@ -252,6 +254,38 @@ class TestPlotter(unittest.TestCase):
         # Should cleanly apply without raising exceptions
         for st in ["LHCb", "LHCb2", "ROOT", "ATLAS", "CMS", "ALICE", "default"]:
             apply_plot_style(st)
+
+    def test_resolve_unnormalized_moments_and_h0_overlay(self):
+        from moments2amplitudes.plotter import resolve_unnormalized_moments_file, load_h0_moment_data
+        import json
+
+        cfg = FitConfig()
+        # Direct override
+        dummy_file = self.test_dir / "UnnormalizedMoments_vs_Mass.root"
+        dummy_file.touch()
+        self.assertEqual(resolve_unnormalized_moments_file(cfg, self.rundir, str(dummy_file)), dummy_file)
+
+        # Config plotting path
+        cfg.plotting.unnormalized_moments_file = str(dummy_file)
+        self.assertEqual(resolve_unnormalized_moments_file(cfg, self.rundir), dummy_file)
+
+        # Load H0 moment data from cached JSON
+        cache_json = self.rundir.root / ".cache" / "moment_comparison_data.json"
+        cache_json.parent.mkdir(parents=True, exist_ok=True)
+        sample_json = {
+            "h0_data": {
+                "mass": [1.06, 1.10, 1.14],
+                "val": [1000.0, 2000.0, 3000.0],
+                "err": [50.0, 60.0, 70.0],
+            }
+        }
+        with open(cache_json, "w") as f:
+            json.dump(sample_json, f)
+
+        loaded_h0 = load_h0_moment_data(dummy_file, cache_json)
+        self.assertIsNotNone(loaded_h0)
+        self.assertEqual(loaded_h0["mass"], [1.06, 1.10, 1.14])
+        self.assertEqual(loaded_h0["val"], [1000.0, 2000.0, 3000.0])
 
 
 if __name__ == "__main__":

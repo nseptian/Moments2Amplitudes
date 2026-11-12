@@ -414,6 +414,101 @@ def extract_credible_bounds(
     return lo, hi
 
 
+def resolve_unnormalized_moments_file(
+    config: FitConfig,
+    rundir: Optional[RunDirectory] = None,
+    unnormalized_moments_file: Optional[Path | str] = None,
+) -> Optional[Path]:
+    """Resolve the unnormalized moments ROOT file from arguments, config, or dataset directory."""
+    if unnormalized_moments_file:
+        cand = Path(unnormalized_moments_file)
+        if cand.is_file():
+            return cand
+    if getattr(config, "plotting", None) and getattr(config.plotting, "unnormalized_moments_file", None):
+        cand = Path(config.plotting.unnormalized_moments_file)
+        if cand.is_file():
+            return cand
+    if getattr(config, "dataset", None) and getattr(config.dataset, "moments_dir", None):
+        target_t = getattr(config.dataset, "t_bin", None)
+        if not target_t and rundir and rundir.root.name.startswith("t0"):
+            target_t = rundir.root.name
+
+        mom_dir_str = config.dataset.get_moments_dir(target_t) if hasattr(config.dataset, "get_moments_dir") else config.dataset.moments_dir
+        resolved_dir = Path(mom_dir_str)
+        t_name = resolved_dir.name
+
+        search_dirs = [resolved_dir]
+        if target_t and (resolved_dir / target_t).is_dir():
+            search_dirs.append(resolved_dir / target_t)
+        if resolved_dir.parent.is_dir() and resolved_dir.parent != resolved_dir:
+            search_dirs.append(resolved_dir.parent)
+
+        cand_names = [
+            "UnnormalizedMoments_vs_Mass.root",
+            "UnnormalizedMomentsvMass.root",
+            "UnnormalizedMoments.root",
+            f"UnnormalizedMoments_vs_Mass_{t_name}.root",
+            f"UnnormalizedMomentsvMass_{t_name}.root",
+            f"UnnormalizedMoments_{t_name}.root",
+        ]
+        if target_t:
+            cand_names.extend([
+                f"UnnormalizedMoments_vs_Mass_{target_t}.root",
+                f"UnnormalizedMomentsvMass_{target_t}.root",
+                f"UnnormalizedMoments_{target_t}.root",
+            ])
+
+        for sdir in search_dirs:
+            for fname in cand_names:
+                cand = sdir / fname
+                if cand.is_file():
+                    return cand
+            if sdir.is_dir():
+                matches = sorted(sdir.glob("*UnnormalizedMoments*.root"))
+                if matches:
+                    return matches[0]
+
+    return None
+
+
+def load_h0_moment_data(
+    unnorm_path: Optional[Path],
+    cache_json: Optional[Path] = None,
+) -> Optional[Dict[str, List[float]]]:
+    """Load H_0_0_0 (acceptance corrected yield) moment data points and uncertainties."""
+    if cache_json and cache_json.is_file():
+        try:
+            with open(cache_json, "r") as f:
+                cdata = json.load(f)
+                if "h0_data" in cdata and cdata["h0_data"].get("mass") and cdata["h0_data"].get("val"):
+                    return cdata["h0_data"]
+                data_moms = cdata.get("data", {})
+                if "H_0_0_0" in data_moms and data_moms["H_0_0_0"].get("mass"):
+                    return data_moms["H_0_0_0"]
+        except Exception:
+            pass
+
+    if unnorm_path and unnorm_path.is_file():
+        try:
+            import uproot
+            with uproot.open(unnorm_path) as uf:
+                target_key = None
+                for k in uf.keys():
+                    if "unnormalized_moments_0_0_0" in k or "H_0_0_0" in k:
+                        target_key = k
+                        break
+                if target_key:
+                    gr = uf[target_key]
+                    x = list(gr.member("fX")) if hasattr(gr, "member") else list(gr.values()[0])
+                    y = list(gr.member("fY")) if hasattr(gr, "member") else list(gr.values()[1])
+                    ey = list(gr.member("fEY")) if hasattr(gr, "member") else [0.0] * len(y)
+                    return {"mass": [float(v) for v in x], "val": [float(v) for v in y], "err": [float(v) for v in ey]}
+        except Exception:
+            pass
+
+    return None
+
+
 def plot_amplitudes_and_bands(
     nominal_root: Path | str,
     mcmc_root: Optional[Path | str],
@@ -423,10 +518,13 @@ def plot_amplitudes_and_bands(
     only_distributions: bool = False,
     only_amplitudes: bool = False,
     style: Optional[str] = None,
+    unnormalized_moments_file: Optional[Path | str] = None,
+    rundir: Optional[RunDirectory] = None,
 ) -> List[Path]:
     """
     Plot fitted amplitude magnitudes and phases vs mass with shaded MCMC 68%/95% credible intervals,
     individual wave intensities/phases, wave overview panels, and 1D posterior distributions.
+    Overlays H_0_0_0 (acceptance corrected yield) on amplitude intensities when available.
     """
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -443,6 +541,10 @@ def plot_amplitudes_and_bands(
 
     effective_style = style or (getattr(config.plotting, "style", "default") if getattr(config, "plotting", None) else "default")
     apply_plot_style(effective_style)
+
+    # Resolve unnormalized moments file for H_0_0_0 reference
+    unnorm_path = resolve_unnormalized_moments_file(config, rundir, unnormalized_moments_file)
+    h0_data: Optional[Dict[str, List[float]]] = None
 
     # Extract nominal result tree
     masses: List[float] = []
@@ -526,12 +628,13 @@ def plot_amplitudes_and_bands(
                 json_path = cache_dir / "amplitudes_data.json"
                 root_bin = get_root_binary(config)
                 mcmc_arg = str(Path(mcmc_root).resolve()) if (mcmc_root and Path(mcmc_root).is_file()) else ""
+                unnorm_arg = str(unnorm_path.resolve()) if (unnorm_path and unnorm_path.is_file()) else ""
                 cmd = [
                     root_bin,
                     "-l",
                     "-b",
                     "-q",
-                    f'{export_macro.resolve()}("{Path(nominal_root).resolve()}", "{mcmc_arg}", "{json_path.resolve()}")'
+                    f'{export_macro.resolve()}("{Path(nominal_root).resolve()}", "{mcmc_arg}", "{json_path.resolve()}", "{unnorm_arg}")'
                 ]
                 env = get_root_subprocess_env(config)
                 run_res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
@@ -554,6 +657,8 @@ def plot_amplitudes_and_bands(
                             raw_params = jdata.get("mcmc_params", {})
                             for pk, pvals in raw_params.items():
                                 mcmc_params[pk] = [float(v) for v in pvals]
+                            if "h0_data" in jdata and jdata["h0_data"].get("mass") and jdata["h0_data"].get("val"):
+                                h0_data = jdata["h0_data"]
                             loaded = True
                 else:
                     if run_res.returncode != 0:
@@ -564,6 +669,10 @@ def plot_amplitudes_and_bands(
     if not loaded or not masses:
         print(f"[WARNING] Could not read amplitude branches from {nominal_root}")
         return generated
+
+    if h0_data is None:
+        cache_comp_json = (rundir.root / ".cache" / "moment_comparison_data.json") if rundir else (out_dir.parent / ".cache" / "moment_comparison_data.json")
+        h0_data = load_h0_moment_data(unnorm_path, cache_comp_json)
 
     # Filter active amplitudes: exclude dummy branches that are all zeros and not declared in config.waves
     active_waves_l = [w.l for w in getattr(config, "waves", [])] if getattr(config, "waves", None) else []
@@ -586,55 +695,86 @@ def plot_amplitudes_and_bands(
     elif len(masses) > 1:
         fit_step = float(np.median(np.diff(masses)))
 
-    # --- 1. Amplitude Magnitudes Plot ---
+    # --- 1. Amplitude Magnitudes & Intensities Plot (Overlaid on H_0_0_0) ---
     if not only_distributions and magnitudes:
         fig, ax = plt.subplots(figsize=(9, 6), dpi=300)
         colors = plt.cm.tab10(np.linspace(0, 1, len(magnitudes)))
 
+        # 1a. Overlay H_0_0_0 (acceptance corrected yield) if available
+        has_h0_overlay = False
+        if h0_data and h0_data.get("mass") and h0_data.get("val"):
+            m_h0 = h0_data["mass"]
+            y_h0 = h0_data["val"]
+            e_h0 = h0_data.get("err", [0.0] * len(y_h0))
+            ax.errorbar(
+                m_h0, y_h0, yerr=e_h0,
+                fmt="o", color="black", markersize=3.8,
+                capsize=1.5, elinewidth=1.0,
+                label=r"$H_0(0,0)$ (Acceptance Corrected Yield)",
+                zorder=2,
+            )
+            has_h0_overlay = True
+
+        # 1b. Total fitted intensity \sum |V_\alpha|^2
+        tot_nom = [sum(nominal_amps[k][i]**2 for k in magnitudes) for i in range(len(masses))]
+        if len(masses) >= 4:
+            m_tot_s, y_tot_s = smooth_curve(masses, tot_nom, num_points=200)
+            ax.plot(m_tot_s, y_tot_s, "-", color="black", linewidth=2.0, alpha=0.9, label=r"Total $\sum |V|^2$", zorder=5)
+        else:
+            ax.plot(masses, tot_nom, "-", color="black", linewidth=2.0, alpha=0.9, label=r"Total $\sum |V|^2$", zorder=5)
+
+        # 1c. Individual wave squared intensities |V_\alpha|^2
         for idx, k in enumerate(sorted(magnitudes)):
             y_nom = nominal_amps[k]
-            label = format_amplitude_label(k)
+            y_sqr = [v**2 for v in y_nom]
+            label = format_amplitude_squared_label(k)
             is_mass_dep = is_amplitude_mass_dependent(k, config)
 
             if is_mass_dep:
-                # Mass-dependent amplitude -> smooth continuous curve
-                m_smooth, y_smooth = smooth_curve(masses, y_nom, num_points=200)
-                ax.plot(m_smooth, y_smooth, "-", linewidth=2.0, color=colors[idx], label=label)
+                m_smooth, y_smooth = smooth_curve(masses, y_sqr, num_points=200)
+                ax.plot(m_smooth, y_smooth, "-", linewidth=2.0, color=colors[idx], label=label, zorder=4)
 
                 if k in mcmc_samples:
-                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom)
+                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
                     if len(masses) >= 4:
                         m_s, lo_smooth = smooth_curve(masses, lo_68, num_points=200)
                         m_s, hi_smooth = smooth_curve(masses, hi_68, num_points=200)
-                        ax.fill_between(m_s, lo_smooth, hi_smooth, color=colors[idx], alpha=0.25)
+                        ax.fill_between(m_s, lo_smooth, hi_smooth, color=colors[idx], alpha=0.25, zorder=3)
                     else:
-                        ax.fill_between(masses, lo_68, hi_68, color=colors[idx], alpha=0.25)
+                        ax.fill_between(masses, lo_68, hi_68, color=colors[idx], alpha=0.25, zorder=3)
             else:
-                # Mass-independent (piecewise) amplitude -> histogram (stairs)
                 edges = compute_bin_edges(masses, default_step=fit_step)
                 if hasattr(ax, "stairs"):
-                    ax.stairs(y_nom, edges, linewidth=2.0, color=colors[idx], label=label)
+                    ax.stairs(y_sqr, edges, linewidth=2.0, color=colors[idx], label=label, zorder=4)
                 else:
-                    ax.step(masses, y_nom, where="mid", linewidth=2.0, color=colors[idx], label=label)
+                    ax.step(masses, y_sqr, where="mid", linewidth=2.0, color=colors[idx], label=label, zorder=4)
 
                 if k in mcmc_samples:
-                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom)
+                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
                     x_step = np.repeat(edges, 2)[1:-1]
                     lo_step = np.repeat(lo_68, 2)
                     hi_step = np.repeat(hi_68, 2)
-                    ax.fill_between(x_step, lo_step, hi_step, color=colors[idx], alpha=0.25)
+                    ax.fill_between(x_step, lo_step, hi_step, color=colors[idx], alpha=0.25, zorder=3)
 
         ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
-        ax.set_xlabel(r"$M(\eta\pi^0)$ [GeV]", fontsize=12)
-        ax.set_ylabel("Amplitude Magnitude", fontsize=12)
-        ax.set_title(f"{config.project.name} - Fitted Amplitude Magnitudes", fontsize=13, fontweight="bold")
-        ax.legend(frameon=True, fontsize=10, ncol=2)
+        ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=12)
+        ylabel_str = f"Intensity / ({fit_step*1000:.0f} MeV/$c^2$)" if fit_step else "Intensity"
+        if has_h0_overlay:
+            ax.set_ylabel(ylabel_str, fontsize=12)
+            ax.set_title(f"{config.project.name} - Fitted Amplitudes vs $H_0(0,0)$", fontsize=13, fontweight="bold")
+        else:
+            ax.set_ylabel(ylabel_str, fontsize=12)
+            ax.set_title(f"{config.project.name} - Fitted Amplitude Intensitudes", fontsize=13, fontweight="bold")
+        ax.legend(frameon=True, fontsize=9, ncol=2, loc="best")
         ax.grid(True, linestyle=":", alpha=0.5)
 
         for fmt in formats:
             p = out_dir / f"amplitudes_magnitude_vs_mass.{fmt}"
             fig.savefig(p, bbox_inches="tight")
             generated.append(p)
+            p_int = out_dir / f"amplitudes_intensity_vs_mass.{fmt}"
+            fig.savefig(p_int, bbox_inches="tight")
+            generated.append(p_int)
         plt.close(fig)
 
     # --- 2. Relative Phases Plot ---
@@ -706,9 +846,20 @@ def plot_amplitudes_and_bands(
 
             # 3a. Magnitude vs Mass
             fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
+            if h0_data and h0_data.get("mass") and h0_data.get("val"):
+                m_h0 = h0_data["mass"]
+                y_sqrt = [math.sqrt(max(0.0, v)) for v in h0_data["val"]]
+                e_sqrt = [e / (2.0 * math.sqrt(max(1e-6, v))) for v, e in zip(h0_data["val"], h0_data.get("err", [0.0] * len(y_sqrt)))]
+                ax.errorbar(
+                    m_h0, y_sqrt, yerr=e_sqrt,
+                    fmt="o", color="gray", markersize=3.0, alpha=0.45,
+                    capsize=1.5, elinewidth=1.0,
+                    label=r"$\sqrt{H_0(0,0)}$ (Total)",
+                    zorder=1,
+                )
             if is_mass_dep:
                 m_s, y_s = smooth_curve(masses, y_nom, num_points=200)
-                ax.plot(m_s, y_s, "-", linewidth=2.2, color="navy", label=f"Nominal {label}")
+                ax.plot(m_s, y_s, "-", linewidth=2.2, color="navy", label=f"Nominal {label}", zorder=4)
                 if k in mcmc_samples:
                     lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
                     lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5))
@@ -716,14 +867,14 @@ def plot_amplitudes_and_bands(
                     m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
                     m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
                     m_s68, hi_68s = smooth_curve(masses, hi_68, num_points=200)
-                    ax.fill_between(m_s95, lo_95s, hi_95s, color="cornflowerblue", alpha=0.25, label="MCMC 95% CI")
-                    ax.fill_between(m_s68, lo_68s, hi_68s, color="royalblue", alpha=0.45, label="MCMC 68% CI")
+                    ax.fill_between(m_s95, lo_95s, hi_95s, color="cornflowerblue", alpha=0.25, label="MCMC 95% CI", zorder=2)
+                    ax.fill_between(m_s68, lo_68s, hi_68s, color="royalblue", alpha=0.45, label="MCMC 68% CI", zorder=3)
             else:
                 edges = compute_bin_edges(masses, default_step=fit_step)
                 if hasattr(ax, "stairs"):
-                    ax.stairs(y_nom, edges, linewidth=2.2, color="navy", label=f"Nominal {label}")
+                    ax.stairs(y_nom, edges, linewidth=2.2, color="navy", label=f"Nominal {label}", zorder=4)
                 else:
-                    ax.step(masses, y_nom, where="mid", linewidth=2.2, color="navy", label=f"Nominal {label}")
+                    ax.step(masses, y_nom, where="mid", linewidth=2.2, color="navy", label=f"Nominal {label}", zorder=4)
                 if k in mcmc_samples:
                     lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
                     lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5))
@@ -732,14 +883,14 @@ def plot_amplitudes_and_bands(
                     hi_95s = np.repeat(hi_95, 2)
                     lo_68s = np.repeat(lo_68, 2)
                     hi_68s = np.repeat(hi_68, 2)
-                    ax.fill_between(x_step, lo_95s, hi_95s, color="cornflowerblue", alpha=0.25, label="MCMC 95% CI")
-                    ax.fill_between(x_step, lo_68s, hi_68s, color="royalblue", alpha=0.45, label="MCMC 68% CI")
+                    ax.fill_between(x_step, lo_95s, hi_95s, color="cornflowerblue", alpha=0.25, label="MCMC 95% CI", zorder=2)
+                    ax.fill_between(x_step, lo_68s, hi_68s, color="royalblue", alpha=0.45, label="MCMC 68% CI", zorder=3)
 
             ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
             ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11)
             ax.set_ylabel(f"Magnitude {label}", fontsize=11)
             ax.set_title(f"{config.project.name} - Amplitude {label}", fontsize=12, fontweight="bold")
-            ax.legend(frameon=True, fontsize=9)
+            ax.legend(frameon=True, fontsize=9, loc="best")
             ax.grid(True, linestyle=":", alpha=0.5)
             for fmt in formats:
                 p_indiv = indiv_dir / f"{k}_magnitude.{fmt}"
@@ -750,9 +901,20 @@ def plot_amplitudes_and_bands(
             # 3b. Squared Intensity vs Mass
             fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
             y_nom_sqr = [v**2 for v in y_nom]
+            if h0_data and h0_data.get("mass") and h0_data.get("val"):
+                m_h0 = h0_data["mass"]
+                y_h0 = h0_data["val"]
+                e_h0 = h0_data.get("err", [0.0] * len(y_h0))
+                ax.errorbar(
+                    m_h0, y_h0, yerr=e_h0,
+                    fmt="o", color="gray", markersize=3.0, alpha=0.45,
+                    capsize=1.5, elinewidth=1.0,
+                    label=r"$H_0(0,0)$ (Total Yield)",
+                    zorder=1,
+                )
             if is_mass_dep:
                 m_s, y_s = smooth_curve(masses, y_nom_sqr, num_points=200)
-                ax.plot(m_s, y_s, "-", linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}")
+                ax.plot(m_s, y_s, "-", linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}", zorder=4)
                 if k in mcmc_samples:
                     lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
                     lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
@@ -760,14 +922,14 @@ def plot_amplitudes_and_bands(
                     m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
                     m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
                     m_s68, hi_68s = smooth_curve(masses, hi_68, num_points=200)
-                    ax.fill_between(m_s95, lo_95s, hi_95s, color="lightcoral", alpha=0.3, label="MCMC 95% CI")
-                    ax.fill_between(m_s68, lo_68s, hi_68s, color="crimson", alpha=0.45, label="MCMC 68% CI")
+                    ax.fill_between(m_s95, lo_95s, hi_95s, color="lightcoral", alpha=0.3, label="MCMC 95% CI", zorder=2)
+                    ax.fill_between(m_s68, lo_68s, hi_68s, color="crimson", alpha=0.45, label="MCMC 68% CI", zorder=3)
             else:
                 edges = compute_bin_edges(masses, default_step=fit_step)
                 if hasattr(ax, "stairs"):
-                    ax.stairs(y_nom_sqr, edges, linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}")
+                    ax.stairs(y_nom_sqr, edges, linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}", zorder=4)
                 else:
-                    ax.step(masses, y_nom_sqr, where="mid", linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}")
+                    ax.step(masses, y_nom_sqr, where="mid", linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}", zorder=4)
                 if k in mcmc_samples:
                     lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
                     lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
@@ -776,14 +938,14 @@ def plot_amplitudes_and_bands(
                     hi_95s = np.repeat(hi_95, 2)
                     lo_68s = np.repeat(lo_68, 2)
                     hi_68s = np.repeat(hi_68, 2)
-                    ax.fill_between(x_step, lo_95s, hi_95s, color="lightcoral", alpha=0.3, label="MCMC 95% CI")
-                    ax.fill_between(x_step, lo_68s, hi_68s, color="crimson", alpha=0.45, label="MCMC 68% CI")
+                    ax.fill_between(x_step, lo_95s, hi_95s, color="lightcoral", alpha=0.3, label="MCMC 95% CI", zorder=2)
+                    ax.fill_between(x_step, lo_68s, hi_68s, color="crimson", alpha=0.45, label="MCMC 68% CI", zorder=3)
 
             ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
             ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11)
             ax.set_ylabel(f"Intensity {sqr_label}", fontsize=11)
             ax.set_title(f"{config.project.name} - Intensity {sqr_label}", fontsize=12, fontweight="bold")
-            ax.legend(frameon=True, fontsize=9)
+            ax.legend(frameon=True, fontsize=9, loc="best")
             ax.grid(True, linestyle=":", alpha=0.5)
             for fmt in formats:
                 p_indiv_sqr = indiv_dir / f"{k}_squared.{fmt}"
@@ -846,6 +1008,13 @@ def plot_amplitudes_and_bands(
                 y_nom_sqr = [v**2 for v in nominal_amps[k]]
                 sqr_label = format_amplitude_squared_label(k)
                 is_mass_dep = is_amplitude_mass_dependent(k, config)
+
+                if h0_data and h0_data.get("mass") and h0_data.get("val"):
+                    ax.errorbar(
+                        h0_data["mass"], h0_data["val"], yerr=h0_data.get("err", [0.0] * len(h0_data["val"])),
+                        fmt=".", color="gray", markersize=2.5, alpha=0.35,
+                        capsize=1.0, elinewidth=0.8, zorder=1,
+                    )
 
                 if is_mass_dep:
                     m_s, y_s = smooth_curve(masses, y_nom_sqr, num_points=200)
@@ -1121,59 +1290,7 @@ def plot_moments_comparison(
         n_lowest = 10
 
     # Resolve unnormalized moments file
-    unnorm_path: Optional[Path] = None
-    if unnormalized_moments_file:
-        cand = Path(unnormalized_moments_file)
-        if cand.is_file():
-            unnorm_path = cand
-    elif getattr(config, "plotting", None) and config.plotting.unnormalized_moments_file:
-        cand = Path(config.plotting.unnormalized_moments_file)
-        if cand.is_file():
-            unnorm_path = cand
-    elif config.dataset.moments_dir:
-        # Resolve target t-bin if applicable
-        target_t = getattr(config.dataset, "t_bin", None)
-        if not target_t and rundir and rundir.root.name.startswith("t0"):
-            target_t = rundir.root.name
-
-        mom_dir_str = config.dataset.get_moments_dir(target_t) if hasattr(config.dataset, "get_moments_dir") else config.dataset.moments_dir
-        resolved_dir = Path(mom_dir_str)
-        t_name = resolved_dir.name
-
-        search_dirs = [resolved_dir]
-        if target_t and (resolved_dir / target_t).is_dir():
-            search_dirs.append(resolved_dir / target_t)
-        if resolved_dir.parent.is_dir() and resolved_dir.parent != resolved_dir:
-            search_dirs.append(resolved_dir.parent)
-
-        cand_names = [
-            "UnnormalizedMoments_vs_Mass.root",
-            "UnnormalizedMomentsvMass.root",
-            "UnnormalizedMoments.root",
-            f"UnnormalizedMoments_vs_Mass_{t_name}.root",
-            f"UnnormalizedMomentsvMass_{t_name}.root",
-            f"UnnormalizedMoments_{t_name}.root",
-        ]
-        if target_t:
-            cand_names.extend([
-                f"UnnormalizedMoments_vs_Mass_{target_t}.root",
-                f"UnnormalizedMomentsvMass_{target_t}.root",
-                f"UnnormalizedMoments_{target_t}.root",
-            ])
-
-        for sdir in search_dirs:
-            for fname in cand_names:
-                cand = sdir / fname
-                if cand.is_file():
-                    unnorm_path = cand
-                    break
-            if unnorm_path:
-                break
-            if sdir.is_dir():
-                matches = sorted(sdir.glob("*UnnormalizedMoments*.root"))
-                if matches:
-                    unnorm_path = matches[0]
-                    break
+    unnorm_path = resolve_unnormalized_moments_file(config, rundir, unnormalized_moments_file)
 
     if not unnorm_path or not unnorm_path.is_file():
         resolved_dir_str = config.dataset.get_moments_dir() if hasattr(config.dataset, "get_moments_dir") else config.dataset.moments_dir
@@ -1485,6 +1602,8 @@ def run_all_diagnostics_and_plots(
             only_distributions=only_distributions,
             only_amplitudes=only_amplitudes,
             style=effective_style,
+            rundir=rundir,
+            unnormalized_moments_file=getattr(config.plotting, "unnormalized_moments_file", None),
         )
         return {
             "summary": None,
@@ -1510,6 +1629,8 @@ def run_all_diagnostics_and_plots(
         only_distributions=only_distributions,
         only_amplitudes=only_amplitudes,
         style=effective_style,
+        rundir=rundir,
+        unnormalized_moments_file=getattr(config.plotting, "unnormalized_moments_file", None),
     )
 
     # Generate multi-start landscape plot if starts exist
