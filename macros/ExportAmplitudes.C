@@ -9,6 +9,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <set>
 #include <iomanip>
 
 void ExportAmplitudes(
@@ -103,6 +104,35 @@ void ExportAmplitudes(
     if (mcmcRootFile && std::string(mcmcRootFile) != "" && std::string(mcmcRootFile) != "none") {
         TFile* f_mcmc = TFile::Open(mcmcRootFile);
         if (f_mcmc && !f_mcmc->IsZombie()) {
+            // Identify converged MCMC entries (Status == 0 and isValid == true)
+            std::set<Long64_t> convergedEntries;
+            bool hasConvCheck = false;
+            TTree* t_conv_check = dynamic_cast<TTree*>(f_mcmc->Get("mcmc_params"));
+            if (!t_conv_check) t_conv_check = dynamic_cast<TTree*>(f_mcmc->Get("mcmc_chi2"));
+            if (t_conv_check) {
+                hasConvCheck = true;
+                Long64_t m_entry = 0;
+                int m_status = 0;
+                bool m_valid = true;
+                bool has_entry_b = (t_conv_check->GetBranch("mcmc_entry") != nullptr);
+                bool has_status_b = (t_conv_check->GetBranch("Status") != nullptr);
+                bool has_valid_b = (t_conv_check->GetBranch("isValid") != nullptr);
+
+                if (has_entry_b) t_conv_check->SetBranchAddress("mcmc_entry", &m_entry);
+                if (has_status_b) t_conv_check->SetBranchAddress("Status", &m_status);
+                if (has_valid_b) t_conv_check->SetBranchAddress("isValid", &m_valid);
+
+                for (Long64_t e = 0; e < t_conv_check->GetEntries(); ++e) {
+                    t_conv_check->GetEntry(e);
+                    bool ok = true;
+                    if (has_status_b && m_status != 0) ok = false;
+                    if (has_valid_b && !m_valid) ok = false;
+                    if (ok) {
+                        convergedEntries.insert(has_entry_b ? m_entry : e);
+                    }
+                }
+            }
+
             TTree* t_mcmc = dynamic_cast<TTree*>(f_mcmc->Get("mcmc_result"));
             if (!t_mcmc) {
                 t_mcmc = dynamic_cast<TTree*>(f_mcmc->Get("result"));
@@ -110,6 +140,10 @@ void ExportAmplitudes(
             if (t_mcmc) {
                 double mcmc_mass = 0.0;
                 t_mcmc->SetBranchAddress("mass_bin", &mcmc_mass);
+                Long64_t mcmc_entry = 0;
+                bool has_mcmc_entry = (t_mcmc->GetBranch("mcmc_entry") != nullptr);
+                if (has_mcmc_entry) t_mcmc->SetBranchAddress("mcmc_entry", &mcmc_entry);
+
                 std::map<std::string, double> mcmcBuffers;
                 std::vector<std::string> validMcmcAmps;
                 for (const auto& name : ampNames) {
@@ -123,8 +157,15 @@ void ExportAmplitudes(
                 // Map: ampName -> mass_bin -> list of samples
                 std::map<std::string, std::map<double, std::vector<double>>> samps;
                 const Long64_t nMcmc = t_mcmc->GetEntries();
+                const size_t nMassBins = (masses.empty() ? 1 : masses.size());
                 for (Long64_t e = 0; e < nMcmc; ++e) {
                     t_mcmc->GetEntry(e);
+                    if (hasConvCheck) {
+                        Long64_t cur_id = has_mcmc_entry ? mcmc_entry : (e / nMassBins);
+                        if (convergedEntries.find(cur_id) == convergedEntries.end()) {
+                            continue; // Only include converged MCMC fits!
+                        }
+                    }
                     for (const auto& name : validMcmcAmps) {
                         samps[name][mcmc_mass].push_back(mcmcBuffers[name]);
                     }
@@ -150,7 +191,7 @@ void ExportAmplitudes(
 
             out << "  }";
 
-            // Also export mcmc_params tree if present
+            // Also export mcmc_params tree if present (converged fits only)
             TTree* t_params = dynamic_cast<TTree*>(f_mcmc->Get("mcmc_params"));
             if (t_params) {
                 out << ",\n  \"mcmc_params\": {\n";
@@ -167,10 +208,27 @@ void ExportAmplitudes(
                     pBuffers[pStr] = 0.0;
                     t_params->SetBranchAddress(bName, &pBuffers[pStr]);
                 }
+
+                Long64_t par_entry = 0;
+                int par_status = 0;
+                bool par_valid = true;
+                bool has_par_entry = (t_params->GetBranch("mcmc_entry") != nullptr);
+                bool has_par_status = (t_params->GetBranch("Status") != nullptr);
+                bool has_par_valid = (t_params->GetBranch("isValid") != nullptr);
+
+                if (has_par_entry) t_params->SetBranchAddress("mcmc_entry", &par_entry);
+                if (has_par_status) t_params->SetBranchAddress("Status", &par_status);
+                if (has_par_valid) t_params->SetBranchAddress("isValid", &par_valid);
+
                 std::map<std::string, std::vector<double>> paramVals;
                 const Long64_t nParEntries = t_params->GetEntries();
                 for (Long64_t e = 0; e < nParEntries; ++e) {
                     t_params->GetEntry(e);
+                    bool ok = true;
+                    if (has_par_status && par_status != 0) ok = false;
+                    if (has_par_valid && !par_valid) ok = false;
+                    if (!ok) continue; // Only include converged fits!
+
                     for (const auto& p : paramNames) {
                         paramVals[p].push_back(pBuffers[p]);
                     }

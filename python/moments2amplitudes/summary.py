@@ -199,10 +199,20 @@ class FitSummary:
                 if "all_params" in mf or "mcmc_params" in mf:
                     tree_name = "all_params" if "all_params" in mf else "mcmc_params"
                     mtree = mf[tree_name]
+                    mask = None
+                    if "Status" in mtree and "isValid" in mtree:
+                        mask = (np.array(mtree["Status"].array()) == 0) & (np.array(mtree["isValid"].array()) == 1)
+                    elif "Status" in mtree:
+                        mask = (np.array(mtree["Status"].array()) == 0)
+                    elif "isValid" in mtree:
+                        mask = (np.array(mtree["isValid"].array()) == 1)
+
                     for p in self.parameters:
                         k = p["name"]
                         if k in mtree:
                             arr = np.array(mtree[k].array())
+                            if mask is not None and len(mask) == len(arr):
+                                arr = arr[mask]
                             if len(arr) > 0:
                                 med = float(np.median(arr))
                                 p16, p84 = float(np.percentile(arr, 16)), float(np.percentile(arr, 84))

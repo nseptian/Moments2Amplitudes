@@ -43,11 +43,30 @@ class TestPlotter(unittest.TestCase):
             root_f = self.rundir.fit_starts_dir / f"MassDependentResults_{seed}.root"
             root_f.touch()
 
+        # Place nominal_best_root
+        self.rundir.nominal_best_root.touch()
+
         fits = discover_lowest_chi2_fits(self.rundir, n_lowest=3)
         self.assertEqual(len(fits), 3)
+        # Seed 4 was 75.1 -> replaced by nominal_best_root without duplicating seed 4
         self.assertAlmostEqual(fits[0][0], 75.1)
+        self.assertEqual(fits[0][1].resolve(), self.rundir.nominal_best_root.resolve())
+        # Next is seed 2
         self.assertAlmostEqual(fits[1][0], 85.2)
+        # Next is seed 5
         self.assertAlmostEqual(fits[2][0], 95.0)
+
+    def test_discover_lowest_chi2_fits_all_failed(self):
+        # When all multi-starts fail, discover_lowest_chi2_fits returns empty
+        for seed in [1, 2, 3]:
+            log_f = self.rundir.get_seed_log_file(seed)
+            log_f.write_text(f"[RESULT] SEED={seed} CHI2=999.0 VALID=0 STATUS=3\n")
+            root_f = self.rundir.fit_starts_dir / f"MassDependentResults_{seed}.root"
+            root_f.touch()
+
+        self.rundir.nominal_best_root.touch()
+        fits = discover_lowest_chi2_fits(self.rundir, n_lowest=5)
+        self.assertEqual(len(fits), 0)
 
     def test_smooth_curve(self):
         # 1. Four or more points should produce smooth curve of length num_points

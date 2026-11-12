@@ -38,11 +38,14 @@ def discover_lowest_chi2_fits(rundir: RunDirectory, n_lowest: int = 10) -> List[
     """
     Discover completed fit runs in fit_starts_dir, sort by chi2 ascending,
     and return the top n_lowest (chi2, root_file) tuples.
+    Only includes strictly converged fits (status == 0 and is_valid == True).
     """
     valid_fits: List[Tuple[float, Path]] = []
+    has_starts_logs = False
 
     if rundir.fit_starts_dir.is_dir():
         for log_f in rundir.fit_starts_dir.glob("fit_seed_*.log"):
+            has_starts_logs = True
             try:
                 with open(log_f, "r") as f:
                     for line in f:
@@ -65,12 +68,25 @@ def discover_lowest_chi2_fits(rundir: RunDirectory, n_lowest: int = 10) -> List[
 
     valid_fits.sort(key=lambda x: x[0])
 
-    # Ensure nominal_best is included as the primary best fit if available
+    # Ensure nominal_best is included as the primary best fit if available and valid
     if rundir.nominal_best_root.is_file():
-        has_nominal = any(f[1].resolve() == rundir.nominal_best_root.resolve() for f in valid_fits)
-        if not has_nominal:
-            best_chi2 = valid_fits[0][0] if valid_fits else 0.0
-            valid_fits.insert(0, (best_chi2, rundir.nominal_best_root))
+        if valid_fits:
+            # Replace the best seed file with nominal_best_root to avoid duplicate entries for rank 1
+            valid_fits[0] = (valid_fits[0][0], rundir.nominal_best_root)
+        elif not has_starts_logs:
+            # Only include standalone nominal_best if no failure recorded in summary
+            is_nominal_converged = True
+            if rundir.summary_txt.is_file():
+                try:
+                    summary_content = rundir.summary_txt.read_text()
+                    if "Minimizer Status:" in summary_content and "Minimizer Status:   0" not in summary_content:
+                        is_nominal_converged = False
+                    if "Valid Minimum:      No" in summary_content:
+                        is_nominal_converged = False
+                except Exception:
+                    pass
+            if is_nominal_converged:
+                valid_fits.append((0.0, rundir.nominal_best_root))
 
     return valid_fits[:n_lowest]
 
@@ -104,14 +120,14 @@ def plot_multistart_landscape(
     plateau_thresh = min_chi2 + plateau_delta
 
     fig, ax = plt.subplots(figsize=(8, 5), dpi=300)
-    counts, bins, patches = ax.hist(chi2s, bins=40, color="#1f77b4", edgecolor="black", alpha=0.7, label=f"Trials (N={len(chi2s)})")
+    counts, bins, patches = ax.hist(chi2s, bins=40, color="#1f77b4", edgecolor="black", alpha=0.7, label=f"Converged Fits (N={len(chi2s)})")
 
     ax.axvline(min_chi2, color="red", linestyle="--", linewidth=2.0, label=f"Global Min $\\chi^2 = {min_chi2:.2f}$")
     ax.axvspan(min_chi2, plateau_thresh, color="green", alpha=0.2, label=f"Plateau $\\leq +{plateau_delta:.1f}$")
 
     ax.set_xlabel(r"Total $\chi^2$", fontsize=12)
     ax.set_ylabel("Number of Starts", fontsize=12)
-    ax.set_title(f"{project_name} - Multi-Start $\\chi^2$ Landscape", fontsize=13, fontweight="bold")
+    ax.set_title(f"{project_name} - Multi-Start $\\chi^2$ Landscape (Converged Fits)", fontsize=13, fontweight="bold")
     ax.legend(frameon=True, fontsize=10)
     ax.grid(True, linestyle=":", alpha=0.5)
 
@@ -402,21 +418,52 @@ def plot_amplitudes_and_bands(
 
         if mcmc_root and Path(mcmc_root).is_file():
             with uproot.open(mcmc_root) as mf:
+                # Identify converged MCMC entries (Status == 0 and isValid == True)
+                conv_entries = set()
+                has_conv_tree = False
+                for ctree_name in ("mcmc_params", "mcmc_chi2"):
+                    if ctree_name in mf:
+                        has_conv_tree = True
+                        ctree = mf[ctree_name]
+                        ckeys = ctree.keys()
+                        statuses = list(ctree["Status"].array()) if "Status" in ckeys else None
+                        valids = list(ctree["isValid"].array()) if "isValid" in ckeys else None
+                        m_entries = list(ctree["mcmc_entry"].array()) if "mcmc_entry" in ckeys else None
+                        n_tot = len(statuses) if statuses is not None else (len(valids) if valids is not None else 0)
+                        for idx in range(n_tot):
+                            st_ok = (statuses[idx] == 0) if statuses is not None else True
+                            v_ok = bool(valids[idx]) if valids is not None else True
+                            if st_ok and v_ok:
+                                entry_id = m_entries[idx] if m_entries is not None else idx
+                                conv_entries.add(entry_id)
+                        break
+
                 mtname = "mcmc_result" if "mcmc_result" in mf else ("result" if "result" in mf else None)
                 if mtname:
                     mtree = mf[mtname]
                     mbins = list(mtree["mass_bin"].array())
+                    m_result_entries = list(mtree["mcmc_entry"].array()) if "mcmc_entry" in mtree else None
+                    n_mass_bins = len(masses) if masses else 1
                     for k in nominal_amps.keys():
                         if k in mtree:
                             arr = list(mtree[k].array())
                             mcmc_samples[k] = {}
-                            for m, v in zip(mbins, arr):
+                            for i, (m, v) in enumerate(zip(mbins, arr)):
+                                if has_conv_tree:
+                                    entry_id = m_result_entries[i] if m_result_entries is not None else (i // n_mass_bins)
+                                    if entry_id not in conv_entries:
+                                        continue
                                 mcmc_samples[k].setdefault(round(float(m), 4), []).append(float(v))
                 if "mcmc_params" in mf:
                     ptree = mf["mcmc_params"]
+                    p_entries = list(ptree["mcmc_entry"].array()) if "mcmc_entry" in ptree else None
                     for pk in ptree.keys():
                         if pk not in ("mcmc_entry", "Status", "isValid", "isValidError"):
-                            mcmc_params[pk] = [float(v) for v in ptree[pk].array()]
+                            vals = list(ptree[pk].array())
+                            mcmc_params[pk] = [
+                                float(v) for i, v in enumerate(vals)
+                                if (not has_conv_tree or (p_entries[i] if p_entries is not None else i) in conv_entries)
+                            ]
     except Exception:
         pass
 
@@ -1125,7 +1172,11 @@ def plot_moments_comparison(
         return generated
 
     data_moments: Dict[str, Any] = comp_data.get("data", {})
-    fits_list: List[Dict[str, Any]] = comp_data.get("fits", [])
+    raw_fits: List[Dict[str, Any]] = comp_data.get("fits", [])
+    fits_list: List[Dict[str, Any]] = [
+        f for f in raw_fits
+        if f.get("status", 0) == 0 and f.get("is_valid", True)
+    ]
 
     if not data_moments:
         print(f"[WARNING] No moment data found in {unnorm_path}.")
@@ -1243,7 +1294,7 @@ def plot_moments_comparison(
                             label=f"Rank 1 ($\chi^2 = {fit.get('chi2', 0):.1f}$)", zorder=5
                         )
                     else:
-                        lbl = f"Top {len(fits_list)} Lowest $\chi^2$" if idx == 1 else None
+                        lbl = f"Top {len(fits_list)} Converged Fits" if idx == 1 else None
                         ax.plot(
                             m_smooth, y_smooth, "-", color="#d62728", linewidth=1.0, alpha=0.35,
                             label=lbl, zorder=4
@@ -1337,7 +1388,7 @@ def plot_moments_comparison(
             axes_flat[idx].set_visible(False)
 
         fig.suptitle(
-            f"{config.project.name} - Unnormalized Moments vs Mass (Top {len(fits_list)} Lowest $\chi^2$ Fits)",
+            f"{config.project.name} - Unnormalized Moments vs Mass (Top {len(fits_list)} Converged Fits)",
             fontsize=14,
             fontweight="bold",
             y=0.995,
@@ -1411,12 +1462,15 @@ def run_all_diagnostics_and_plots(
                         if "[RESULT] SEED=" in line:
                             tokens = dict(part.split("=") for part in line.strip().split() if "=" in part)
                             if "CHI2" in tokens and "VALID" in tokens:
-                                ms_results.append({
-                                    "seed": int(tokens.get("SEED", 0)),
-                                    "chi2": float(tokens["CHI2"]),
-                                    "is_valid": tokens["VALID"] == "1",
-                                    "status": int(tokens.get("STATUS", -1)),
-                                })
+                                is_valid = tokens["VALID"] == "1"
+                                status = int(tokens.get("STATUS", -1))
+                                if is_valid and status == 0:
+                                    ms_results.append({
+                                        "seed": int(tokens.get("SEED", 0)),
+                                        "chi2": float(tokens["CHI2"]),
+                                        "is_valid": True,
+                                        "status": 0,
+                                    })
             except Exception:
                 pass
         if ms_results:

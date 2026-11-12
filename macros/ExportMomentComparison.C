@@ -95,10 +95,31 @@ void ExportMomentComparison(
         TTree* chi2Tree = (TTree*)f_fit->Get("chi2");
         double chi2Val = 0.0;
         int statusVal = 0;
+        bool isValidVal = true;
         if (chi2Tree && chi2Tree->GetEntries() > 0) {
-            chi2Tree->SetBranchAddress("chi2", &chi2Val);
-            chi2Tree->SetBranchAddress("Status", &statusVal);
+            if (chi2Tree->GetBranch("chi2")) {
+                chi2Tree->SetBranchAddress("chi2", &chi2Val);
+            } else if (chi2Tree->GetBranch("Chi2")) {
+                chi2Tree->SetBranchAddress("Chi2", &chi2Val);
+            }
+            if (chi2Tree->GetBranch("Status")) {
+                chi2Tree->SetBranchAddress("Status", &statusVal);
+            } else if (chi2Tree->GetBranch("status")) {
+                chi2Tree->SetBranchAddress("status", &statusVal);
+            }
+            if (chi2Tree->GetBranch("isValid")) {
+                chi2Tree->SetBranchAddress("isValid", &isValidVal);
+            } else if (chi2Tree->GetBranch("valid")) {
+                chi2Tree->SetBranchAddress("valid", &isValidVal);
+            }
             chi2Tree->GetEntry(0);
+        }
+
+        // Only include converged fits (Status == 0 and isValid == true)
+        if (statusVal != 0 || !isValidVal) {
+            f_fit->Close();
+            delete f_fit;
+            continue;
         }
 
         TTree* resTree = (TTree*)f_fit->Get("result");
