@@ -342,6 +342,10 @@ class TestPlotter(unittest.TestCase):
         self.assertIn("amplitudes_phase_vs_mass.png", plot_names)
         self.assertIn("a_2_1_intensity_and_phase.png", plot_names)
         self.assertIn("a_0_0_intensity_and_phase.png", plot_names)
+        self.assertIn("overview_D_waves_positive.png", plot_names)
+        self.assertIn("overview_S_waves.png", plot_names)
+        self.assertIn("overview_all_waves.png", plot_names)
+        self.assertIn("amplitudes_overview_vs_mass.png", plot_names)
 
 
 if __name__ == "__main__":

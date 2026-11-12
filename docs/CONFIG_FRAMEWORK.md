@@ -478,6 +478,10 @@ Generated Figures:
      - **Top panel**: Amplitude intensities $|V_\alpha|^2$ and total fit intensity $\sum |V|^2$ overlaid on acceptance-corrected yield data $H_0(0,0)$ with error bars.
      - **Bottom panel**: Wave phases $\phi_\alpha$ as a function of mass with MCMC 68% credible intervals.
    - Also saved to `amplitudes_intensity_vs_mass.png` and standalone `amplitudes_phase_vs_mass.png`, along with individual wave two-panel plots in `<output_dir>/plots/amplitudes/individual/{wave}_intensity_and_phase.png`.
+5. **Grouped Wave Overview Panels (Shared Y-Axis & Aligned Phases)**:
+   - Saved to `<output_dir>/plots/amplitudes/overview_{D_waves_positive,D_waves_negative,S_waves,all_waves}.png` and `<output_dir>/plots/amplitudes_overview_vs_mass.png`.
+   - All wave intensity panels share the exact same y-axis with the background $H_0(0,0)$ data, removing redundant y-ticks and labels across columns to use space efficiently.
+   - Corresponding wave phases are aligned below sharing the phase y-axis and the mass x-axis.
 
 ---
 

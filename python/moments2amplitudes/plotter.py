@@ -1169,74 +1169,192 @@ def plot_amplitudes_and_bands(
                 generated.append(p_indiv_phi)
             plt.close(fig)
 
-        # --- 5. Grouped Wave Overview Panels ---
+        # --- 5. Grouped Wave Overview Panels (Sharing Y-Axis for Background H_0_0_0 & Phases Below) ---
+        def find_phase_key(amp_key: str) -> Optional[str]:
+            if amp_key.startswith("a_"):
+                cand = "aphi_" + amp_key[2:]
+                if cand in nominal_amps:
+                    return cand
+            elif amp_key.startswith("b_"):
+                cand = "bphi_" + amp_key[2:]
+                if cand in nominal_amps:
+                    return cand
+            return None
+
         def draw_wave_grid(wave_keys: List[str], grid_title: str, out_filename_base: str):
             if not wave_keys:
                 return
             n_w = len(wave_keys)
             ncols = min(5, n_w)
-            nrows = math.ceil(n_w / ncols)
-            fig, axes = plt.subplots(nrows, ncols, figsize=(4.0 * ncols, 3.5 * nrows), dpi=300, sharex=True)
-            axes_flat = [axes] if n_w == 1 else (axes.flatten() if hasattr(axes, "flatten") else [axes])
+            n_blocks = math.ceil(n_w / ncols)
+            has_phases = any(find_phase_key(k) is not None for k in wave_keys)
+            nrows = (2 * n_blocks) if has_phases else n_blocks
+            hratios = ([2.2, 1.3] * n_blocks) if has_phases else ([1.0] * n_blocks)
 
-            for i, k in enumerate(wave_keys):
-                ax = axes_flat[i]
-                y_nom_sqr = [v**2 for v in nominal_amps[k]]
-                sqr_label = format_amplitude_squared_label(k)
-                is_mass_dep = is_amplitude_mass_dependent(k, config)
+            fig, axes = plt.subplots(
+                nrows, ncols, squeeze=False,
+                figsize=(3.2 * ncols, (2.2 * nrows if has_phases else 2.8 * nrows)),
+                dpi=300,
+                gridspec_kw={"height_ratios": hratios, "wspace": 0.06, "hspace": (0.08 if has_phases else 0.12)},
+            )
 
-                if h0_data and h0_data.get("mass") and h0_data.get("val"):
-                    ax.errorbar(
-                        h0_data["mass"], h0_data["val"], yerr=h0_data.get("err", [0.0] * len(h0_data["val"])),
-                        fmt=".", color="gray", markersize=2.5, alpha=0.35,
-                        capsize=1.0, elinewidth=0.8, zorder=1,
-                    )
+            ref_int_ax = None
+            ref_phi_ax = None
 
-                if is_mass_dep:
-                    m_s, y_s = smooth_curve(masses, y_nom_sqr, num_points=200)
-                    ax.plot(m_s, y_s, "-", linewidth=2.0, color="crimson")
-                    if k in mcmc_samples:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True)
-                        m_s68, lo_s = smooth_curve(masses, lo_68, num_points=200)
-                        m_s68, hi_s = smooth_curve(masses, hi_68, num_points=200)
-                        ax.fill_between(m_s68, lo_s, hi_s, color="crimson", alpha=0.3)
-                else:
-                    edges = compute_bin_edges(masses, default_step=fit_step)
-                    if hasattr(ax, "stairs"):
-                        ax.stairs(y_nom_sqr, edges, linewidth=2.0, color="crimson")
+            for b in range(n_blocks):
+                r_int = (2 * b) if has_phases else b
+                r_phi = (2 * b + 1) if has_phases else None
+
+                for c in range(ncols):
+                    i = b * ncols + c
+                    ax_int = axes[r_int, c]
+                    ax_phi = axes[r_phi, c] if has_phases else None
+
+                    if i < n_w:
+                        k = wave_keys[i]
+                        y_nom_sqr = [v**2 for v in nominal_amps[k]]
+                        sqr_label = format_amplitude_squared_label(k)
+                        is_mass_dep = is_amplitude_mass_dependent(k, config)
+                        c_wave = get_color(k)
+
+                        # Share y-axis among all intensity subplots so H_0_0_0 background scale is identical
+                        if ref_int_ax is None:
+                            ref_int_ax = ax_int
+                        else:
+                            ax_int.sharey(ref_int_ax)
+
+                        if has_phases and ax_phi is not None:
+                            # Share x-axis between intensity and phase
+                            ax_int.sharex(ax_phi)
+                            # Share y-axis among all phase subplots
+                            if ref_phi_ax is None:
+                                ref_phi_ax = ax_phi
+                            else:
+                                ax_phi.sharey(ref_phi_ax)
+
+                        # Overlay H_0(0,0) acceptance corrected yield in background
+                        if h0_data and h0_data.get("mass") and h0_data.get("val"):
+                            ax_int.errorbar(
+                                h0_data["mass"], h0_data["val"], yerr=h0_data.get("err", [0.0] * len(h0_data["val"])),
+                                fmt="o", color="gray", markersize=2.2, alpha=0.35,
+                                capsize=1.0, elinewidth=0.8, zorder=1,
+                                label=r"$H_0(0,0)$" if (i == 0) else None,
+                            )
+
+                        # Wave intensity curve and credible bands
+                        if is_mass_dep:
+                            m_s, y_s = smooth_curve(masses, y_nom_sqr, num_points=200)
+                            ax_int.plot(m_s, y_s, "-", linewidth=2.0, color=c_wave, zorder=4)
+                            if k in mcmc_samples:
+                                lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True)
+                                m_s68, lo_s = smooth_curve(masses, lo_68, num_points=200)
+                                m_s68, hi_s = smooth_curve(masses, hi_68, num_points=200)
+                                ax_int.fill_between(m_s68, lo_s, hi_s, color=c_wave, alpha=0.25, zorder=3)
+                        else:
+                            edges = compute_bin_edges(masses, default_step=fit_step)
+                            if hasattr(ax_int, "stairs"):
+                                ax_int.stairs(y_nom_sqr, edges, linewidth=2.0, color=c_wave, zorder=4)
+                            else:
+                                ax_int.step(masses, y_nom_sqr, where="mid", linewidth=2.0, color=c_wave, zorder=4)
+                            if k in mcmc_samples:
+                                lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True)
+                                x_step = np.repeat(edges, 2)[1:-1]
+                                lo_s = np.repeat(lo_68, 2)
+                                hi_s = np.repeat(hi_68, 2)
+                                ax_int.fill_between(x_step, lo_s, hi_s, color=c_wave, alpha=0.25, zorder=3)
+
+                        ax_int.set_title(sqr_label, fontsize=11, fontweight="bold")
+                        ax_int.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
+                        ax_int.grid(True, linestyle=":", alpha=0.5)
+
+                        # Y-axis labelling: only leftmost column shows y-axis ticks and title
+                        if c == 0:
+                            ylabel_str = f"Intensity / ({fit_step*1000:.0f} MeV/$c^2$)" if fit_step else "Intensity"
+                            ax_int.set_ylabel(ylabel_str, fontsize=10)
+                            ax_int.tick_params(labelleft=True)
+                            if has_phases and ax_phi is not None:
+                                ax_phi.set_ylabel("Phase [rad]", fontsize=10)
+                                ax_phi.tick_params(labelleft=True)
+                        else:
+                            ax_int.tick_params(labelleft=False)
+                            ax_int.set_ylabel("")
+                            if has_phases and ax_phi is not None:
+                                ax_phi.tick_params(labelleft=False)
+                                ax_phi.set_ylabel("")
+
+                        # X-axis labelling
+                        if has_phases and ax_phi is not None:
+                            ax_int.tick_params(labelbottom=False)
+                            ax_int.set_xlabel("")
+                            if b == n_blocks - 1:
+                                ax_phi.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=10)
+                                ax_phi.tick_params(labelbottom=True)
+                            else:
+                                ax_phi.tick_params(labelbottom=False)
+                                ax_phi.set_xlabel("")
+
+                            # Phase plotting in bottom panel
+                            pk = find_phase_key(k)
+                            if pk:
+                                y_nom_phi = nominal_amps[pk]
+                                is_phi_mass_dep = is_amplitude_mass_dependent(pk, config)
+                                if is_phi_mass_dep:
+                                    m_s, y_s = smooth_curve(masses, y_nom_phi, num_points=200)
+                                    ax_phi.plot(m_s, y_s, "-", linewidth=2.0, color=c_wave, zorder=4)
+                                    if pk in mcmc_samples:
+                                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[pk], y_nom_phi, (16.0, 84.0))
+                                        m_s68, lo_s = smooth_curve(masses, lo_68, num_points=200)
+                                        m_s68, hi_s = smooth_curve(masses, hi_68, num_points=200)
+                                        ax_phi.fill_between(m_s68, lo_s, hi_s, color=c_wave, alpha=0.25, zorder=3)
+                                else:
+                                    edges = compute_bin_edges(masses, default_step=fit_step)
+                                    if hasattr(ax_phi, "stairs"):
+                                        ax_phi.stairs(y_nom_phi, edges, linewidth=2.0, color=c_wave, zorder=4)
+                                    else:
+                                        ax_phi.step(masses, y_nom_phi, where="mid", linewidth=2.0, color=c_wave, zorder=4)
+                                    if pk in mcmc_samples:
+                                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[pk], y_nom_phi, (16.0, 84.0))
+                                        x_step = np.repeat(edges, 2)[1:-1]
+                                        lo_s = np.repeat(lo_68, 2)
+                                        hi_s = np.repeat(hi_68, 2)
+                                        ax_phi.fill_between(x_step, lo_s, hi_s, color=c_wave, alpha=0.25, zorder=3)
+                            else:
+                                ax_phi.plot([masses[0] - fit_step*0.6, masses[-1] + fit_step*0.6], [0, 0], "--", color="gray", linewidth=1.2, alpha=0.7)
+                                ax_phi.text(0.5, 0.5, r"$\phi = 0$ (Fixed)", transform=ax_phi.transAxes, ha="center", va="center", fontsize=8, color="gray", style="italic")
+
+                            ax_phi.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
+                            ax_phi.grid(True, linestyle=":", alpha=0.5)
+                        else:
+                            if b == n_blocks - 1:
+                                ax_int.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=10)
+                                ax_int.tick_params(labelbottom=True)
+                            else:
+                                ax_int.tick_params(labelbottom=False)
+                                ax_int.set_xlabel("")
                     else:
-                        ax.step(masses, y_nom_sqr, where="mid", linewidth=2.0, color="crimson")
-                    if k in mcmc_samples:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True)
-                        x_step = np.repeat(edges, 2)[1:-1]
-                        lo_s = np.repeat(lo_68, 2)
-                        hi_s = np.repeat(hi_68, 2)
-                        ax.fill_between(x_step, lo_s, hi_s, color="crimson", alpha=0.3)
-
-                ax.set_title(sqr_label, fontsize=12, fontweight="bold")
-                ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
-                ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=9)
-                ax.set_ylabel(r"Intensity", fontsize=9)
-                ax.grid(True, linestyle=":", alpha=0.5)
-
-            for i in range(n_w, len(axes_flat)):
-                axes_flat[i].set_visible(False)
+                        ax_int.set_visible(False)
+                        if has_phases and ax_phi is not None:
+                            ax_phi.set_visible(False)
 
             fig.suptitle(f"{config.project.name} - {grid_title}", fontsize=13, fontweight="bold", y=0.995)
-            plt.tight_layout()
             for fmt in formats:
                 p_grid = amp_dir / f"{out_filename_base}.{fmt}"
                 fig.savefig(p_grid, bbox_inches="tight")
                 generated.append(p_grid)
+                if out_filename_base == "overview_all_waves":
+                    p_main = out_dir / f"amplitudes_overview_vs_mass.{fmt}"
+                    fig.savefig(p_main, bbox_inches="tight")
+                    generated.append(p_main)
             plt.close(fig)
 
         a_2_waves = [k for k in magnitudes if k.startswith("a_2_")]
         b_2_waves = [k for k in magnitudes if k.startswith("b_2_")]
         s_waves = [k for k in magnitudes if k.startswith("a_0_") or k.startswith("b_0_")]
 
-        draw_wave_grid(a_2_waves, "D-Waves Positive Reflectivity Intensity vs Mass", "overview_D_waves_positive")
-        draw_wave_grid(b_2_waves, "D-Waves Negative Reflectivity Intensity vs Mass", "overview_D_waves_negative")
-        draw_wave_grid(s_waves, "S-Wave Intensity vs Mass", "overview_S_waves")
+        draw_wave_grid(a_2_waves, "D-Waves Positive Reflectivity vs Mass", "overview_D_waves_positive")
+        draw_wave_grid(b_2_waves, "D-Waves Negative Reflectivity vs Mass", "overview_D_waves_negative")
+        draw_wave_grid(s_waves, "S-Wave vs Mass", "overview_S_waves")
+        draw_wave_grid(magnitudes, "All Fitted Waves Overview vs Mass", "overview_all_waves")
 
     # --- 6. 1D MCMC Posterior Distributions ---
     if not only_amplitudes:
