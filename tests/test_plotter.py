@@ -356,15 +356,17 @@ class TestPlotter(unittest.TestCase):
         y_nom = [0.2, 0.5, 1.1, 1.6, 2.0]
         mcmc_dict = {round(m, 4): [v - 0.1, v + 0.1] for m, v in zip(masses, y_nom)}
 
+        # 1. Test discrete 68% band (density_band=False)
         plot_phase_with_ambiguity(
             ax=ax,
             masses=masses,
             y_nom=y_nom,
             is_mass_dep=True,
-            color="tab:blue",
+            color="black",
             label="$\\pm\\phi$",
             mcmc_dict=mcmc_dict,
             show_ambiguity=True,
+            density_band=False,
         )
 
         # Verify lines: primary solid and sign-ambiguity dashed
@@ -378,6 +380,89 @@ class TestPlotter(unittest.TestCase):
         # Verify credible interval fills: two PolyCollections (positive and negative)
         collections = ax.collections
         self.assertEqual(len(collections), 2)
+        plt.close(fig)
+
+        # 2. Test continuous posterior density band (density_band=True)
+        fig2, ax2 = plt.subplots()
+        plot_phase_with_ambiguity(
+            ax=ax2,
+            masses=masses,
+            y_nom=y_nom,
+            is_mass_dep=True,
+            color="black",
+            label="$\\pm\\phi$",
+            mcmc_dict=mcmc_dict,
+            show_ambiguity=True,
+            density_band=True,
+        )
+        self.assertGreater(len(ax2.collections), 10)
+        plt.close(fig2)
+
+    def test_physics_linestyles_and_monochrome_colors(self):
+        from moments2amplitudes.plotter import PHYSICS_LINESTYLES, plot_amplitudes_and_bands
+        import json
+        import matplotlib.pyplot as plt
+
+        self.assertGreaterEqual(len(PHYSICS_LINESTYLES), 4)
+
+        cfg = FitConfig()
+        out_dir = self.test_dir / "plots_mono"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        cache_dir = out_dir / ".cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        json_path = cache_dir / "amplitudes_data.json"
+
+        data = {
+            "masses": [1.1, 1.2, 1.3, 1.4],
+            "nominal": {
+                "a_2_1": [10.0, 20.0, 30.0, 40.0],
+                "aphi_2_1": [0.1, 0.2, 0.3, 0.4],
+            },
+            "mcmc": {
+                "a_2_1": {
+                    "1.1": [9.0, 10.0, 11.0],
+                    "1.2": [19.0, 20.0, 21.0],
+                    "1.3": [29.0, 30.0, 31.0],
+                    "1.4": [39.0, 40.0, 41.0],
+                },
+            },
+            "h0_data": {
+                "mass": [1.1, 1.2, 1.3, 1.4],
+                "val": [100.0, 400.0, 900.0, 1600.0],
+                "err": [10.0, 20.0, 30.0, 40.0],
+            },
+        }
+        with open(json_path, "w") as f:
+            json.dump(data, f)
+
+        dummy_nom = self.test_dir / "dummy_nom_mono.root"
+        dummy_nom.touch()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            plots = plot_amplitudes_and_bands(dummy_nom, None, out_dir, cfg, formats=("png",))
+
+        self.assertTrue(len(plots) > 0)
+
+    def test_configure_phase_axis_and_limits(self):
+        import math
+        import matplotlib.pyplot as plt
+        from moments2amplitudes.plotter import configure_phase_axis, PHASE_Y_LIMITS, PHASE_Y_TICKS, PHASE_Y_TICKLABELS
+
+        fig, ax = plt.subplots()
+        configure_phase_axis(ax)
+
+        y_min, y_max = ax.get_ylim()
+        self.assertAlmostEqual(y_min, -math.pi)
+        self.assertAlmostEqual(y_max, math.pi)
+
+        ticks = ax.get_yticks()
+        self.assertEqual(len(ticks), 5)
+        for t_act, t_exp in zip(ticks, PHASE_Y_TICKS):
+            self.assertAlmostEqual(t_act, t_exp)
+
+        labels = [t.get_text() for t in ax.get_yticklabels()]
+        self.assertEqual(labels, PHASE_Y_TICKLABELS)
         plt.close(fig)
 
 

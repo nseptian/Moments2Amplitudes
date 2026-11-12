@@ -203,6 +203,7 @@ class PlottingConfig:
     formats: List[str] = field(default_factory=lambda: ["png", "pdf"])
     style: str = "default"
     show_phase_ambiguity: bool = True
+    posterior_density_bands: bool = True
 
 
 @dataclass

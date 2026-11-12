@@ -132,6 +132,13 @@ def get_root_binary(config: Optional[Any] = None) -> str:
     if which_root and not is_pixi_or_conda_path(which_root):
         return which_root
 
+    # Last resort fallback: check sys.prefix / pixi root or any which_root
+    pixi_root = Path(sys.prefix) / "bin" / "root"
+    if pixi_root.is_file() and os.access(pixi_root, os.X_OK):
+        return str(pixi_root)
+    if which_root and os.access(which_root, os.X_OK):
+        return which_root
+
     return str(cand)
 
 

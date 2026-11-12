@@ -34,10 +34,107 @@ from .environment import (
 )
 
 
+# Curated colorblind-safe publication palette (Tol / Okabe-Ito high-contrast)
+PHYSICS_PALETTE: List[str] = [
+    "#0072B2",  # Deep Navy / Royal Blue
+    "#D55E00",  # Vermilion / Rust
+    "#009E73",  # Deep Teal / Pine Green
+    "#785EF0",  # Purple / Indigo
+    "#E69F00",  # Warm Amber / Ochre
+    "#CC79A7",  # Muted Rose
+    "#56B4E9",  # Slate / Sky Blue
+    "#4B5563",  # Charcoal Slate
+    "#882255",  # Wine / Claret
+    "#117733",  # Forest Green
+]
+
+# Standard linestyles for monochromatic physics publication plots
+PHYSICS_LINESTYLES: List[Any] = [
+    "--",
+    "-.",
+    ":",
+    (0, (3, 1, 1, 1)),  # densely dashdotdotted
+    (0, (5, 2)),        # loosely dashed
+    (0, (1, 1)),        # densely dotted
+    (0, (3, 5, 1, 5)),  # dashdot
+    (0, (3, 1, 3, 1)),  # dashdash
+]
+
+# Phase axis limits and standard radian tick marks [-pi, +pi]
+PHASE_Y_LIMITS: Tuple[float, float] = (-math.pi, math.pi)
+PHASE_Y_TICKS: List[float] = [-math.pi, -math.pi / 2.0, 0.0, math.pi / 2.0, math.pi]
+PHASE_Y_TICKLABELS: List[str] = [r"$-\pi$", r"$-\pi/2$", r"$0$", r"$+\pi/2$", r"$+\pi$"]
+
+
+def configure_phase_axis(
+    ax: Any,
+    limits: Tuple[float, float] = PHASE_Y_LIMITS,
+    ticks: Optional[List[float]] = None,
+    ticklabels: Optional[List[str]] = None,
+) -> None:
+    """
+    Configure a phase subplot axis with range [-pi, +pi]
+    and clean radian tick marks [-pi, -pi/2, 0, +pi/2, +pi].
+    """
+    import matplotlib.ticker as ticker
+    ax.set_ylim(limits)
+    if ticks is None:
+        ticks = PHASE_Y_TICKS
+    if ticklabels is None:
+        ticklabels = PHASE_Y_TICKLABELS
+    ax.set_yticks(ticks)
+    ax.set_yticklabels(ticklabels)
+    ax.yaxis.set_minor_locator(ticker.AutoMinorLocator(2))
+
+PHYSICS_RCPARAMS: Dict[str, Any] = {
+    # Inward ticks on all 4 sides with minor ticks
+    "xtick.direction": "in",
+    "ytick.direction": "in",
+    "xtick.top": True,
+    "ytick.right": True,
+    "xtick.minor.visible": True,
+    "ytick.minor.visible": True,
+    "xtick.major.size": 5.0,
+    "ytick.major.size": 5.0,
+    "xtick.minor.size": 2.5,
+    "ytick.minor.size": 2.5,
+    "xtick.major.width": 0.9,
+    "ytick.major.width": 0.9,
+    "xtick.minor.width": 0.6,
+    "ytick.minor.width": 0.6,
+    # Axes lines and fonts
+    "axes.linewidth": 1.0,
+    "axes.labelsize": 11.5,
+    "axes.titlesize": 12.0,
+    "axes.labelpad": 4.0,
+    "axes.titlepad": 6.0,
+    "xtick.labelsize": 10.0,
+    "ytick.labelsize": 10.0,
+    # Fonts
+    "font.size": 11.0,
+    "font.family": "sans-serif",
+    "mathtext.fontset": "dejavusans",
+    # Grid
+    "grid.linestyle": ":",
+    "grid.alpha": 0.45,
+    "grid.color": "#B0B0B0",
+    # Legend
+    "legend.fontsize": 9.0,
+    "legend.frameon": True,
+    "legend.framealpha": 0.9,
+    "legend.edgecolor": "#CCCCCC",
+    "legend.fancybox": False,
+    # Saving
+    "figure.autolayout": False,
+    "savefig.bbox": "tight",
+    "savefig.dpi": 300,
+}
+
+
 def apply_plot_style(style: Optional[str] = "default") -> None:
     """
-    Apply high-energy physics plotting style using mplhep, or standard matplotlib style.
-    Defaults to 'default' (standard matplotlib).
+    Apply high-energy physics plotting style using mplhep, or clean publication physics style.
+    Defaults to 'default' (publication-quality physics style).
     Supports LHCb, LHCb1, LHCb2, ROOT, ATLAS, CMS, ALICE, DUNE, or 'default'.
     Falls back gracefully if mplhep or style is unavailable.
     """
@@ -48,6 +145,7 @@ def apply_plot_style(style: Optional[str] = "default") -> None:
     chosen = (style or "default").strip()
     if chosen.lower() in ("default", "none", "matplotlib", "standard", ""):
         plt.style.use("default")
+        matplotlib.rcParams.update(PHYSICS_RCPARAMS)
         return
 
     try:
@@ -73,6 +171,7 @@ def apply_plot_style(style: Optional[str] = "default") -> None:
             plt.style.use(chosen)
         except Exception:
             plt.style.use("default")
+            matplotlib.rcParams.update(PHYSICS_RCPARAMS)
 
 
 def discover_lowest_chi2_fits(rundir: RunDirectory, n_lowest: int = 10) -> List[Tuple[float, Path]]:
@@ -163,17 +262,23 @@ def plot_multistart_landscape(
     min_chi2 = min(chi2s)
     plateau_thresh = min_chi2 + plateau_delta
 
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=300)
-    counts, bins, patches = ax.hist(chi2s, bins=40, color="#1f77b4", edgecolor="black", alpha=0.7, label=f"Converged Fits (N={len(chi2s)})")
+    fig, ax = plt.subplots(
+        figsize=(7.5, 4.8), dpi=300,
+        gridspec_kw={"top": 0.92, "bottom": 0.12, "left": 0.11, "right": 0.96}
+    )
+    counts, bins, patches = ax.hist(
+        chi2s, bins=40, color="#B0C4DE", edgecolor="#1A2E40", alpha=0.75,
+        label=f"Converged Fits (N={len(chi2s)})"
+    )
 
-    ax.axvline(min_chi2, color="red", linestyle="--", linewidth=2.0, label=f"Global Min $\\chi^2 = {min_chi2:.2f}$")
-    ax.axvspan(min_chi2, plateau_thresh, color="green", alpha=0.2, label=f"Plateau $\\leq +{plateau_delta:.1f}$")
+    ax.axvline(min_chi2, color="#D55E00", linestyle="--", linewidth=1.8, label=f"Global Min $\\chi^2 = {min_chi2:.2f}$")
+    ax.axvspan(min_chi2, plateau_thresh, color="#009E73", alpha=0.18, label=f"Plateau $\\leq +{plateau_delta:.1f}$")
 
-    ax.set_xlabel(r"Total $\chi^2$", fontsize=12)
-    ax.set_ylabel("Number of Starts", fontsize=12)
-    ax.set_title(f"{project_name} - Multi-Start $\\chi^2$ Landscape (Converged Fits)", fontsize=13, fontweight="bold")
-    ax.legend(frameon=True, fontsize=10)
-    ax.grid(True, linestyle=":", alpha=0.5)
+    ax.set_xlabel(r"Total $\chi^2$", fontsize=11.5)
+    ax.set_ylabel("Number of Starts", fontsize=11.5)
+    ax.set_title(f"{project_name} - Multi-Start $\\chi^2$ Landscape (Converged Fits)", fontsize=12.5, pad=8)
+    ax.legend(frameon=True, fontsize=9.5)
+    ax.grid(True, linestyle=":", alpha=0.45)
 
     for fmt in formats:
         p = out_dir / f"multistart_chi2_landscape.{fmt}"
@@ -422,6 +527,91 @@ def extract_credible_bounds(
     return lo, hi
 
 
+def plot_posterior_density_band(
+    ax: Any,
+    masses: List[float],
+    mcmc_dict: Dict[float, List[float]],
+    is_mass_dep: bool,
+    color: Any = "black",
+    squared: bool = False,
+    n_levels: int = 20,
+    base_alpha: Optional[float] = None,
+    max_alpha: float = 0.60,
+    fit_step: float = 0.04,
+    zorder: int = 3,
+    mirrored: bool = False,
+) -> None:
+    """
+    Draw a continuous credible uncertainty band directly from the empirical
+    propagated posterior distribution, where the shading intensity/density
+    reflects the local probability density p(y | mass).
+
+    A visible base envelope is drawn over the credible region (e.g. 95% CI)
+    followed by stacked quantile shells centered on the median so that the band
+    is clearly visible on paper and optical density gracefully climbs
+    towards the posterior mode/median.
+    """
+    import numpy as np
+
+    if not mcmc_dict:
+        return
+
+    has_valid_samples = any(len(samps) > 0 for samps in mcmc_dict.values())
+    if not has_valid_samples:
+        return
+
+    # Calibrate alpha parameters: ensure a visibly prominent base envelope
+    if base_alpha is None:
+        eff_base_alpha = max(0.18, max_alpha * 0.35)
+    else:
+        eff_base_alpha = max(0.10, min(base_alpha, max_alpha * 0.70))
+
+    coverages = np.linspace(0.95, 0.05, n_levels)
+    if n_levels > 1 and max_alpha > eff_base_alpha:
+        rem = (1.0 - max_alpha) / (1.0 - eff_base_alpha)
+        d_alpha = max(0.01, 1.0 - rem**(1.0 / (n_levels - 1)))
+    else:
+        d_alpha = max(0.01, max_alpha / float(max(1, n_levels)))
+
+    for idx, cov in enumerate(coverages):
+        p_lo = (1.0 - cov) / 2.0 * 100.0
+        p_hi = (1.0 + cov) / 2.0 * 100.0
+        lo_list: List[float] = []
+        hi_list: List[float] = []
+
+        for m in masses:
+            samps = mcmc_dict.get(round(m, 4), [])
+            if samps:
+                arr = np.array(samps, dtype=float)
+                if squared:
+                    vals = arr**2
+                elif mirrored:
+                    vals = -arr
+                else:
+                    vals = arr
+                lo_list.append(float(np.percentile(vals, p_lo)))
+                hi_list.append(float(np.percentile(vals, p_hi)))
+            else:
+                lo_list.append(0.0)
+                hi_list.append(0.0)
+
+        layer_alpha = eff_base_alpha if idx == 0 else d_alpha
+
+        if is_mass_dep:
+            if len(masses) >= 4:
+                m_s, lo_s = smooth_curve(masses, lo_list, num_points=200)
+                m_s, hi_s = smooth_curve(masses, hi_list, num_points=200)
+                ax.fill_between(m_s, lo_s, hi_s, color=color, alpha=layer_alpha, linewidth=0, zorder=zorder)
+            else:
+                ax.fill_between(masses, lo_list, hi_list, color=color, alpha=layer_alpha, linewidth=0, zorder=zorder)
+        else:
+            edges = compute_bin_edges(masses, default_step=fit_step)
+            x_step = np.repeat(edges, 2)[1:-1]
+            lo_step = np.repeat(lo_list, 2)
+            hi_step = np.repeat(hi_list, 2)
+            ax.fill_between(x_step, lo_step, hi_step, color=color, alpha=layer_alpha, linewidth=0, zorder=zorder)
+
+
 def plot_phase_with_ambiguity(
     ax: Any,
     masses: List[float],
@@ -435,15 +625,18 @@ def plot_phase_with_ambiguity(
     zorder: int = 4,
     show_ambiguity: bool = True,
     linewidth: float = 2.0,
-    alpha_band: float = 0.25,
+    alpha_band: float = 0.32,
+    base_alpha: Optional[float] = None,
+    max_alpha: Optional[float] = None,
     linestyle_pos: str = "-",
     linestyle_neg: str = "--",
+    density_band: bool = True,
 ) -> None:
     """
     Plot fitted phase vs mass including both positive and negative branches
     to represent partial wave sign ambiguities (phi -> -phi).
     Draws primary branch (solid) and sign-ambiguous mirrored branch (dashed)
-    along with their MCMC credible intervals.
+    along with their MCMC credible intervals or continuous posterior density bands.
     """
     import numpy as np
 
@@ -451,6 +644,9 @@ def plot_phase_with_ambiguity(
     is_trivial_zero = bool(np.all(np.abs(y_nom_arr) < 1e-9)) and (
         mcmc_dict is None or all(np.all(np.abs(v) < 1e-9) for v in mcmc_dict.values() if len(v) > 0)
     )
+
+    eff_max_alpha = max_alpha if max_alpha is not None else 0.60
+    eff_base_alpha = base_alpha if base_alpha is not None else 0.20
 
     if is_mass_dep:
         if len(masses) >= 4:
@@ -463,22 +659,36 @@ def plot_phase_with_ambiguity(
 
         # Primary MCMC credible band
         if mcmc_dict is not None:
-            lo_68, hi_68 = extract_credible_bounds(masses, mcmc_dict, y_nom, (16.0, 84.0))
-            if len(masses) >= 4:
-                m_s68, lo_s = smooth_curve(masses, lo_68, num_points=200)
-                m_s68, hi_s = smooth_curve(masses, hi_68, num_points=200)
-                ax.fill_between(m_s68, lo_s, hi_s, color=color, alpha=alpha_band, zorder=zorder - 1)
+            if density_band:
+                plot_posterior_density_band(
+                    ax=ax, masses=masses, mcmc_dict=mcmc_dict, is_mass_dep=True,
+                    color=color, squared=False, n_levels=20, base_alpha=eff_base_alpha,
+                    max_alpha=eff_max_alpha, fit_step=fit_step, zorder=zorder - 1, mirrored=False
+                )
             else:
-                ax.fill_between(masses, lo_68, hi_68, color=color, alpha=alpha_band, zorder=zorder - 1)
+                lo_68, hi_68 = extract_credible_bounds(masses, mcmc_dict, y_nom, (16.0, 84.0))
+                if len(masses) >= 4:
+                    m_s68, lo_s = smooth_curve(masses, lo_68, num_points=200)
+                    m_s68, hi_s = smooth_curve(masses, hi_68, num_points=200)
+                    ax.fill_between(m_s68, lo_s, hi_s, color=color, alpha=alpha_band, zorder=zorder - 1)
+                else:
+                    ax.fill_between(masses, lo_68, hi_68, color=color, alpha=alpha_band, zorder=zorder - 1)
 
         # Sign-ambiguous branch (phi -> -phi)
         if show_ambiguity and not is_trivial_zero:
             ax.plot(m_s, -y_s, linestyle=linestyle_neg, linewidth=linewidth, color=color, label=label_neg, zorder=zorder)
             if mcmc_dict is not None:
-                if len(masses) >= 4:
-                    ax.fill_between(m_s68, -hi_s, -lo_s, color=color, alpha=alpha_band, zorder=zorder - 1)
+                if density_band:
+                    plot_posterior_density_band(
+                        ax=ax, masses=masses, mcmc_dict=mcmc_dict, is_mass_dep=True,
+                        color=color, squared=False, n_levels=20, base_alpha=eff_base_alpha,
+                        max_alpha=eff_max_alpha, fit_step=fit_step, zorder=zorder - 1, mirrored=True
+                    )
                 else:
-                    ax.fill_between(masses, -hi_68, -lo_68, color=color, alpha=alpha_band, zorder=zorder - 1)
+                    if len(masses) >= 4:
+                        ax.fill_between(m_s68, -hi_s, -lo_s, color=color, alpha=alpha_band, zorder=zorder - 1)
+                    else:
+                        ax.fill_between(masses, -hi_68, -lo_68, color=color, alpha=alpha_band, zorder=zorder - 1)
 
     else:
         edges = compute_bin_edges(masses, default_step=fit_step)
@@ -490,11 +700,18 @@ def plot_phase_with_ambiguity(
             ax.step(masses, y_nom, where="mid", linestyle=linestyle_pos, linewidth=linewidth, color=color, label=label, zorder=zorder)
 
         if mcmc_dict is not None:
-            lo_68, hi_68 = extract_credible_bounds(masses, mcmc_dict, y_nom, (16.0, 84.0))
-            x_step = np.repeat(edges, 2)[1:-1]
-            lo_step = np.repeat(lo_68, 2)
-            hi_step = np.repeat(hi_68, 2)
-            ax.fill_between(x_step, lo_step, hi_step, color=color, alpha=alpha_band, zorder=zorder - 1)
+            if density_band:
+                plot_posterior_density_band(
+                    ax=ax, masses=masses, mcmc_dict=mcmc_dict, is_mass_dep=False,
+                    color=color, squared=False, n_levels=20, base_alpha=eff_base_alpha,
+                    max_alpha=eff_max_alpha, fit_step=fit_step, zorder=zorder - 1, mirrored=False
+                )
+            else:
+                lo_68, hi_68 = extract_credible_bounds(masses, mcmc_dict, y_nom, (16.0, 84.0))
+                x_step = np.repeat(edges, 2)[1:-1]
+                lo_step = np.repeat(lo_68, 2)
+                hi_step = np.repeat(hi_68, 2)
+                ax.fill_between(x_step, lo_step, hi_step, color=color, alpha=alpha_band, zorder=zorder - 1)
 
         # Sign-ambiguous branch (phi -> -phi)
         if show_ambiguity and not is_trivial_zero:
@@ -505,7 +722,14 @@ def plot_phase_with_ambiguity(
                 ax.step(masses, y_neg, where="mid", linestyle=linestyle_neg, linewidth=linewidth, color=color, label=label_neg, zorder=zorder)
 
             if mcmc_dict is not None:
-                ax.fill_between(x_step, -hi_step, -lo_step, color=color, alpha=alpha_band, zorder=zorder - 1)
+                if density_band:
+                    plot_posterior_density_band(
+                        ax=ax, masses=masses, mcmc_dict=mcmc_dict, is_mass_dep=False,
+                        color=color, squared=False, n_levels=20, base_alpha=eff_base_alpha,
+                        max_alpha=eff_max_alpha, fit_step=fit_step, zorder=zorder - 1, mirrored=True
+                    )
+                else:
+                    ax.fill_between(x_step, -hi_step, -lo_step, color=color, alpha=alpha_band, zorder=zorder - 1)
 
 
 def resolve_unnormalized_moments_file(
@@ -716,10 +940,38 @@ def plot_amplitudes_and_bands(
         try:
             repo_root = Path(os.environ.get("MOMS2AMPS", str(Path(__file__).resolve().parent.parent.parent)))
             export_macro = repo_root / "macros" / "ExportAmplitudes.C"
-            if export_macro.is_file() and Path(nominal_root).is_file():
-                cache_dir = out_dir / ".cache"
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                json_path = cache_dir / "amplitudes_data.json"
+            cache_dir = out_dir / ".cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            json_path = cache_dir / "amplitudes_data.json"
+
+            # Check if cached amplitudes JSON already exists and is non-empty
+            if json_path.is_file() and json_path.stat().st_size > 10:
+                try:
+                    with open(json_path, "r") as jf:
+                        jdata = json.load(jf)
+                        raw_masses = jdata.get("masses", [])
+                        raw_nominal = jdata.get("nominal", {})
+                        if raw_masses and raw_nominal:
+                            masses = [float(m) for m in raw_masses]
+                            nominal_amps = {k: [float(v) for v in vals] for k, vals in raw_nominal.items()}
+                            raw_mcmc = jdata.get("mcmc", {})
+                            for k, m_dict in raw_mcmc.items():
+                                mcmc_samples[k] = {}
+                                for m_str, vals in m_dict.items():
+                                    try:
+                                        mcmc_samples[k][round(float(m_str), 4)] = [float(v) for v in vals]
+                                    except ValueError:
+                                        pass
+                            raw_params = jdata.get("mcmc_params", {})
+                            for pk, pvals in raw_params.items():
+                                mcmc_params[pk] = [float(v) for v in pvals]
+                            if "h0_data" in jdata and jdata["h0_data"].get("mass") and jdata["h0_data"].get("val"):
+                                h0_data = jdata["h0_data"]
+                            loaded = True
+                except Exception:
+                    loaded = False
+
+            if not loaded and export_macro.is_file() and Path(nominal_root).is_file():
                 root_bin = get_root_binary(config)
                 mcmc_arg = str(Path(mcmc_root).resolve()) if (mcmc_root and Path(mcmc_root).is_file()) else ""
                 unnorm_arg = str(unnorm_path.resolve()) if (unnorm_path and unnorm_path.is_file()) else ""
@@ -790,17 +1042,21 @@ def plot_amplitudes_and_bands(
         fit_step = float(np.median(np.diff(masses)))
 
     show_phase_ambiguity = getattr(config.plotting, "show_phase_ambiguity", True) if hasattr(config, "plotting") else True
+    density_bands = getattr(config.plotting, "posterior_density_bands", True) if hasattr(config, "plotting") else True
 
     # --- 1. Amplitude Magnitudes & Intensities Plot (Overlaid on H_0_0_0) with Phases in Bottom Panel ---
     if not only_distributions and magnitudes:
         has_phases_panel = bool(phases)
         if has_phases_panel:
             fig, (ax, ax_phase) = plt.subplots(
-                2, 1, figsize=(9, 8), dpi=300, sharex=True,
-                gridspec_kw={"height_ratios": [2.2, 1.3], "hspace": 0.08}
+                2, 1, figsize=(8.5, 7.5), dpi=300, sharex=True,
+                gridspec_kw={"height_ratios": [2.2, 1.2], "hspace": 0.08, "top": 0.93, "bottom": 0.09, "left": 0.11, "right": 0.96}
             )
         else:
-            fig, ax = plt.subplots(figsize=(9, 6), dpi=300)
+            fig, ax = plt.subplots(
+                figsize=(8.5, 5.5), dpi=300,
+                gridspec_kw={"top": 0.92, "bottom": 0.11, "left": 0.11, "right": 0.96}
+            )
             ax_phase = None
 
         # Build consistent color palette mapped to wave identity (L, refl, M)
@@ -816,14 +1072,18 @@ def plot_amplitudes_and_bands(
             if ident not in all_wave_keys:
                 all_wave_keys.append(ident)
 
-        cmap = plt.cm.tab10 if len(all_wave_keys) <= 10 else plt.cm.tab20
-        c_vals = cmap(np.linspace(0, 1, max(len(all_wave_keys), 1)))
-        wave_color_map = {ident: c_vals[i] for i, ident in enumerate(all_wave_keys)}
+        wave_linestyle_map = {
+            ident: PHYSICS_LINESTYLES[i % len(PHYSICS_LINESTYLES)]
+            for i, ident in enumerate(all_wave_keys)
+        }
 
-        def get_color(key: str) -> Any:
+        def get_color(key: str) -> str:
+            return "black"
+
+        def get_linestyle(key: str) -> Any:
             p = get_amplitude_symbol_parts(key)
             ident = (p[0], p[1], p[2]) if p else key
-            return wave_color_map.get(ident, "tab:blue")
+            return wave_linestyle_map.get(ident, "--")
 
         # 1a. Overlay H_0_0_0 (acceptance corrected yield) if available
         has_h0_overlay = False
@@ -833,8 +1093,8 @@ def plot_amplitudes_and_bands(
             e_h0 = h0_data.get("err", [0.0] * len(y_h0))
             ax.errorbar(
                 m_h0, y_h0, yerr=e_h0,
-                fmt="o", color="black", markersize=3.8,
-                capsize=1.5, elinewidth=1.0,
+                fmt="o", color="black", markersize=3.2,
+                capsize=1.2, elinewidth=0.9, alpha=0.85,
                 label=r"$H_0(0,0)$ (Acceptance Corrected Yield)",
                 zorder=2,
             )
@@ -844,9 +1104,9 @@ def plot_amplitudes_and_bands(
         tot_nom = [sum(nominal_amps[k][i]**2 for k in magnitudes) for i in range(len(masses))]
         if len(masses) >= 4:
             m_tot_s, y_tot_s = smooth_curve(masses, tot_nom, num_points=200)
-            ax.plot(m_tot_s, y_tot_s, "-", color="black", linewidth=2.0, alpha=0.9, label=r"Total $\sum |V|^2$", zorder=5)
+            ax.plot(m_tot_s, y_tot_s, "-", color="black", linewidth=2.2, alpha=0.95, label=r"Total $\sum |V|^2$", zorder=5)
         else:
-            ax.plot(masses, tot_nom, "-", color="black", linewidth=2.0, alpha=0.9, label=r"Total $\sum |V|^2$", zorder=5)
+            ax.plot(masses, tot_nom, "-", color="black", linewidth=2.2, alpha=0.95, label=r"Total $\sum |V|^2$", zorder=5)
 
         # 1c. Individual wave squared intensities |V_\alpha|^2
         for idx, k in enumerate(sorted(magnitudes)):
@@ -854,44 +1114,59 @@ def plot_amplitudes_and_bands(
             y_sqr = [v**2 for v in y_nom]
             label = format_amplitude_squared_label(k)
             is_mass_dep = is_amplitude_mass_dependent(k, config)
-            c = get_color(k)
+            c = "black"
+            ls = get_linestyle(k)
 
             if is_mass_dep:
                 m_smooth, y_smooth = smooth_curve(masses, y_sqr, num_points=200)
-                ax.plot(m_smooth, y_smooth, "-", linewidth=2.0, color=c, label=label, zorder=4)
+                ax.plot(m_smooth, y_smooth, linestyle=ls, linewidth=1.8, color=c, label=label, zorder=4)
 
                 if k in mcmc_samples:
-                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
-                    if len(masses) >= 4:
-                        m_s, lo_smooth = smooth_curve(masses, lo_68, num_points=200)
-                        m_s, hi_smooth = smooth_curve(masses, hi_68, num_points=200)
-                        ax.fill_between(m_s, lo_smooth, hi_smooth, color=c, alpha=0.25, zorder=3)
+                    if density_bands:
+                        plot_posterior_density_band(
+                            ax=ax, masses=masses, mcmc_dict=mcmc_samples[k],
+                            is_mass_dep=True, color=c, squared=True, n_levels=20,
+                            base_alpha=0.18, max_alpha=0.55, fit_step=fit_step, zorder=3
+                        )
                     else:
-                        ax.fill_between(masses, lo_68, hi_68, color=c, alpha=0.25, zorder=3)
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
+                        if len(masses) >= 4:
+                            m_s, lo_smooth = smooth_curve(masses, lo_68, num_points=200)
+                            m_s, hi_smooth = smooth_curve(masses, hi_68, num_points=200)
+                            ax.fill_between(m_s, lo_smooth, hi_smooth, color=c, alpha=0.30, zorder=3)
+                        else:
+                            ax.fill_between(masses, lo_68, hi_68, color=c, alpha=0.30, zorder=3)
             else:
                 edges = compute_bin_edges(masses, default_step=fit_step)
                 if hasattr(ax, "stairs"):
-                    ax.stairs(y_sqr, edges, linewidth=2.0, color=c, label=label, zorder=4)
+                    ax.stairs(y_sqr, edges, linestyle=ls, linewidth=1.8, color=c, label=label, zorder=4)
                 else:
-                    ax.step(masses, y_sqr, where="mid", linewidth=2.0, color=c, label=label, zorder=4)
+                    ax.step(masses, y_sqr, where="mid", linestyle=ls, linewidth=1.8, color=c, label=label, zorder=4)
 
                 if k in mcmc_samples:
-                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
-                    x_step = np.repeat(edges, 2)[1:-1]
-                    lo_step = np.repeat(lo_68, 2)
-                    hi_step = np.repeat(hi_68, 2)
-                    ax.fill_between(x_step, lo_step, hi_step, color=c, alpha=0.25, zorder=3)
+                    if density_bands:
+                        plot_posterior_density_band(
+                            ax=ax, masses=masses, mcmc_dict=mcmc_samples[k],
+                            is_mass_dep=False, color=c, squared=True, n_levels=20,
+                            base_alpha=0.18, max_alpha=0.55, fit_step=fit_step, zorder=3
+                        )
+                    else:
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
+                        x_step = np.repeat(edges, 2)[1:-1]
+                        lo_step = np.repeat(lo_68, 2)
+                        hi_step = np.repeat(hi_68, 2)
+                        ax.fill_between(x_step, lo_step, hi_step, color=c, alpha=0.30, zorder=3)
 
         ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
         ylabel_str = f"Intensity / ({fit_step*1000:.0f} MeV/$c^2$)" if fit_step else "Intensity"
         if has_h0_overlay:
-            ax.set_ylabel(ylabel_str, fontsize=12)
-            ax.set_title(f"{config.project.name} - Fitted Amplitudes vs $H_0(0,0)$", fontsize=13, fontweight="bold")
+            ax.set_ylabel(ylabel_str, fontsize=11.5)
+            ax.set_title(f"{config.project.name} - Fitted Amplitudes vs $H_0(0,0)$", fontsize=12.5, pad=8)
         else:
-            ax.set_ylabel(ylabel_str, fontsize=12)
-            ax.set_title(f"{config.project.name} - Fitted Amplitude Intensities", fontsize=13, fontweight="bold")
-        ax.legend(frameon=True, fontsize=9, ncol=2, loc="best")
-        ax.grid(True, linestyle=":", alpha=0.5)
+            ax.set_ylabel(ylabel_str, fontsize=11.5)
+            ax.set_title(f"{config.project.name} - Fitted Amplitude Intensities", fontsize=12.5, pad=8)
+        ax.legend(frameon=True, fontsize=8.5, ncol=2, loc="best")
+        ax.grid(True, linestyle=":", alpha=0.45)
 
         # 1d. Bottom panel: Phase as function of mass
         if ax_phase is not None:
@@ -899,7 +1174,9 @@ def plot_amplitudes_and_bands(
                 y_nom = nominal_amps[k]
                 label = format_amplitude_label(k, plus_minus=True)
                 is_mass_dep = is_amplitude_mass_dependent(k, config)
-                c = get_color(k)
+                c = "black"
+                ls = get_linestyle(k)
+                neg_ls = ":" if ls == "--" else "--"
 
                 plot_phase_with_ambiguity(
                     ax=ax_phase,
@@ -911,19 +1188,26 @@ def plot_amplitudes_and_bands(
                     mcmc_dict=mcmc_samples.get(k),
                     fit_step=fit_step,
                     show_ambiguity=show_phase_ambiguity,
+                    alpha_band=0.30,
+                    base_alpha=0.18,
+                    max_alpha=0.55,
+                    linestyle_pos=ls,
+                    linestyle_neg=neg_ls,
+                    density_band=density_bands,
                 )
 
+            configure_phase_axis(ax_phase)
             ax_phase.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
-            ax_phase.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=12)
-            ax_phase.set_ylabel("Phase [rad]", fontsize=12)
+            ax_phase.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11.5)
+            ax_phase.set_ylabel("Phase [rad]", fontsize=11.5)
             ax_phase.legend(frameon=True, fontsize=8, ncol=min(3, max(1, len(phases))), loc="best")
-            ax_phase.grid(True, linestyle=":", alpha=0.5)
+            ax_phase.grid(True, linestyle=":", alpha=0.45)
 
             # Suppress x-tick labels and x-axis label on top panel
             ax.tick_params(labelbottom=False)
             ax.set_xlabel("")
         else:
-            ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=12)
+            ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11.5)
 
         for fmt in formats:
             p = out_dir / f"amplitudes_magnitude_vs_mass.{fmt}"
@@ -936,14 +1220,18 @@ def plot_amplitudes_and_bands(
 
     # --- 2. Relative Phases Plot ---
     if not only_distributions and phases:
-        fig, ax = plt.subplots(figsize=(9, 6), dpi=300)
-        colors = plt.cm.tab10(np.linspace(0, 1, len(phases)))
+        fig, ax = plt.subplots(
+            figsize=(8.5, 5.5), dpi=300,
+            gridspec_kw={"top": 0.92, "bottom": 0.11, "left": 0.11, "right": 0.96}
+        )
 
         for idx, k in enumerate(sorted(phases)):
             y_nom = nominal_amps[k]
             label = format_amplitude_label(k, plus_minus=True)
             is_mass_dep = is_amplitude_mass_dependent(k, config)
-            c = get_color(k) if "get_color" in locals() else colors[idx]
+            c = "black"
+            ls = get_linestyle(k)
+            neg_ls = ":" if ls == "--" else "--"
 
             plot_phase_with_ambiguity(
                 ax=ax,
@@ -955,15 +1243,22 @@ def plot_amplitudes_and_bands(
                 mcmc_dict=mcmc_samples.get(k),
                 fit_step=fit_step,
                 show_ambiguity=show_phase_ambiguity,
+                alpha_band=0.30,
+                base_alpha=0.18,
+                max_alpha=0.55,
+                linestyle_pos=ls,
+                linestyle_neg=neg_ls,
+                density_band=density_bands,
             )
 
+        configure_phase_axis(ax)
         ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
-        ax.set_xlabel(r"$M(\eta\pi^0)$ [GeV]", fontsize=12)
-        ax.set_ylabel("Phase [rad]", fontsize=12)
-        ax.set_title(f"{config.project.name} - Fitted Wave Phases ($\\pm$ Sign Ambiguity)", fontsize=13, fontweight="bold")
+        ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11.5)
+        ax.set_ylabel("Phase [rad]", fontsize=11.5)
+        ax.set_title(f"{config.project.name} - Fitted Wave Phases ($\\pm$ Sign Ambiguity)", fontsize=12.5, pad=8)
         ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
-        ax.legend(frameon=True, fontsize=10, ncol=2)
-        ax.grid(True, linestyle=":", alpha=0.5)
+        ax.legend(frameon=True, fontsize=9.5, ncol=2)
+        ax.grid(True, linestyle=":", alpha=0.45)
 
         for fmt in formats:
             p = out_dir / f"amplitudes_phase_vs_mass.{fmt}"
@@ -986,55 +1281,80 @@ def plot_amplitudes_and_bands(
             label = format_amplitude_label(k)
             sqr_label = format_amplitude_squared_label(k)
             is_mass_dep = is_amplitude_mass_dependent(k, config)
+            c_wave = "black"
 
             # 3a. Magnitude vs Mass
-            fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
+            fig, ax = plt.subplots(
+                figsize=(7, 4.8), dpi=300,
+                gridspec_kw={"top": 0.92, "bottom": 0.12, "left": 0.12, "right": 0.96}
+            )
             if h0_data and h0_data.get("mass") and h0_data.get("val"):
                 m_h0 = h0_data["mass"]
                 y_sqrt = [math.sqrt(max(0.0, v)) for v in h0_data["val"]]
                 e_sqrt = [e / (2.0 * math.sqrt(max(1e-6, v))) for v, e in zip(h0_data["val"], h0_data.get("err", [0.0] * len(y_sqrt)))]
                 ax.errorbar(
                     m_h0, y_sqrt, yerr=e_sqrt,
-                    fmt="o", color="gray", markersize=3.0, alpha=0.45,
-                    capsize=1.5, elinewidth=1.0,
+                    fmt="o", color="black", markersize=2.8, alpha=0.85,
+                    capsize=1.2, elinewidth=0.9,
                     label=r"$\sqrt{H_0(0,0)}$ (Total)",
-                    zorder=1,
+                    zorder=2,
                 )
             if is_mass_dep:
                 m_s, y_s = smooth_curve(masses, y_nom, num_points=200)
-                ax.plot(m_s, y_s, "-", linewidth=2.2, color="navy", label=f"Nominal {label}", zorder=4)
+                ax.plot(m_s, y_s, "-", linewidth=2.0, color=c_wave, label=f"Nominal {label}", zorder=4)
                 if k in mcmc_samples:
-                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
-                    lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5))
-                    m_s95, lo_95s = smooth_curve(masses, lo_95, num_points=200)
-                    m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
-                    m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
-                    m_s68, hi_68s = smooth_curve(masses, hi_68, num_points=200)
-                    ax.fill_between(m_s95, lo_95s, hi_95s, color="cornflowerblue", alpha=0.25, label="MCMC 95% CI", zorder=2)
-                    ax.fill_between(m_s68, lo_68s, hi_68s, color="royalblue", alpha=0.45, label="MCMC 68% CI", zorder=3)
+                    if density_bands:
+                        plot_posterior_density_band(
+                            ax=ax, masses=masses, mcmc_dict=mcmc_samples[k],
+                            is_mass_dep=True, color=c_wave, squared=False, n_levels=20,
+                            base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                        )
+                    else:
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
+                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5))
+                        m_s95, lo_95s = smooth_curve(masses, lo_95, num_points=200)
+                        m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
+                        m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
+                        m_s68, hi_68s = smooth_curve(masses, hi_68, num_points=200)
+                        ax.fill_between(m_s95, lo_95s, hi_95s, color=c_wave, alpha=0.16, label="MCMC 95% CI", zorder=2)
+                        ax.fill_between(m_s68, lo_68s, hi_68s, color=c_wave, alpha=0.32, label="MCMC 68% CI", zorder=3)
             else:
                 edges = compute_bin_edges(masses, default_step=fit_step)
                 if hasattr(ax, "stairs"):
-                    ax.stairs(y_nom, edges, linewidth=2.2, color="navy", label=f"Nominal {label}", zorder=4)
+                    ax.stairs(y_nom, edges, linewidth=2.0, color=c_wave, label=f"Nominal {label}", zorder=4)
                 else:
-                    ax.step(masses, y_nom, where="mid", linewidth=2.2, color="navy", label=f"Nominal {label}", zorder=4)
+                    ax.step(masses, y_nom, where="mid", linewidth=2.0, color=c_wave, label=f"Nominal {label}", zorder=4)
                 if k in mcmc_samples:
-                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
-                    lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5))
-                    x_step = np.repeat(edges, 2)[1:-1]
-                    lo_95s = np.repeat(lo_95, 2)
-                    hi_95s = np.repeat(hi_95, 2)
-                    lo_68s = np.repeat(lo_68, 2)
-                    hi_68s = np.repeat(hi_68, 2)
-                    ax.fill_between(x_step, lo_95s, hi_95s, color="cornflowerblue", alpha=0.25, label="MCMC 95% CI", zorder=2)
-                    ax.fill_between(x_step, lo_68s, hi_68s, color="royalblue", alpha=0.45, label="MCMC 68% CI", zorder=3)
+                    if density_bands:
+                        plot_posterior_density_band(
+                            ax=ax, masses=masses, mcmc_dict=mcmc_samples[k],
+                            is_mass_dep=False, color=c_wave, squared=False, n_levels=20,
+                            base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                        )
+                    else:
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
+                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5))
+                        x_step = np.repeat(edges, 2)[1:-1]
+                        lo_95s = np.repeat(lo_95, 2)
+                        hi_95s = np.repeat(hi_95, 2)
+                        lo_68s = np.repeat(lo_68, 2)
+                        hi_68s = np.repeat(hi_68, 2)
+                        ax.fill_between(x_step, lo_95s, hi_95s, color=c_wave, alpha=0.16, label="MCMC 95% CI", zorder=2)
+                        ax.fill_between(x_step, lo_68s, hi_68s, color=c_wave, alpha=0.32, label="MCMC 68% CI", zorder=3)
 
             ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
             ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11)
             ax.set_ylabel(f"Magnitude {label}", fontsize=11)
-            ax.set_title(f"{config.project.name} - Amplitude {label}", fontsize=12, fontweight="bold")
-            ax.legend(frameon=True, fontsize=9, loc="best")
-            ax.grid(True, linestyle=":", alpha=0.5)
+            ax.set_title(f"{config.project.name} - Amplitude {label}", fontsize=12, pad=8)
+            if density_bands and k in mcmc_samples:
+                from matplotlib.patches import Patch
+                handles, labels = ax.get_legend_handles_labels()
+                handles.append(Patch(color=c_wave, alpha=0.35))
+                labels.append("MCMC Posterior Density")
+                ax.legend(handles=handles, labels=labels, frameon=True, fontsize=9, loc="best")
+            else:
+                ax.legend(frameon=True, fontsize=9, loc="best")
+            ax.grid(True, linestyle=":", alpha=0.45)
             for fmt in formats:
                 p_indiv = indiv_dir / f"{k}_magnitude.{fmt}"
                 fig.savefig(p_indiv, bbox_inches="tight")
@@ -1042,7 +1362,10 @@ def plot_amplitudes_and_bands(
             plt.close(fig)
 
             # 3b. Squared Intensity vs Mass
-            fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
+            fig, ax = plt.subplots(
+                figsize=(7, 4.8), dpi=300,
+                gridspec_kw={"top": 0.92, "bottom": 0.12, "left": 0.12, "right": 0.96}
+            )
             y_nom_sqr = [v**2 for v in y_nom]
             if h0_data and h0_data.get("mass") and h0_data.get("val"):
                 m_h0 = h0_data["mass"]
@@ -1050,46 +1373,68 @@ def plot_amplitudes_and_bands(
                 e_h0 = h0_data.get("err", [0.0] * len(y_h0))
                 ax.errorbar(
                     m_h0, y_h0, yerr=e_h0,
-                    fmt="o", color="gray", markersize=3.0, alpha=0.45,
-                    capsize=1.5, elinewidth=1.0,
+                    fmt="o", color="black", markersize=2.8, alpha=0.85,
+                    capsize=1.2, elinewidth=0.9,
                     label=r"$H_0(0,0)$ (Total Yield)",
-                    zorder=1,
+                    zorder=2,
                 )
             if is_mass_dep:
                 m_s, y_s = smooth_curve(masses, y_nom_sqr, num_points=200)
-                ax.plot(m_s, y_s, "-", linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}", zorder=4)
+                ax.plot(m_s, y_s, "-", linewidth=2.0, color=c_wave, label=f"Nominal {sqr_label}", zorder=4)
                 if k in mcmc_samples:
-                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
-                    lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
-                    m_s95, lo_95s = smooth_curve(masses, lo_95, num_points=200)
-                    m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
-                    m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
-                    m_s68, hi_68s = smooth_curve(masses, hi_68, num_points=200)
-                    ax.fill_between(m_s95, lo_95s, hi_95s, color="lightcoral", alpha=0.3, label="MCMC 95% CI", zorder=2)
-                    ax.fill_between(m_s68, lo_68s, hi_68s, color="crimson", alpha=0.45, label="MCMC 68% CI", zorder=3)
+                    if density_bands:
+                        plot_posterior_density_band(
+                            ax=ax, masses=masses, mcmc_dict=mcmc_samples[k],
+                            is_mass_dep=True, color=c_wave, squared=True, n_levels=20,
+                            base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                        )
+                    else:
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
+                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
+                        m_s95, lo_95s = smooth_curve(masses, lo_95, num_points=200)
+                        m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
+                        m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
+                        m_s68, hi_68s = smooth_curve(masses, hi_68, num_points=200)
+                        ax.fill_between(m_s95, lo_95s, hi_95s, color=c_wave, alpha=0.16, label="MCMC 95% CI", zorder=2)
+                        ax.fill_between(m_s68, lo_68s, hi_68s, color=c_wave, alpha=0.32, label="MCMC 68% CI", zorder=3)
             else:
                 edges = compute_bin_edges(masses, default_step=fit_step)
                 if hasattr(ax, "stairs"):
-                    ax.stairs(y_nom_sqr, edges, linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}", zorder=4)
+                    ax.stairs(y_nom_sqr, edges, linewidth=2.0, color=c_wave, label=f"Nominal {sqr_label}", zorder=4)
                 else:
-                    ax.step(masses, y_nom_sqr, where="mid", linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}", zorder=4)
+                    ax.step(masses, y_nom_sqr, where="mid", linewidth=2.0, color=c_wave, label=f"Nominal {sqr_label}", zorder=4)
                 if k in mcmc_samples:
-                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
-                    lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
-                    x_step = np.repeat(edges, 2)[1:-1]
-                    lo_95s = np.repeat(lo_95, 2)
-                    hi_95s = np.repeat(hi_95, 2)
-                    lo_68s = np.repeat(lo_68, 2)
-                    hi_68s = np.repeat(hi_68, 2)
-                    ax.fill_between(x_step, lo_95s, hi_95s, color="lightcoral", alpha=0.3, label="MCMC 95% CI", zorder=2)
-                    ax.fill_between(x_step, lo_68s, hi_68s, color="crimson", alpha=0.45, label="MCMC 68% CI", zorder=3)
+                    if density_bands:
+                        plot_posterior_density_band(
+                            ax=ax, masses=masses, mcmc_dict=mcmc_samples[k],
+                            is_mass_dep=False, color=c_wave, squared=True, n_levels=20,
+                            base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                        )
+                    else:
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
+                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
+                        x_step = np.repeat(edges, 2)[1:-1]
+                        lo_95s = np.repeat(lo_95, 2)
+                        hi_95s = np.repeat(hi_95, 2)
+                        lo_68s = np.repeat(lo_68, 2)
+                        hi_68s = np.repeat(hi_68, 2)
+                        ax.fill_between(x_step, lo_95s, hi_95s, color=c_wave, alpha=0.16, label="MCMC 95% CI", zorder=2)
+                        ax.fill_between(x_step, lo_68s, hi_68s, color=c_wave, alpha=0.32, label="MCMC 68% CI", zorder=3)
 
             ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
             ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11)
             ax.set_ylabel(f"Intensity {sqr_label}", fontsize=11)
-            ax.set_title(f"{config.project.name} - Intensity {sqr_label}", fontsize=12, fontweight="bold")
-            ax.legend(frameon=True, fontsize=9, loc="best")
-            ax.grid(True, linestyle=":", alpha=0.5)
+            ax.set_title(f"{config.project.name} - Intensity {sqr_label}", fontsize=12, pad=8)
+            if density_bands and k in mcmc_samples:
+                from matplotlib.patches import Patch
+                handles, labels = ax.get_legend_handles_labels()
+                handles.append(Patch(color=c_wave, alpha=0.35))
+                labels.append("MCMC Posterior Density")
+                ax.legend(handles=handles, labels=labels, frameon=True, fontsize=9, loc="best")
+                ax.legend(handles=handles, labels=labels, frameon=True, fontsize=9, loc="best")
+            else:
+                ax.legend(frameon=True, fontsize=9, loc="best")
+            ax.grid(True, linestyle=":", alpha=0.45)
             for fmt in formats:
                 p_indiv_sqr = indiv_dir / f"{k}_squared.{fmt}"
                 fig.savefig(p_indiv_sqr, bbox_inches="tight")
@@ -1109,8 +1454,8 @@ def plot_amplitudes_and_bands(
 
             if phase_k:
                 fig, (ax_top, ax_bot) = plt.subplots(
-                    2, 1, figsize=(7, 7), dpi=300, sharex=True,
-                    gridspec_kw={"height_ratios": [2.2, 1.3], "hspace": 0.08}
+                    2, 1, figsize=(7, 6.5), dpi=300, sharex=True,
+                    gridspec_kw={"height_ratios": [2.2, 1.2], "hspace": 0.08, "top": 0.93, "bottom": 0.10, "left": 0.12, "right": 0.96}
                 )
                 if h0_data and h0_data.get("mass") and h0_data.get("val"):
                     m_h0 = h0_data["mass"]
@@ -1118,45 +1463,66 @@ def plot_amplitudes_and_bands(
                     e_h0 = h0_data.get("err", [0.0] * len(y_h0))
                     ax_top.errorbar(
                         m_h0, y_h0, yerr=e_h0,
-                        fmt="o", color="gray", markersize=3.0, alpha=0.45,
-                        capsize=1.5, elinewidth=1.0,
+                        fmt="o", color="black", markersize=2.8, alpha=0.85,
+                        capsize=1.2, elinewidth=0.9,
                         label=r"$H_0(0,0)$ (Total Yield)",
-                        zorder=1,
+                        zorder=2,
                     )
                 if is_mass_dep:
                     m_s, y_s = smooth_curve(masses, y_nom_sqr, num_points=200)
-                    ax_top.plot(m_s, y_s, "-", linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}", zorder=4)
+                    ax_top.plot(m_s, y_s, "-", linewidth=2.0, color=c_wave, label=f"Nominal {sqr_label}", zorder=4)
                     if k in mcmc_samples:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
-                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
-                        m_s95, lo_95s = smooth_curve(masses, lo_95, num_points=200)
-                        m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
-                        m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
-                        m_s68, hi_68s = smooth_curve(masses, hi_68, num_points=200)
-                        ax_top.fill_between(m_s95, lo_95s, hi_95s, color="lightcoral", alpha=0.3, label="MCMC 95% CI", zorder=2)
-                        ax_top.fill_between(m_s68, lo_68s, hi_68s, color="crimson", alpha=0.45, label="MCMC 68% CI", zorder=3)
+                        if density_bands:
+                            plot_posterior_density_band(
+                                ax=ax_top, masses=masses, mcmc_dict=mcmc_samples[k],
+                                is_mass_dep=True, color=c_wave, squared=True, n_levels=20,
+                                base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                            )
+                        else:
+                            lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
+                            lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
+                            m_s95, lo_95s = smooth_curve(masses, lo_95, num_points=200)
+                            m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
+                            m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
+                            m_s68, hi_68s = smooth_curve(masses, hi_68, num_points=200)
+                            ax_top.fill_between(m_s95, lo_95s, hi_95s, color=c_wave, alpha=0.16, label="MCMC 95% CI", zorder=2)
+                            ax_top.fill_between(m_s68, lo_68s, hi_68s, color=c_wave, alpha=0.32, label="MCMC 68% CI", zorder=3)
                 else:
                     edges = compute_bin_edges(masses, default_step=fit_step)
                     if hasattr(ax_top, "stairs"):
-                        ax_top.stairs(y_nom_sqr, edges, linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}", zorder=4)
+                        ax_top.stairs(y_nom_sqr, edges, linewidth=2.0, color=c_wave, label=f"Nominal {sqr_label}", zorder=4)
                     else:
-                        ax_top.step(masses, y_nom_sqr, where="mid", linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}", zorder=4)
+                        ax_top.step(masses, y_nom_sqr, where="mid", linewidth=2.0, color=c_wave, label=f"Nominal {sqr_label}", zorder=4)
                     if k in mcmc_samples:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
-                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
-                        x_step = np.repeat(edges, 2)[1:-1]
-                        lo_95s = np.repeat(lo_95, 2)
-                        hi_95s = np.repeat(hi_95, 2)
-                        lo_68s = np.repeat(lo_68, 2)
-                        hi_68s = np.repeat(hi_68, 2)
-                        ax_top.fill_between(x_step, lo_95s, hi_95s, color="lightcoral", alpha=0.3, label="MCMC 95% CI", zorder=2)
-                        ax_top.fill_between(x_step, lo_68s, hi_68s, color="crimson", alpha=0.45, label="MCMC 68% CI", zorder=3)
+                        if density_bands:
+                            plot_posterior_density_band(
+                                ax=ax_top, masses=masses, mcmc_dict=mcmc_samples[k],
+                                is_mass_dep=False, color=c_wave, squared=True, n_levels=20,
+                                base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                            )
+                        else:
+                            lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
+                            lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
+                            x_step = np.repeat(edges, 2)[1:-1]
+                            lo_95s = np.repeat(lo_95, 2)
+                            hi_95s = np.repeat(hi_95, 2)
+                            lo_68s = np.repeat(lo_68, 2)
+                            hi_68s = np.repeat(hi_68, 2)
+                            ax_top.fill_between(x_step, lo_95s, hi_95s, color=c_wave, alpha=0.16, label="MCMC 95% CI", zorder=2)
+                            ax_top.fill_between(x_step, lo_68s, hi_68s, color=c_wave, alpha=0.32, label="MCMC 68% CI", zorder=3)
 
                 ax_top.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
                 ax_top.set_ylabel(f"Intensity {sqr_label}", fontsize=11)
-                ax_top.set_title(f"{config.project.name} - Wave {label}", fontsize=12, fontweight="bold")
-                ax_top.legend(frameon=True, fontsize=8, loc="best")
-                ax_top.grid(True, linestyle=":", alpha=0.5)
+                ax_top.set_title(f"{config.project.name} - Wave {label}", fontsize=12, pad=8)
+                if density_bands and k in mcmc_samples:
+                    from matplotlib.patches import Patch
+                    handles, labels = ax_top.get_legend_handles_labels()
+                    handles.append(Patch(color=c_wave, alpha=0.35))
+                    labels.append("MCMC Posterior Density")
+                    ax_top.legend(handles=handles, labels=labels, frameon=True, fontsize=8, loc="best")
+                else:
+                    ax_top.legend(frameon=True, fontsize=8, loc="best")
+                ax_top.grid(True, linestyle=":", alpha=0.45)
                 ax_top.tick_params(labelbottom=False)
 
                 y_nom_phi = nominal_amps[phase_k]
@@ -1169,20 +1535,24 @@ def plot_amplitudes_and_bands(
                     masses=masses,
                     y_nom=y_nom_phi,
                     is_mass_dep=is_phi_mass_dep,
-                    color="darkgreen",
+                    color=c_wave,
                     label=f"Nominal +{phi_sym}",
                     label_neg=f"Sign Ambiguity -{phi_sym}",
                     mcmc_dict=mcmc_samples.get(phase_k),
                     fit_step=fit_step,
                     show_ambiguity=show_phase_ambiguity,
-                    alpha_band=0.35,
+                    alpha_band=0.32,
+                    base_alpha=0.20,
+                    max_alpha=0.60,
+                    density_band=density_bands,
                 )
 
+                configure_phase_axis(ax_bot)
                 ax_bot.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
                 ax_bot.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11)
-                ax_bot.set_ylabel(f"Phase {phi_label} [rad]", fontsize=10)
+                ax_bot.set_ylabel(f"Phase {phi_label} [rad]", fontsize=10.5)
                 ax_bot.legend(frameon=True, fontsize=8, loc="best")
-                ax_bot.grid(True, linestyle=":", alpha=0.5)
+                ax_bot.grid(True, linestyle=":", alpha=0.45)
 
                 for fmt in formats:
                     p_indiv_combo = indiv_dir / f"{k}_intensity_and_phase.{fmt}"
@@ -1196,29 +1566,37 @@ def plot_amplitudes_and_bands(
             label = format_amplitude_label(k)
             sym = format_amplitude_symbol(k)
             is_mass_dep = is_amplitude_mass_dependent(k, config)
+            c_wave = "black"
 
-            fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
+            fig, ax = plt.subplots(
+                figsize=(7, 4.8), dpi=300,
+                gridspec_kw={"top": 0.92, "bottom": 0.12, "left": 0.12, "right": 0.96}
+            )
             plot_phase_with_ambiguity(
                 ax=ax,
                 masses=masses,
                 y_nom=y_nom,
                 is_mass_dep=is_mass_dep,
-                color="darkgreen",
+                color=c_wave,
                 label=f"Nominal +{sym}",
                 label_neg=f"Sign Ambiguity -{sym}",
                 mcmc_dict=mcmc_samples.get(k),
                 fit_step=fit_step,
                 show_ambiguity=show_phase_ambiguity,
-                alpha_band=0.35,
+                alpha_band=0.32,
+                base_alpha=0.20,
+                max_alpha=0.60,
+                density_band=density_bands,
             )
 
+            configure_phase_axis(ax)
             ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
             ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11)
             ax.set_ylabel(f"Phase {label} [rad]", fontsize=11)
-            ax.set_title(f"{config.project.name} - Phase {label} ($\\pm$ Sign Ambiguity)", fontsize=12, fontweight="bold")
+            ax.set_title(f"{config.project.name} - Phase {label} ($\\pm$ Sign Ambiguity)", fontsize=12, pad=8)
             ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
             ax.legend(frameon=True, fontsize=9)
-            ax.grid(True, linestyle=":", alpha=0.5)
+            ax.grid(True, linestyle=":", alpha=0.45)
             for fmt in formats:
                 p_indiv_phi = indiv_dir / f"{k}_phase.{fmt}"
                 fig.savefig(p_indiv_phi, bbox_inches="tight")
@@ -1244,34 +1622,43 @@ def plot_amplitudes_and_bands(
             ncols = min(5, n_w)
             n_blocks = math.ceil(n_w / ncols)
             has_phases = any(find_phase_key(k) is not None for k in wave_keys)
-            nrows = (2 * n_blocks) if has_phases else n_blocks
-            hratios = ([2.2, 1.3] * n_blocks) if has_phases else ([1.0] * n_blocks)
 
-            fig, axes = plt.subplots(
-                nrows, ncols, squeeze=False,
-                figsize=(3.2 * ncols, (2.2 * nrows if has_phases else 2.8 * nrows)),
-                dpi=300,
-                gridspec_kw={"height_ratios": hratios, "wspace": 0.06, "hspace": (0.08 if has_phases else 0.12)},
+            fig_height = (3.8 * n_blocks if has_phases else 2.6 * n_blocks) + 0.6
+            fig = plt.figure(figsize=(3.2 * ncols, fig_height), dpi=300)
+
+            top_margin = 0.86 if n_blocks == 1 else 0.90
+            bottom_margin = 0.11 if n_blocks == 1 else 0.07
+            block_hspace = 0.38 if has_phases else 0.28
+
+            gs_outer = fig.add_gridspec(
+                n_blocks, 1,
+                top=top_margin, bottom=bottom_margin, left=0.07, right=0.98,
+                hspace=block_hspace if n_blocks > 1 else 0.0
             )
 
             ref_int_ax = None
             ref_phi_ax = None
 
             for b in range(n_blocks):
-                r_int = (2 * b) if has_phases else b
-                r_phi = (2 * b + 1) if has_phases else None
+                if has_phases:
+                    gs_inner = gs_outer[b, 0].subgridspec(
+                        2, ncols, height_ratios=[2.2, 1.2], hspace=0.06, wspace=0.06
+                    )
+                else:
+                    gs_inner = gs_outer[b, 0].subgridspec(
+                        1, ncols, wspace=0.06
+                    )
 
                 for c in range(ncols):
                     i = b * ncols + c
-                    ax_int = axes[r_int, c]
-                    ax_phi = axes[r_phi, c] if has_phases else None
-
                     if i < n_w:
+                        ax_int = fig.add_subplot(gs_inner[0, c])
+                        ax_phi = fig.add_subplot(gs_inner[1, c]) if has_phases else None
                         k = wave_keys[i]
                         y_nom_sqr = [v**2 for v in nominal_amps[k]]
                         sqr_label = format_amplitude_squared_label(k)
                         is_mass_dep = is_amplitude_mass_dependent(k, config)
-                        c_wave = get_color(k)
+                        c_wave = "black"
 
                         # Share y-axis among all intensity subplots so H_0_0_0 background scale is identical
                         if ref_int_ax is None:
@@ -1292,62 +1679,74 @@ def plot_amplitudes_and_bands(
                         if h0_data and h0_data.get("mass") and h0_data.get("val"):
                             ax_int.errorbar(
                                 h0_data["mass"], h0_data["val"], yerr=h0_data.get("err", [0.0] * len(h0_data["val"])),
-                                fmt="o", color="gray", markersize=2.2, alpha=0.35,
-                                capsize=1.0, elinewidth=0.8, zorder=1,
+                                fmt="o", color="black", markersize=2.2, alpha=0.85,
+                                capsize=1.0, elinewidth=0.8, zorder=2,
                                 label=r"$H_0(0,0)$" if (i == 0) else None,
                             )
 
                         # Wave intensity curve and credible bands
                         if is_mass_dep:
                             m_s, y_s = smooth_curve(masses, y_nom_sqr, num_points=200)
-                            ax_int.plot(m_s, y_s, "-", linewidth=2.0, color=c_wave, zorder=4)
+                            ax_int.plot(m_s, y_s, "-", linewidth=1.8, color="black", zorder=4)
                             if k in mcmc_samples:
-                                lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True)
-                                m_s68, lo_s = smooth_curve(masses, lo_68, num_points=200)
-                                m_s68, hi_s = smooth_curve(masses, hi_68, num_points=200)
-                                ax_int.fill_between(m_s68, lo_s, hi_s, color=c_wave, alpha=0.25, zorder=3)
+                                if density_bands:
+                                    plot_posterior_density_band(
+                                        ax=ax_int, masses=masses, mcmc_dict=mcmc_samples[k],
+                                        is_mass_dep=True, color="black", squared=True, n_levels=20,
+                                        base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                                    )
+                                else:
+                                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True)
+                                    m_s68, lo_s = smooth_curve(masses, lo_68, num_points=200)
+                                    m_s68, hi_s = smooth_curve(masses, hi_68, num_points=200)
+                                    ax_int.fill_between(m_s68, lo_s, hi_s, color="black", alpha=0.30, zorder=3)
                         else:
                             edges = compute_bin_edges(masses, default_step=fit_step)
                             if hasattr(ax_int, "stairs"):
-                                ax_int.stairs(y_nom_sqr, edges, linewidth=2.0, color=c_wave, zorder=4)
+                                ax_int.stairs(y_nom_sqr, edges, linewidth=1.8, color="black", zorder=4)
                             else:
-                                ax_int.step(masses, y_nom_sqr, where="mid", linewidth=2.0, color=c_wave, zorder=4)
+                                ax_int.step(masses, y_nom_sqr, where="mid", linewidth=1.8, color="black", zorder=4)
                             if k in mcmc_samples:
-                                lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True)
-                                x_step = np.repeat(edges, 2)[1:-1]
-                                lo_s = np.repeat(lo_68, 2)
-                                hi_s = np.repeat(hi_68, 2)
-                                ax_int.fill_between(x_step, lo_s, hi_s, color=c_wave, alpha=0.25, zorder=3)
+                                if density_bands:
+                                    plot_posterior_density_band(
+                                        ax=ax_int, masses=masses, mcmc_dict=mcmc_samples[k],
+                                        is_mass_dep=False, color="black", squared=True, n_levels=20,
+                                        base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                                    )
+                                else:
+                                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True)
+                                    x_step = np.repeat(edges, 2)[1:-1]
+                                    lo_s = np.repeat(lo_68, 2)
+                                    hi_s = np.repeat(hi_68, 2)
+                                    ax_int.fill_between(x_step, lo_s, hi_s, color="black", alpha=0.30, zorder=3)
 
-                        ax_int.set_title(sqr_label, fontsize=11, fontweight="bold")
+                        ax_int.set_title(sqr_label, fontsize=10.5, pad=4)
                         ax_int.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
-                        ax_int.grid(True, linestyle=":", alpha=0.5)
+                        ax_int.grid(True, linestyle=":", alpha=0.45)
 
                         # Y-axis labelling: only leftmost column shows y-axis ticks and title
                         if c == 0:
                             ylabel_str = f"Intensity / ({fit_step*1000:.0f} MeV/$c^2$)" if fit_step else "Intensity"
-                            ax_int.set_ylabel(ylabel_str, fontsize=10)
+                            ax_int.set_ylabel(ylabel_str, fontsize=9.5)
                             ax_int.tick_params(labelleft=True)
                             if has_phases and ax_phi is not None:
-                                ax_phi.set_ylabel("Phase [rad]", fontsize=10)
+                                configure_phase_axis(ax_phi)
+                                ax_phi.set_ylabel("Phase [rad]", fontsize=9.5)
                                 ax_phi.tick_params(labelleft=True)
                         else:
                             ax_int.tick_params(labelleft=False)
                             ax_int.set_ylabel("")
                             if has_phases and ax_phi is not None:
+                                configure_phase_axis(ax_phi)
                                 ax_phi.tick_params(labelleft=False)
                                 ax_phi.set_ylabel("")
 
-                        # X-axis labelling
+                        # X-axis labelling: bottom of each block
                         if has_phases and ax_phi is not None:
                             ax_int.tick_params(labelbottom=False)
                             ax_int.set_xlabel("")
-                            if b == n_blocks - 1:
-                                ax_phi.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=10)
-                                ax_phi.tick_params(labelbottom=True)
-                            else:
-                                ax_phi.tick_params(labelbottom=False)
-                                ax_phi.set_xlabel("")
+                            ax_phi.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=9.5)
+                            ax_phi.tick_params(labelbottom=True)
 
                             # Phase plotting in bottom panel
                             pk = find_phase_key(k)
@@ -1359,30 +1758,40 @@ def plot_amplitudes_and_bands(
                                     masses=masses,
                                     y_nom=y_nom_phi,
                                     is_mass_dep=is_phi_mass_dep,
-                                    color=c_wave,
+                                    color="black",
                                     mcmc_dict=mcmc_samples.get(pk),
                                     fit_step=fit_step,
                                     show_ambiguity=show_phase_ambiguity,
+                                    alpha_band=0.30,
+                                    base_alpha=0.20,
+                                    max_alpha=0.60,
+                                    density_band=density_bands,
                                 )
                             else:
-                                ax_phi.plot([masses[0] - fit_step*0.6, masses[-1] + fit_step*0.6], [0, 0], "--", color="gray", linewidth=1.2, alpha=0.7)
-                                ax_phi.text(0.5, 0.5, r"$\phi = 0$ (Fixed)", transform=ax_phi.transAxes, ha="center", va="center", fontsize=8, color="gray", style="italic")
+                                ax_phi.plot([masses[0] - fit_step*0.6, masses[-1] + fit_step*0.6], [0, 0], "--", color="gray", linewidth=1.0, alpha=0.7)
+                                ax_phi.text(
+                                    0.5, 0.5, r"$\phi = 0$ (Fixed)",
+                                    transform=ax_phi.transAxes, ha="center", va="center",
+                                    fontsize=8, color="gray", style="italic",
+                                    bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor="none", alpha=0.7),
+                                )
 
                             ax_phi.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
-                            ax_phi.grid(True, linestyle=":", alpha=0.5)
+                            ax_phi.grid(True, linestyle=":", alpha=0.45)
                         else:
-                            if b == n_blocks - 1:
-                                ax_int.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=10)
-                                ax_int.tick_params(labelbottom=True)
-                            else:
-                                ax_int.tick_params(labelbottom=False)
-                                ax_int.set_xlabel("")
+                            ax_int.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=9.5)
+                            ax_int.tick_params(labelbottom=True)
                     else:
+                        ax_int = fig.add_subplot(gs_inner[0, c])
                         ax_int.set_visible(False)
-                        if has_phases and ax_phi is not None:
+                        if has_phases:
+                            ax_phi = fig.add_subplot(gs_inner[1, c])
                             ax_phi.set_visible(False)
 
-            fig.suptitle(f"{config.project.name} - {grid_title}", fontsize=13, fontweight="bold", y=0.995)
+            if ref_phi_ax is not None:
+                configure_phase_axis(ref_phi_ax)
+
+            fig.suptitle(f"{config.project.name} - {grid_title}", fontsize=12.5, y=0.965 if n_blocks == 1 else 0.970)
             for fmt in formats:
                 p_grid = amp_dir / f"{out_filename_base}.{fmt}"
                 fig.savefig(p_grid, bbox_inches="tight")
@@ -1410,17 +1819,20 @@ def plot_amplitudes_and_bands(
                 vals = np.array(pvals, dtype=float)
                 if len(vals) < 2 or np.std(vals) < 1e-12:
                     continue
-                fig, ax = plt.subplots(figsize=(6, 4.5), dpi=300)
+                fig, ax = plt.subplots(
+                    figsize=(5.5, 4.2), dpi=300,
+                    gridspec_kw={"top": 0.91, "bottom": 0.13, "left": 0.13, "right": 0.95}
+                )
                 q16, q50, q84 = np.percentile(vals, [16, 50, 84])
                 mean_v = np.mean(vals)
                 std_v = np.std(vals)
 
                 n_bins = min(50, max(15, int(np.sqrt(len(vals)))))
-                ax.hist(vals, bins=n_bins, color="skyblue", edgecolor="steelblue", alpha=0.7, density=True)
-                ax.axvline(q50, color="navy", linestyle="--", linewidth=1.8, label=f"Median: {q50:.4f}")
-                ax.axvline(q16, color="royalblue", linestyle=":", linewidth=1.5, label=f"68% CI: [{q16:.4f}, {q84:.4f}]")
-                ax.axvline(q84, color="royalblue", linestyle=":", linewidth=1.5)
-                ax.axvspan(q16, q84, color="royalblue", alpha=0.15)
+                ax.hist(vals, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
+                ax.axvline(q50, color="#1A2E40", linestyle="--", linewidth=1.5, label=f"Median: {q50:.4f}")
+                ax.axvline(q16, color="#2B4C7E", linestyle=":", linewidth=1.2, label=f"68% CI: [{q16:.4f}, {q84:.4f}]")
+                ax.axvline(q84, color="#2B4C7E", linestyle=":", linewidth=1.2)
+                ax.axvspan(q16, q84, color="#2B4C7E", alpha=0.15)
 
                 clean_name = pname
                 if pname.startswith("MI_"):
@@ -1443,7 +1855,7 @@ def plot_amplitudes_and_bands(
                 else:
                     clean_name = pname.replace("_", "\\_")
 
-                ax.set_title(f"MCMC Posterior Distribution: {clean_name}", fontsize=11, fontweight="bold")
+                ax.set_title(f"MCMC Posterior Distribution: {clean_name}", fontsize=11, pad=6)
                 ax.set_xlabel(f"{clean_name}", fontsize=10)
                 ax.set_ylabel("Probability Density", fontsize=10)
                 ax.legend(frameon=True, fontsize=8, loc="upper right")
@@ -1461,7 +1873,7 @@ def plot_amplitudes_and_bands(
             if key_params:
                 ncols = min(4, len(key_params))
                 nrows = math.ceil(len(key_params) / ncols)
-                fig, axes = plt.subplots(nrows, ncols, figsize=(4.0 * ncols, 3.2 * nrows), dpi=300)
+                fig, axes = plt.subplots(nrows, ncols, figsize=(3.8 * ncols, 3.0 * nrows), dpi=300)
                 axes_flat = [axes] if len(key_params) == 1 else (axes.flatten() if hasattr(axes, "flatten") else [axes])
 
                 for i, pname in enumerate(key_params):
@@ -1469,11 +1881,11 @@ def plot_amplitudes_and_bands(
                     vals = np.array(mcmc_params[pname], dtype=float)
                     q16, q50, q84 = np.percentile(vals, [16, 50, 84])
                     n_bins = min(40, max(12, int(np.sqrt(len(vals)))))
-                    ax.hist(vals, bins=n_bins, color="lightsteelblue", edgecolor="royalblue", alpha=0.7, density=True)
-                    ax.axvline(q50, color="navy", linestyle="--", linewidth=1.5)
-                    ax.axvline(q16, color="royalblue", linestyle=":", linewidth=1.2)
-                    ax.axvline(q84, color="royalblue", linestyle=":", linewidth=1.2)
-                    ax.axvspan(q16, q84, color="royalblue", alpha=0.15)
+                    ax.hist(vals, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
+                    ax.axvline(q50, color="#1A2E40", linestyle="--", linewidth=1.5)
+                    ax.axvline(q16, color="#2B4C7E", linestyle=":", linewidth=1.2)
+                    ax.axvline(q84, color="#2B4C7E", linestyle=":", linewidth=1.2)
+                    ax.axvspan(q16, q84, color="#2B4C7E", alpha=0.15)
 
                     raw_short = pname.replace("MD_", "").replace("_a2_1320", "")
                     p_parts = raw_short.split("_")
@@ -1490,15 +1902,15 @@ def plot_amplitudes_and_bands(
                     else:
                         short_name = raw_short.replace("_", "\\_")
 
-                    ax.set_title(f"{short_name} [{q50:.3f}]", fontsize=10, fontweight="bold")
+                    ax.set_title(f"{short_name} [{q50:.3f}]", fontsize=10, pad=4)
                     ax.grid(True, linestyle=":", alpha=0.4)
                     ax.tick_params(axis="both", which="major", labelsize=8)
 
                 for i in range(len(key_params), len(axes_flat)):
                     axes_flat[i].set_visible(False)
 
-                fig.suptitle(f"{config.project.name} - MCMC Resonance Parameters Posterior Distributions", fontsize=13, fontweight="bold", y=0.995)
-                plt.tight_layout()
+                fig.suptitle(f"{config.project.name} - MCMC Resonance Parameters Posterior Distributions", fontsize=12.5, y=0.975)
+                plt.tight_layout(rect=[0, 0.02, 1, 0.94])
                 for fmt in formats:
                     p_dist_grid = dist_dir / f"distributions_overview.{fmt}"
                     fig.savefig(p_dist_grid, bbox_inches="tight")
@@ -1527,22 +1939,25 @@ def plot_amplitudes_and_bands(
 
             for k, y_vals in yield_samples.items():
                 vals = np.array(y_vals, dtype=float)
-                fig, ax = plt.subplots(figsize=(6, 4.5), dpi=300)
+                fig, ax = plt.subplots(
+                    figsize=(5.5, 4.2), dpi=300,
+                    gridspec_kw={"top": 0.91, "bottom": 0.13, "left": 0.13, "right": 0.95}
+                )
                 q16, q50, q84 = np.percentile(vals, [16, 50, 84])
                 nom_yield = sum((v**2) * fit_step for v in nominal_amps.get(k, []))
 
                 n_bins = min(50, max(15, int(np.sqrt(len(vals)))))
-                ax.hist(vals, bins=n_bins, color="coral", edgecolor="darkred", alpha=0.7, density=True)
-                ax.axvline(q50, color="darkred", linestyle="--", linewidth=1.8, label=f"Median: {q50:.2f}")
-                ax.axvline(q16, color="firebrick", linestyle=":", linewidth=1.5, label=f"68% CI: [{q16:.2f}, {q84:.2f}]")
-                ax.axvline(q84, color="firebrick", linestyle=":", linewidth=1.5)
-                ax.axvspan(q16, q84, color="firebrick", alpha=0.15)
+                ax.hist(vals, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
+                ax.axvline(q50, color="#1A2E40", linestyle="--", linewidth=1.5, label=f"Median: {q50:.2f}")
+                ax.axvline(q16, color="#2B4C7E", linestyle=":", linewidth=1.2, label=f"68% CI: [{q16:.2f}, {q84:.2f}]")
+                ax.axvline(q84, color="#2B4C7E", linestyle=":", linewidth=1.2)
+                ax.axvspan(q16, q84, color="#2B4C7E", alpha=0.15)
                 if nom_yield > 0:
-                    ax.axvline(nom_yield, color="black", linestyle="-", linewidth=1.5, label=f"Nominal: {nom_yield:.2f}")
+                    ax.axvline(nom_yield, color="#1A2E40", linestyle="-", linewidth=1.5, label=f"Nominal: {nom_yield:.2f}")
 
                 sqr_label = format_amplitude_squared_label(k)
                 sqr_sym = format_amplitude_squared_symbol(k)
-                ax.set_title(f"Propagated Amplitude Posterior: $\\int {sqr_sym}\\ dM$", fontsize=11, fontweight="bold")
+                ax.set_title(f"Propagated Amplitude Posterior: $\\int {sqr_sym}\\ dM$", fontsize=11, pad=6)
                 ax.set_xlabel(f"Integrated Intensity $\\int {sqr_sym}\\ dM$", fontsize=10)
                 ax.set_ylabel("Probability Density", fontsize=10)
                 ax.legend(frameon=True, fontsize=8, loc="upper right")
@@ -1559,7 +1974,7 @@ def plot_amplitudes_and_bands(
                 y_keys = list(yield_samples.keys())
                 ncols = min(4, len(y_keys))
                 nrows = math.ceil(len(y_keys) / ncols)
-                fig, axes = plt.subplots(nrows, ncols, figsize=(4.0 * ncols, 3.2 * nrows), dpi=300)
+                fig, axes = plt.subplots(nrows, ncols, figsize=(3.8 * ncols, 3.0 * nrows), dpi=300)
                 axes_flat = [axes] if len(y_keys) == 1 else (axes.flatten() if hasattr(axes, "flatten") else [axes])
 
                 for i, k in enumerate(y_keys):
@@ -1567,22 +1982,22 @@ def plot_amplitudes_and_bands(
                     vals = np.array(yield_samples[k], dtype=float)
                     q16, q50, q84 = np.percentile(vals, [16, 50, 84])
                     n_bins = min(40, max(12, int(np.sqrt(len(vals)))))
-                    ax.hist(vals, bins=n_bins, color="lightcoral", edgecolor="darkred", alpha=0.7, density=True)
-                    ax.axvline(q50, color="darkred", linestyle="--", linewidth=1.5)
-                    ax.axvline(q16, color="firebrick", linestyle=":", linewidth=1.2)
-                    ax.axvline(q84, color="firebrick", linestyle=":", linewidth=1.2)
-                    ax.axvspan(q16, q84, color="firebrick", alpha=0.15)
+                    ax.hist(vals, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
+                    ax.axvline(q50, color="#1A2E40", linestyle="--", linewidth=1.5)
+                    ax.axvline(q16, color="#2B4C7E", linestyle=":", linewidth=1.2)
+                    ax.axvline(q84, color="#2B4C7E", linestyle=":", linewidth=1.2)
+                    ax.axvspan(q16, q84, color="#2B4C7E", alpha=0.15)
 
                     sqr_label = format_amplitude_squared_label(k)
-                    ax.set_title(f"{sqr_label} [{q50:.1f}]", fontsize=10, fontweight="bold")
+                    ax.set_title(f"{sqr_label} [{q50:.1f}]", fontsize=10, pad=4)
                     ax.grid(True, linestyle=":", alpha=0.4)
                     ax.tick_params(axis="both", which="major", labelsize=8)
 
                 for i in range(len(y_keys), len(axes_flat)):
                     axes_flat[i].set_visible(False)
 
-                fig.suptitle(f"{config.project.name} - Propagated Amplitude Yields Posterior Distributions", fontsize=13, fontweight="bold", y=0.995)
-                plt.tight_layout()
+                fig.suptitle(f"{config.project.name} - Propagated Amplitude Yields Posterior Distributions", fontsize=12.5, y=0.975)
+                plt.tight_layout(rect=[0, 0.02, 1, 0.94])
                 for fmt in formats:
                     p_ydist_grid = dist_dir / f"amplitude_yields_overview.{fmt}"
                     fig.savefig(p_ydist_grid, bbox_inches="tight")
@@ -1785,11 +2200,14 @@ def plot_moments_comparison(
         else:
             latex_title = mom_name
 
-        fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
+        fig, ax = plt.subplots(
+            figsize=(7, 4.8), dpi=300,
+            gridspec_kw={"top": 0.92, "bottom": 0.12, "left": 0.12, "right": 0.96}
+        )
         ax.errorbar(
             m_data, y_data, yerr=e_data,
-            fmt="o", color="black", markersize=3.5,
-            capsize=1.5, elinewidth=1.0,
+            fmt="o", color="black", markersize=3.2,
+            capsize=1.2, elinewidth=0.9,
             label="Data (MCMC)", zorder=3
         )
 
@@ -1802,21 +2220,21 @@ def plot_moments_comparison(
                     m_smooth, y_smooth = smooth_curve(mf, yf, num_points=200)
                     if idx == 0:
                         ax.plot(
-                            m_smooth, y_smooth, "-", color="red", linewidth=2.0, alpha=0.9,
+                            m_smooth, y_smooth, "-", color="#D55E00", linewidth=1.8, alpha=0.95,
                             label=f"Rank 1 ($\chi^2 = {fit.get('chi2', 0):.1f}$)", zorder=5
                         )
                     else:
                         lbl = f"Top {len(fits_list)} Converged Fits" if idx == 1 else None
                         ax.plot(
-                            m_smooth, y_smooth, "-", color="#d62728", linewidth=1.0, alpha=0.35,
+                            m_smooth, y_smooth, "-", color="#D55E00", linewidth=0.9, alpha=0.30,
                             label=lbl, zorder=4
                         )
 
-        ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=12)
-        ax.set_ylabel("Unnormalized Moment", fontsize=12)
-        ax.set_title(f"{config.project.name} - ${latex_title}$", fontsize=13, fontweight="bold")
-        ax.legend(frameon=True, fontsize=10, loc="best")
-        ax.grid(True, linestyle=":", alpha=0.5)
+        ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11.5)
+        ax.set_ylabel("Unnormalized Moment", fontsize=11.5)
+        ax.set_title(f"{config.project.name} - ${latex_title}$", fontsize=12.5, pad=8)
+        ax.legend(frameon=True, fontsize=9.5, loc="best")
+        ax.grid(True, linestyle=":", alpha=0.45)
 
         for fmt in formats:
             p = moments_out_dir / f"{mom_name}.{fmt}"
@@ -1838,7 +2256,7 @@ def plot_moments_comparison(
         ncols = min(4, K)
         nrows = math.ceil(K / ncols)
 
-        fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 3.2 * nrows), dpi=200)
+        fig, axes = plt.subplots(nrows, ncols, figsize=(3.8 * ncols, 2.8 * nrows), dpi=200)
         axes_flat = np.array(axes).reshape(-1)
 
         for idx, mom_name in enumerate(overview_moments):
@@ -1869,7 +2287,7 @@ def plot_moments_comparison(
 
             ax.errorbar(
                 m_data, y_data, yerr=e_data,
-                fmt="o", color="black", markersize=2.2,
+                fmt="o", color="black", markersize=2.0,
                 capsize=1.0, elinewidth=0.8, zorder=3
             )
 
@@ -1881,16 +2299,16 @@ def plot_moments_comparison(
                         yf = f_mom.get("val", [])
                         m_smooth, y_smooth = smooth_curve(mf, yf, num_points=200)
                         if f_idx == 0:
-                            ax.plot(m_smooth, y_smooth, "-", color="red", linewidth=1.4, alpha=0.9, zorder=5)
+                            ax.plot(m_smooth, y_smooth, "-", color="#D55E00", linewidth=1.4, alpha=0.95, zorder=5)
                         else:
-                            ax.plot(m_smooth, y_smooth, "-", color="#d62728", linewidth=0.8, alpha=0.35, zorder=4)
+                            ax.plot(m_smooth, y_smooth, "-", color="#D55E00", linewidth=0.8, alpha=0.30, zorder=4)
 
             # Restrict x-axis limits strictly to the fitted mass range
             if fit_mass_min is not None and fit_mass_max is not None:
                 pad = fit_mass_step * 0.6
                 ax.set_xlim(fit_mass_min - pad, fit_mass_max + pad)
 
-            ax.set_title(f"${latex_title}$", fontsize=11, fontweight="bold")
+            ax.set_title(f"${latex_title}$", fontsize=10.5, pad=4)
             ax.grid(True, linestyle=":", alpha=0.4)
             ax.tick_params(axis="both", which="major", labelsize=8)
             if (idx + ncols >= K) or (idx >= (nrows - 1) * ncols):
@@ -1901,11 +2319,10 @@ def plot_moments_comparison(
 
         fig.suptitle(
             f"{config.project.name} - Unnormalized Moments vs Mass (Top {len(fits_list)} Converged Fits)",
-            fontsize=14,
-            fontweight="bold",
-            y=0.995,
+            fontsize=13,
+            y=0.975,
         )
-        plt.tight_layout(rect=[0, 0, 1, 0.97])
+        plt.tight_layout(rect=[0, 0.02, 1, 0.94])
 
         for fmt in formats:
             p_grid = rundir.plots_dir / f"moments_overview.{fmt}"

@@ -363,6 +363,8 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         moments=plot_dict.get("moments", ["all"]),
         formats=plot_dict.get("formats", ["png", "pdf"]),
         style=str(plot_dict.get("style", "default")),
+        show_phase_ambiguity=bool(plot_dict.get("show_phase_ambiguity", True)),
+        posterior_density_bands=bool(plot_dict.get("posterior_density_bands", True)),
     )
 
     # MCMCPropagation

@@ -96,8 +96,9 @@ def get_run_directory(config: FitConfig, run_dir_override: Optional[str] = None)
     """
     t_tag = config.dataset.t_bin or ""
     if run_dir_override:
-        has_template = "{t_bin}" in run_dir_override or "{tbin}" in run_dir_override
-        raw = run_dir_override.replace("{t_bin}", t_tag).replace("{tbin}", t_tag)
+        override_str = str(run_dir_override)
+        has_template = "{t_bin}" in override_str or "{tbin}" in override_str
+        raw = override_str.replace("{t_bin}", t_tag).replace("{tbin}", t_tag)
         target_dir = Path(raw)
         if t_tag and not has_template and target_dir.name != t_tag:
             target_dir = target_dir / t_tag
