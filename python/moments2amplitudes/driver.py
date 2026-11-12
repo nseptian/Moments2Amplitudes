@@ -48,40 +48,80 @@ def resolve_mcmc_tree_path(raw_path: str, t_bin: Optional[str] = None) -> str:
     return raw_path
 
 
+def _translate_subexpr(expr: str) -> str:
+    res = expr.strip()
+    # Power replacement: X^2 -> (X * X)
+    res = re.sub(r'([A-Za-z0-9_]+)\^2', r'(\1 * \1)', res)
+    res = re.sub(r'([A-Za-z0-9_]+)\^([0-9]+)', r'std::pow(\1, \2)', res)
+
+    # Breakup momentum / phase space factors
+    res = res.replace("rho_etapi", "m2pw::MassDependentFunction::PhaseSpaceFactor(mass, 0.547853, 0.13957)")
+    res = res.replace("rho_KK", "m2pw::MassDependentFunction::PhaseSpaceFactor(mass, 0.493677, 0.493677)")
+    res = res.replace("rho_etaprimepi", "m2pw::MassDependentFunction::PhaseSpaceFactor(mass, 0.95778, 0.13957)")
+
+    # Complex imaginary unit replacements
+    res = re.sub(r'\bi\s*\*\s*', 'std::complex<double>(0.0, 1.0) * ', res)
+    res = re.sub(r'\bi\b', 'std::complex<double>(0.0, 1.0)', res)
+    res = re.sub(r'\bexp\(', 'std::exp(', res)
+    res = re.sub(r'\bsqrt\(', 'std::sqrt(', res)
+    return res
+
+
 def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[str], str]:
     """
     Translate a mathematical formula into C++ statements and return expression.
+    Supports optional kinematic factor prefixes, e.g. sqrt(rho_etapi) * k / (M^2 - s - i*M*width).
     """
     param_lines = ["const double s = mass * mass;"]
     for i, p in enumerate(parameters):
         param_lines.append(f"const double {p} = (p.size() > {i}) ? p[{i}] : 0.0;")
 
-    # Check if formula matches Two Breit-Wigner form: k1 / (M1^2 - s - i*M1*w1) + (k2 / (M2^2 - s - i*M2*w2)) * exp(i*phase)
+    # Check if formula matches Two Breit-Wigner form (with optional prefix, e.g. sqrt(rho_etapi) * (...))
     two_bw_regex = re.compile(
-        r'([A-Za-z0-9_]+)\s*/\s*\(\s*([A-Za-z0-9_]+)(?:\^2|\s*\*\s*\2)\s*-\s*s\s*-\s*i\s*\*\s*\2\s*\*\s*([A-Za-z0-9_]+)\s*\)\s*\+\s*'
-        r'(?:\(\s*)?([A-Za-z0-9_]+)\s*/\s*\(\s*([A-Za-z0-9_]+)(?:\^2|\s*\*\s*\5)\s*-\s*s\s*-\s*i\s*\*\s*\5\s*\*\s*([A-Za-z0-9_]+)\s*\)(?:\s*\))?'
-        r'(?:\s*\*\s*exp\(\s*i\s*\*\s*([A-Za-z0-9_]+)\s*\))?'
+        r'^\s*(?:(?P<prefix>.+?)\s*\*\s*)?(?:\(\s*)?'
+        r'(?:\(\s*)?(?P<k1>[A-Za-z0-9_]+)\s*/\s*\(\s*(?P<m1>[A-Za-z0-9_]+)(?:\^2|\s*\*\s*(?P=m1))\s*-\s*s\s*-\s*i\s*\*\s*(?:(?P=m1)\s*\*\s*(?P<w1>[A-Za-z0-9_]+)|(?P<w1_b>[A-Za-z0-9_]+)\s*\*\s*(?P=m1))\s*\)(?:\s*\))?\s*\+\s*'
+        r'(?:\(\s*)?(?P<k2>[A-Za-z0-9_]+)\s*/\s*\(\s*(?P<m2>[A-Za-z0-9_]+)(?:\^2|\s*\*\s*(?P=m2))\s*-\s*s\s*-\s*i\s*\*\s*(?:(?P=m2)\s*\*\s*(?P<w2>[A-Za-z0-9_]+)|(?P<w2_b>[A-Za-z0-9_]+)\s*\*\s*(?P=m2))\s*\)(?:\s*\))?'
+        r'(?:\s*\*\s*exp\(\s*i\s*\*\s*(?P<phase>[A-Za-z0-9_]+)\s*\))?'
+        r'(?:\s*\))?\s*$'
     )
-    two_bw_m = two_bw_regex.search(formula)
+    two_bw_m = two_bw_regex.match(formula)
     if two_bw_m:
-        k1, m1, w1 = two_bw_m.group(1), two_bw_m.group(2), two_bw_m.group(3)
-        k2, m2_var, w2 = two_bw_m.group(4), two_bw_m.group(5), two_bw_m.group(6)
-        phase_var = two_bw_m.group(7)
+        prefix = two_bw_m.group("prefix")
+        k1 = two_bw_m.group("k1")
+        m1 = two_bw_m.group("m1")
+        w1 = two_bw_m.group("w1") or two_bw_m.group("w1_b")
+        k2 = two_bw_m.group("k2")
+        m2_var = two_bw_m.group("m2")
+        w2 = two_bw_m.group("w2") or two_bw_m.group("w2_b")
+        phase_var = two_bw_m.group("phase")
         bw1_str = f"{k1} / std::complex<double>(({m1} * {m1}) - s, -{m1} * {w1})"
         if phase_var:
             bw2_str = f"({k2} / std::complex<double>(({m2_var} * {m2_var}) - s, -{m2_var} * {w2})) * std::polar(1.0, {phase_var})"
         else:
             bw2_str = f"{k2} / std::complex<double>(({m2_var} * {m2_var}) - s, -{m2_var} * {w2})"
-        return param_lines, f"{bw1_str} + {bw2_str}"
+        core_expr = f"{bw1_str} + {bw2_str}"
+        if prefix:
+            trans_prefix = _translate_subexpr(prefix)
+            return param_lines, f"{trans_prefix} * ({core_expr})"
+        return param_lines, core_expr
 
-    # Check if formula matches canonical Breit-Wigner form: k / (M^2 - s - i * M * width)
+    # Check if formula matches canonical Breit-Wigner form (with optional prefix, e.g. sqrt(rho_etapi) * k / ...)
     bw_regex = re.compile(
-        r'([A-Za-z0-9_]+)\s*/\s*\(\s*([A-Za-z0-9_]+)(?:\^2|\s*\*\s*\2)\s*-\s*s\s*-\s*i\s*\*\s*\2\s*\*\s*([A-Za-z0-9_]+)\s*\)'
+        r'^\s*(?:(?P<prefix>.+?)\s*\*\s*)?(?:\(\s*)?'
+        r'(?P<k>[A-Za-z0-9_]+)\s*/\s*\(\s*(?P<m>[A-Za-z0-9_]+)(?:\^2|\s*\*\s*(?P=m))\s*-\s*s\s*-\s*i\s*\*\s*(?:(?P=m)\s*\*\s*(?P<w>[A-Za-z0-9_]+)|(?P<w_b>[A-Za-z0-9_]+)\s*\*\s*(?P=m))\s*\)'
+        r'(?:\s*\))?\s*$'
     )
-    bw_m = bw_regex.search(formula)
+    bw_m = bw_regex.match(formula)
     if bw_m:
-        k_var, m_var, w_var = bw_m.group(1), bw_m.group(2), bw_m.group(3)
-        return param_lines, f"{k_var} / std::complex<double>(({m_var} * {m_var}) - s, -{m_var} * {w_var})"
+        prefix = bw_m.group("prefix")
+        k_var = bw_m.group("k")
+        m_var = bw_m.group("m")
+        w_var = bw_m.group("w") or bw_m.group("w_b")
+        bw_str = f"{k_var} / std::complex<double>(({m_var} * {m_var}) - s, -{m_var} * {w_var})"
+        if prefix:
+            trans_prefix = _translate_subexpr(prefix)
+            return param_lines, f"{trans_prefix} * ({bw_str})"
+        return param_lines, bw_str
 
     # Check if formula matches canonical Flatte form: k / (M0^2 - s - i * (g_etapi^2 * rho_etapi + ...))
     if "flatte" in formula.lower() or ("g_etapi" in formula and "rho" in formula):
@@ -96,25 +136,14 @@ def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[
         ])
         mass_param = "Mass" if "Mass" in parameters else ("M0" if "M0" in parameters else "M")
         k_param = "k" if "k" in parameters else "k_fl"
-        return param_lines, f"{k_param} / std::complex<double>(({mass_param} * {mass_param}) - s, -gamma_total)"
+        flatte_str = f"{k_param} / std::complex<double>(({mass_param} * {mass_param}) - s, -gamma_total)"
+        prefix_m = re.match(r'^\s*(?P<prefix>.+?)\s*\*\s*(?:\(\s*)?[A-Za-z0-9_]+\s*/\s*\(', formula)
+        if prefix_m:
+            trans_prefix = _translate_subexpr(prefix_m.group("prefix"))
+            return param_lines, f"{trans_prefix} * ({flatte_str})"
+        return param_lines, flatte_str
 
-    expr = formula
-    # Power replacement: X^2 -> (X * X)
-    expr = re.sub(r'([A-Za-z0-9_]+)\^2', r'(\1 * \1)', expr)
-    expr = re.sub(r'([A-Za-z0-9_]+)\^([0-9]+)', r'std::pow(\1, \2)', expr)
-
-    # Breakup momentum / phase space factors
-    expr = expr.replace("rho_etapi", "m2pw::MassDependentFunction::PhaseSpaceFactor(mass, 0.547853, 0.13957)")
-    expr = expr.replace("rho_KK", "m2pw::MassDependentFunction::PhaseSpaceFactor(mass, 0.493677, 0.493677)")
-    expr = expr.replace("rho_etaprimepi", "m2pw::MassDependentFunction::PhaseSpaceFactor(mass, 0.95778, 0.13957)")
-
-    # Complex imaginary unit replacements
-    expr = re.sub(r'\bi\s*\*\s*', 'std::complex<double>(0.0, 1.0) * ', expr)
-    expr = re.sub(r'\bi\b', 'std::complex<double>(0.0, 1.0)', expr)
-    expr = re.sub(r'\bexp\(', 'std::exp(', expr)
-    expr = re.sub(r'\bsqrt\(', 'std::sqrt(', expr)
-
-    return param_lines, expr
+    return param_lines, _translate_subexpr(formula)
 
 
 def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:

@@ -391,11 +391,19 @@ The framework allows physicists to define the **explicit mathematical formula** 
   formula: "k / (M^2 - s - i * M * width)"
   parameters: ["k", "M", "width"]
   ```
+* **Realistic Breit-Wigner with Kinematic Phase-Space Factor** (JPAC PRD 100, 054017):
+  Multiplies the Breit-Wigner lineshape by $\sqrt{\rho_{\eta\pi}(m)}$ so the physical amplitude vanishes smoothly at the $\eta\pi$ reaction threshold:
+  ```yaml
+  model: "breit_wigner"
+  formula: "sqrt(rho_etapi) * k / (M^2 - s - i * M * width)"
+  parameters: ["k", "M", "width"]
+  ```
+  *(Available in `configs/a2CS_D_BreitWigner_Kinematic.yaml` and `configs/a2CS_SPiecewise_DBreitWigner_Kinematic.yaml`)*
 * **Coherent Sum of Two Breit-Wigners**:
-  Available in `configs/d_two_breit_wigner.yaml`:
+  Available in `configs/d_two_breit_wigner.yaml` (and with kinematic factor in `configs/a2CS_D_TwoBreitWigner_Kinematic.yaml`):
   ```yaml
   model: "two_breit_wigner"
-  formula: "k1 / (Mass1^2 - s - i * Mass1 * Width1) + (k2 / (Mass2^2 - s - i * Mass2 * Width2)) * exp(i * phase)"
+  formula: "sqrt(rho_etapi) * (k1 / (Mass1^2 - s - i * Mass1 * Width1) + (k2 / (Mass2^2 - s - i * Mass2 * Width2)) * exp(i * phase))"
   parameters: ["k1", "Mass1", "Width1", "k2", "Mass2", "Width2", "phase"]
   ```
 * **Flatté (Coupled-Channel)**:
