@@ -17,6 +17,7 @@ from moments2amplitudes.plotter import (
     is_amplitude_mass_dependent,
     compute_bin_edges,
     plot_tbins_parallel,
+    plot_phase_with_ambiguity,
 )
 
 
@@ -346,6 +347,38 @@ class TestPlotter(unittest.TestCase):
         self.assertIn("overview_S_waves.png", plot_names)
         self.assertIn("overview_all_waves.png", plot_names)
         self.assertIn("amplitudes_overview_vs_mass.png", plot_names)
+
+    def test_plot_phase_with_ambiguity(self):
+        import numpy as np
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        masses = [1.1, 1.2, 1.3, 1.4, 1.5]
+        y_nom = [0.2, 0.5, 1.1, 1.6, 2.0]
+        mcmc_dict = {round(m, 4): [v - 0.1, v + 0.1] for m, v in zip(masses, y_nom)}
+
+        plot_phase_with_ambiguity(
+            ax=ax,
+            masses=masses,
+            y_nom=y_nom,
+            is_mass_dep=True,
+            color="tab:blue",
+            label="$\\pm\\phi$",
+            mcmc_dict=mcmc_dict,
+            show_ambiguity=True,
+        )
+
+        # Verify lines: primary solid and sign-ambiguity dashed
+        lines = ax.get_lines()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[0].get_linestyle(), "-")
+        self.assertEqual(lines[1].get_linestyle(), "--")
+        # Check y values: second line is negated
+        np.testing.assert_allclose(lines[1].get_ydata(), -lines[0].get_ydata())
+
+        # Verify credible interval fills: two PolyCollections (positive and negative)
+        collections = ax.collections
+        self.assertEqual(len(collections), 2)
+        plt.close(fig)
 
 
 if __name__ == "__main__":

@@ -233,9 +233,17 @@ def format_amplitude_symbol(name: str) -> str:
     return clean_name
 
 
-def format_amplitude_label(name: str) -> str:
+def format_amplitude_label(name: str, plus_minus: bool = False) -> str:
     """Format amplitude name into LaTeX math string (e.g. a_2_-1 -> $D^{+}_{-1}$, aphi_2_1 -> $\\phi(D^{+}_{1})$)."""
-    return f"${format_amplitude_symbol(name)}$"
+    parsed = get_amplitude_symbol_parts(name)
+    if parsed:
+        l_sym, refl, m_str, kind = parsed
+        if kind == "phase":
+            prefix = "\\pm\\phi" if plus_minus else "\\phi"
+            return f"${prefix}({l_sym}^{{{refl}}}_{{{m_str}}})$"
+        return f"${l_sym}^{{{refl}}}_{{{m_str}}}$"
+    clean_name = name.replace("_", r"\_")
+    return f"${clean_name}$"
 
 
 def format_amplitude_squared_symbol(name: str) -> str:
@@ -412,6 +420,92 @@ def extract_credible_bounds(
             lo.append(ref)
             hi.append(ref)
     return lo, hi
+
+
+def plot_phase_with_ambiguity(
+    ax: Any,
+    masses: List[float],
+    y_nom: List[float],
+    is_mass_dep: bool,
+    color: Any,
+    label: Optional[str] = None,
+    label_neg: Optional[str] = None,
+    mcmc_dict: Optional[Dict[float, List[float]]] = None,
+    fit_step: float = 0.04,
+    zorder: int = 4,
+    show_ambiguity: bool = True,
+    linewidth: float = 2.0,
+    alpha_band: float = 0.25,
+    linestyle_pos: str = "-",
+    linestyle_neg: str = "--",
+) -> None:
+    """
+    Plot fitted phase vs mass including both positive and negative branches
+    to represent partial wave sign ambiguities (phi -> -phi).
+    Draws primary branch (solid) and sign-ambiguous mirrored branch (dashed)
+    along with their MCMC credible intervals.
+    """
+    import numpy as np
+
+    y_nom_arr = np.array(y_nom, dtype=float)
+    is_trivial_zero = bool(np.all(np.abs(y_nom_arr) < 1e-9)) and (
+        mcmc_dict is None or all(np.all(np.abs(v) < 1e-9) for v in mcmc_dict.values() if len(v) > 0)
+    )
+
+    if is_mass_dep:
+        if len(masses) >= 4:
+            m_s, y_s = smooth_curve(masses, y_nom, num_points=200)
+        else:
+            m_s, y_s = np.array(masses, dtype=float), y_nom_arr
+
+        # Primary branch
+        ax.plot(m_s, y_s, linestyle=linestyle_pos, linewidth=linewidth, color=color, label=label, zorder=zorder)
+
+        # Primary MCMC credible band
+        if mcmc_dict is not None:
+            lo_68, hi_68 = extract_credible_bounds(masses, mcmc_dict, y_nom, (16.0, 84.0))
+            if len(masses) >= 4:
+                m_s68, lo_s = smooth_curve(masses, lo_68, num_points=200)
+                m_s68, hi_s = smooth_curve(masses, hi_68, num_points=200)
+                ax.fill_between(m_s68, lo_s, hi_s, color=color, alpha=alpha_band, zorder=zorder - 1)
+            else:
+                ax.fill_between(masses, lo_68, hi_68, color=color, alpha=alpha_band, zorder=zorder - 1)
+
+        # Sign-ambiguous branch (phi -> -phi)
+        if show_ambiguity and not is_trivial_zero:
+            ax.plot(m_s, -y_s, linestyle=linestyle_neg, linewidth=linewidth, color=color, label=label_neg, zorder=zorder)
+            if mcmc_dict is not None:
+                if len(masses) >= 4:
+                    ax.fill_between(m_s68, -hi_s, -lo_s, color=color, alpha=alpha_band, zorder=zorder - 1)
+                else:
+                    ax.fill_between(masses, -hi_68, -lo_68, color=color, alpha=alpha_band, zorder=zorder - 1)
+
+    else:
+        edges = compute_bin_edges(masses, default_step=fit_step)
+
+        # Primary branch (stairs or step)
+        if hasattr(ax, "stairs"):
+            ax.stairs(y_nom, edges, linestyle=linestyle_pos, linewidth=linewidth, color=color, label=label, zorder=zorder)
+        else:
+            ax.step(masses, y_nom, where="mid", linestyle=linestyle_pos, linewidth=linewidth, color=color, label=label, zorder=zorder)
+
+        if mcmc_dict is not None:
+            lo_68, hi_68 = extract_credible_bounds(masses, mcmc_dict, y_nom, (16.0, 84.0))
+            x_step = np.repeat(edges, 2)[1:-1]
+            lo_step = np.repeat(lo_68, 2)
+            hi_step = np.repeat(hi_68, 2)
+            ax.fill_between(x_step, lo_step, hi_step, color=color, alpha=alpha_band, zorder=zorder - 1)
+
+        # Sign-ambiguous branch (phi -> -phi)
+        if show_ambiguity and not is_trivial_zero:
+            y_neg = [-v for v in y_nom]
+            if hasattr(ax, "stairs"):
+                ax.stairs(y_neg, edges, linestyle=linestyle_neg, linewidth=linewidth, color=color, label=label_neg, zorder=zorder)
+            else:
+                ax.step(masses, y_neg, where="mid", linestyle=linestyle_neg, linewidth=linewidth, color=color, label=label_neg, zorder=zorder)
+
+            if mcmc_dict is not None:
+                ax.fill_between(x_step, -hi_step, -lo_step, color=color, alpha=alpha_band, zorder=zorder - 1)
 
 
 def resolve_unnormalized_moments_file(
@@ -695,6 +789,8 @@ def plot_amplitudes_and_bands(
     elif len(masses) > 1:
         fit_step = float(np.median(np.diff(masses)))
 
+    show_phase_ambiguity = getattr(config.plotting, "show_phase_ambiguity", True) if hasattr(config, "plotting") else True
+
     # --- 1. Amplitude Magnitudes & Intensities Plot (Overlaid on H_0_0_0) with Phases in Bottom Panel ---
     if not only_distributions and magnitudes:
         has_phases_panel = bool(phases)
@@ -801,35 +897,21 @@ def plot_amplitudes_and_bands(
         if ax_phase is not None:
             for idx, k in enumerate(sorted(phases)):
                 y_nom = nominal_amps[k]
-                label = format_amplitude_label(k)
+                label = format_amplitude_label(k, plus_minus=True)
                 is_mass_dep = is_amplitude_mass_dependent(k, config)
                 c = get_color(k)
 
-                if is_mass_dep:
-                    m_smooth, y_smooth = smooth_curve(masses, y_nom, num_points=200)
-                    ax_phase.plot(m_smooth, y_smooth, "-", linewidth=2.0, color=c, label=label, zorder=4)
-
-                    if k in mcmc_samples:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom)
-                        if len(masses) >= 4:
-                            m_s, lo_smooth = smooth_curve(masses, lo_68, num_points=200)
-                            m_s, hi_smooth = smooth_curve(masses, hi_68, num_points=200)
-                            ax_phase.fill_between(m_s, lo_smooth, hi_smooth, color=c, alpha=0.25, zorder=3)
-                        else:
-                            ax_phase.fill_between(masses, lo_68, hi_68, color=c, alpha=0.25, zorder=3)
-                else:
-                    edges = compute_bin_edges(masses, default_step=fit_step)
-                    if hasattr(ax_phase, "stairs"):
-                        ax_phase.stairs(y_nom, edges, linewidth=2.0, color=c, label=label, zorder=4)
-                    else:
-                        ax_phase.step(masses, y_nom, where="mid", linewidth=2.0, color=c, label=label, zorder=4)
-
-                    if k in mcmc_samples:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom)
-                        x_step = np.repeat(edges, 2)[1:-1]
-                        lo_step = np.repeat(lo_68, 2)
-                        hi_step = np.repeat(hi_68, 2)
-                        ax_phase.fill_between(x_step, lo_step, hi_step, color=c, alpha=0.25, zorder=3)
+                plot_phase_with_ambiguity(
+                    ax=ax_phase,
+                    masses=masses,
+                    y_nom=y_nom,
+                    is_mass_dep=is_mass_dep,
+                    color=c,
+                    label=label,
+                    mcmc_dict=mcmc_samples.get(k),
+                    fit_step=fit_step,
+                    show_ambiguity=show_phase_ambiguity,
+                )
 
             ax_phase.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
             ax_phase.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=12)
@@ -859,42 +941,26 @@ def plot_amplitudes_and_bands(
 
         for idx, k in enumerate(sorted(phases)):
             y_nom = nominal_amps[k]
-            label = format_amplitude_label(k)
+            label = format_amplitude_label(k, plus_minus=True)
             is_mass_dep = is_amplitude_mass_dependent(k, config)
             c = get_color(k) if "get_color" in locals() else colors[idx]
 
-            if is_mass_dep:
-                # Mass-dependent amplitude -> smooth continuous curve
-                m_smooth, y_smooth = smooth_curve(masses, y_nom, num_points=200)
-                ax.plot(m_smooth, y_smooth, "-", linewidth=2.0, color=c, label=label)
-
-                if k in mcmc_samples:
-                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom)
-                    if len(masses) >= 4:
-                        m_s, lo_smooth = smooth_curve(masses, lo_68, num_points=200)
-                        m_s, hi_smooth = smooth_curve(masses, hi_68, num_points=200)
-                        ax.fill_between(m_s, lo_smooth, hi_smooth, color=c, alpha=0.25)
-                    else:
-                        ax.fill_between(masses, lo_68, hi_68, color=c, alpha=0.25)
-            else:
-                # Mass-independent (piecewise) amplitude -> histogram (stairs)
-                edges = compute_bin_edges(masses, default_step=fit_step)
-                if hasattr(ax, "stairs"):
-                    ax.stairs(y_nom, edges, linewidth=2.0, color=c, label=label)
-                else:
-                    ax.step(masses, y_nom, where="mid", linewidth=2.0, color=c, label=label)
-
-                if k in mcmc_samples:
-                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom)
-                    x_step = np.repeat(edges, 2)[1:-1]
-                    lo_step = np.repeat(lo_68, 2)
-                    hi_step = np.repeat(hi_68, 2)
-                    ax.fill_between(x_step, lo_step, hi_step, color=c, alpha=0.25)
+            plot_phase_with_ambiguity(
+                ax=ax,
+                masses=masses,
+                y_nom=y_nom,
+                is_mass_dep=is_mass_dep,
+                color=c,
+                label=label,
+                mcmc_dict=mcmc_samples.get(k),
+                fit_step=fit_step,
+                show_ambiguity=show_phase_ambiguity,
+            )
 
         ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
         ax.set_xlabel(r"$M(\eta\pi^0)$ [GeV]", fontsize=12)
         ax.set_ylabel("Phase [rad]", fontsize=12)
-        ax.set_title(f"{config.project.name} - Fitted Wave Phases", fontsize=13, fontweight="bold")
+        ax.set_title(f"{config.project.name} - Fitted Wave Phases ($\\pm$ Sign Ambiguity)", fontsize=13, fontweight="bold")
         ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
         ax.legend(frameon=True, fontsize=10, ncol=2)
         ax.grid(True, linestyle=":", alpha=0.5)
@@ -1095,27 +1161,22 @@ def plot_amplitudes_and_bands(
 
                 y_nom_phi = nominal_amps[phase_k]
                 phi_label = format_amplitude_label(phase_k)
+                phi_sym = format_amplitude_symbol(phase_k)
                 is_phi_mass_dep = is_amplitude_mass_dependent(phase_k, config)
-                if is_phi_mass_dep:
-                    m_s, y_s = smooth_curve(masses, y_nom_phi, num_points=200)
-                    ax_bot.plot(m_s, y_s, "-", linewidth=2.2, color="darkgreen", label=f"Nominal {phi_label}")
-                    if phase_k in mcmc_samples:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[phase_k], y_nom_phi, (16.0, 84.0))
-                        m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
-                        m_s68, hi_smooth = smooth_curve(masses, hi_68, num_points=200)
-                        ax_bot.fill_between(m_s68, lo_68s, hi_smooth, color="mediumseagreen", alpha=0.35, label="MCMC 68% CI")
-                else:
-                    edges = compute_bin_edges(masses, default_step=fit_step)
-                    if hasattr(ax_bot, "stairs"):
-                        ax_bot.stairs(y_nom_phi, edges, linewidth=2.2, color="darkgreen", label=f"Nominal {phi_label}")
-                    else:
-                        ax_bot.step(masses, y_nom_phi, where="mid", linewidth=2.2, color="darkgreen", label=f"Nominal {phi_label}")
-                    if phase_k in mcmc_samples:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[phase_k], y_nom_phi, (16.0, 84.0))
-                        x_step = np.repeat(edges, 2)[1:-1]
-                        lo_68s = np.repeat(lo_68, 2)
-                        hi_step = np.repeat(hi_68, 2)
-                        ax_bot.fill_between(x_step, lo_68s, hi_step, color="mediumseagreen", alpha=0.35, label="MCMC 68% CI")
+
+                plot_phase_with_ambiguity(
+                    ax=ax_bot,
+                    masses=masses,
+                    y_nom=y_nom_phi,
+                    is_mass_dep=is_phi_mass_dep,
+                    color="darkgreen",
+                    label=f"Nominal +{phi_sym}",
+                    label_neg=f"Sign Ambiguity -{phi_sym}",
+                    mcmc_dict=mcmc_samples.get(phase_k),
+                    fit_step=fit_step,
+                    show_ambiguity=show_phase_ambiguity,
+                    alpha_band=0.35,
+                )
 
                 ax_bot.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
                 ax_bot.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11)
@@ -1133,34 +1194,29 @@ def plot_amplitudes_and_bands(
         for k in sorted(phases):
             y_nom = nominal_amps[k]
             label = format_amplitude_label(k)
+            sym = format_amplitude_symbol(k)
             is_mass_dep = is_amplitude_mass_dependent(k, config)
 
             fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
-            if is_mass_dep:
-                m_s, y_s = smooth_curve(masses, y_nom, num_points=200)
-                ax.plot(m_s, y_s, "-", linewidth=2.2, color="darkgreen", label=f"Nominal {label}")
-                if k in mcmc_samples:
-                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
-                    m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
-                    m_s68, hi_68s = smooth_curve(masses, hi_68, num_points=200)
-                    ax.fill_between(m_s68, lo_68s, hi_68s, color="mediumseagreen", alpha=0.35, label="MCMC 68% CI")
-            else:
-                edges = compute_bin_edges(masses, default_step=fit_step)
-                if hasattr(ax, "stairs"):
-                    ax.stairs(y_nom, edges, linewidth=2.2, color="darkgreen", label=f"Nominal {label}")
-                else:
-                    ax.step(masses, y_nom, where="mid", linewidth=2.2, color="darkgreen", label=f"Nominal {label}")
-                if k in mcmc_samples:
-                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
-                    x_step = np.repeat(edges, 2)[1:-1]
-                    lo_68s = np.repeat(lo_68, 2)
-                    hi_68s = np.repeat(hi_68, 2)
-                    ax.fill_between(x_step, lo_68s, hi_68s, color="mediumseagreen", alpha=0.35, label="MCMC 68% CI")
+            plot_phase_with_ambiguity(
+                ax=ax,
+                masses=masses,
+                y_nom=y_nom,
+                is_mass_dep=is_mass_dep,
+                color="darkgreen",
+                label=f"Nominal +{sym}",
+                label_neg=f"Sign Ambiguity -{sym}",
+                mcmc_dict=mcmc_samples.get(k),
+                fit_step=fit_step,
+                show_ambiguity=show_phase_ambiguity,
+                alpha_band=0.35,
+            )
 
             ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
             ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11)
             ax.set_ylabel(f"Phase {label} [rad]", fontsize=11)
-            ax.set_title(f"{config.project.name} - Phase {label}", fontsize=12, fontweight="bold")
+            ax.set_title(f"{config.project.name} - Phase {label} ($\\pm$ Sign Ambiguity)", fontsize=12, fontweight="bold")
+            ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
             ax.legend(frameon=True, fontsize=9)
             ax.grid(True, linestyle=":", alpha=0.5)
             for fmt in formats:
@@ -1298,26 +1354,16 @@ def plot_amplitudes_and_bands(
                             if pk:
                                 y_nom_phi = nominal_amps[pk]
                                 is_phi_mass_dep = is_amplitude_mass_dependent(pk, config)
-                                if is_phi_mass_dep:
-                                    m_s, y_s = smooth_curve(masses, y_nom_phi, num_points=200)
-                                    ax_phi.plot(m_s, y_s, "-", linewidth=2.0, color=c_wave, zorder=4)
-                                    if pk in mcmc_samples:
-                                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[pk], y_nom_phi, (16.0, 84.0))
-                                        m_s68, lo_s = smooth_curve(masses, lo_68, num_points=200)
-                                        m_s68, hi_s = smooth_curve(masses, hi_68, num_points=200)
-                                        ax_phi.fill_between(m_s68, lo_s, hi_s, color=c_wave, alpha=0.25, zorder=3)
-                                else:
-                                    edges = compute_bin_edges(masses, default_step=fit_step)
-                                    if hasattr(ax_phi, "stairs"):
-                                        ax_phi.stairs(y_nom_phi, edges, linewidth=2.0, color=c_wave, zorder=4)
-                                    else:
-                                        ax_phi.step(masses, y_nom_phi, where="mid", linewidth=2.0, color=c_wave, zorder=4)
-                                    if pk in mcmc_samples:
-                                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[pk], y_nom_phi, (16.0, 84.0))
-                                        x_step = np.repeat(edges, 2)[1:-1]
-                                        lo_s = np.repeat(lo_68, 2)
-                                        hi_s = np.repeat(hi_68, 2)
-                                        ax_phi.fill_between(x_step, lo_s, hi_s, color=c_wave, alpha=0.25, zorder=3)
+                                plot_phase_with_ambiguity(
+                                    ax=ax_phi,
+                                    masses=masses,
+                                    y_nom=y_nom_phi,
+                                    is_mass_dep=is_phi_mass_dep,
+                                    color=c_wave,
+                                    mcmc_dict=mcmc_samples.get(pk),
+                                    fit_step=fit_step,
+                                    show_ambiguity=show_phase_ambiguity,
+                                )
                             else:
                                 ax_phi.plot([masses[0] - fit_step*0.6, masses[-1] + fit_step*0.6], [0, 0], "--", color="gray", linewidth=1.2, alpha=0.7)
                                 ax_phi.text(0.5, 0.5, r"$\phi = 0$ (Fixed)", transform=ax_phi.transAxes, ha="center", va="center", fontsize=8, color="gray", style="italic")

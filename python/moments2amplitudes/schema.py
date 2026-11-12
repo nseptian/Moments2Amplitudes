@@ -202,6 +202,7 @@ class PlottingConfig:
     moments: List[str] = field(default_factory=lambda: ["all"])
     formats: List[str] = field(default_factory=lambda: ["png", "pdf"])
     style: str = "default"
+    show_phase_ambiguity: bool = True
 
 
 @dataclass
