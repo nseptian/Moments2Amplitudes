@@ -34,19 +34,19 @@ from .environment import (
 )
 
 
-def apply_plot_style(style: Optional[str] = "LHCb") -> None:
+def apply_plot_style(style: Optional[str] = "default") -> None:
     """
-    Apply high-energy physics plotting style using mplhep.
-    Defaults to LHCb format.
-    Supports LHCb, LHCb1, LHCb2, ROOT, ATLAS, CMS, ALICE, DUNE, or 'default' (standard matplotlib).
+    Apply high-energy physics plotting style using mplhep, or standard matplotlib style.
+    Defaults to 'default' (standard matplotlib).
+    Supports LHCb, LHCb1, LHCb2, ROOT, ATLAS, CMS, ALICE, DUNE, or 'default'.
     Falls back gracefully if mplhep or style is unavailable.
     """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    chosen = (style or "LHCb").strip()
-    if chosen.lower() in ("default", "none", "matplotlib", "standard"):
+    chosen = (style or "default").strip()
+    if chosen.lower() in ("default", "none", "matplotlib", "standard", ""):
         plt.style.use("default")
         return
 
@@ -138,7 +138,7 @@ def plot_multistart_landscape(
     project_name: str = "Moments2Amplitudes",
     plateau_delta: float = 10.0,
     formats: Tuple[str, ...] = ("png", "pdf"),
-    style: Optional[str] = "LHCb",
+    style: Optional[str] = "default",
 ) -> List[Path]:
     """Plot multi-start Chi2 distribution histogram and clustering plateau."""
     out_dir = Path(output_dir)
@@ -441,7 +441,7 @@ def plot_amplitudes_and_bands(
         print("[WARNING] matplotlib not found. Skipping amplitude plots.")
         return generated
 
-    effective_style = style or (getattr(config.plotting, "style", "LHCb") if getattr(config, "plotting", None) else "LHCb")
+    effective_style = style or (getattr(config.plotting, "style", "default") if getattr(config, "plotting", None) else "default")
     apply_plot_style(effective_style)
 
     # Extract nominal result tree
@@ -1108,7 +1108,7 @@ def plot_moments_comparison(
         print("[WARNING] matplotlib not found. Skipping moment comparison plots.")
         return generated
 
-    effective_style = style or (getattr(config.plotting, "style", "LHCb") if getattr(config, "plotting", None) else "LHCb")
+    effective_style = style or (getattr(config.plotting, "style", "default") if getattr(config, "plotting", None) else "default")
     apply_plot_style(effective_style)
 
     # Resolve number of lowest chi2 results to draw
@@ -1472,7 +1472,7 @@ def run_all_diagnostics_and_plots(
     """Run full diagnostic report generation and publication plotting."""
     from .summary import FitSummary
 
-    effective_style = style or (getattr(config.plotting, "style", "LHCb") if getattr(config, "plotting", None) else "LHCb")
+    effective_style = style or (getattr(config.plotting, "style", "default") if getattr(config, "plotting", None) else "default")
 
     # Fast path: only generate propagated amplitude/distribution plots
     if only_propagated or only_distributions or only_amplitudes:
@@ -1660,7 +1660,7 @@ def plot_tbins_parallel(
         max_workers = min(len(tbins_list), int(cfg_workers)) if cfg_workers else min(len(tbins_list), half_cpus)
     max_workers = max(1, min(max_workers, half_cpus))
 
-    effective_style = style or (getattr(config.plotting, "style", "LHCb") if getattr(config, "plotting", None) else "LHCb")
+    effective_style = style or (getattr(config.plotting, "style", "default") if getattr(config, "plotting", None) else "default")
 
     mode_label = "MCMC Posterior Distributions" if only_distributions else (
         "Propagated Amplitude Plots" if only_propagated else "Publication Plots"
@@ -1669,7 +1669,10 @@ def plot_tbins_parallel(
     print(f" Moments2Amplitudes {mode_label} Across t-Bins")
     print(f" Project:      {config.project.name}")
     print(f" t-Bins ({len(tbins_list)}): {', '.join(tbins_list)}")
-    print(f" Style:        {effective_style} (mplhep)")
+    if effective_style and effective_style.lower() not in ("default", "none", "matplotlib", "standard"):
+        print(f" Style:        {effective_style} (mplhep)")
+    else:
+        print(f" Style:        default (standard matplotlib)")
     print(f" Parallel:     {max_workers} worker processes")
     print(f"=======================================================\n")
 

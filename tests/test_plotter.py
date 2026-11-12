@@ -239,7 +239,7 @@ class TestPlotter(unittest.TestCase):
             formats=("png", "pdf"),
             only_distributions=True,
             only_amplitudes=False,
-            style="LHCb",
+            style="default",
         )
 
         # 2. only_propagated=True

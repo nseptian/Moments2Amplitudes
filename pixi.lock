@@ -358,7 +358,10 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/websocket-client-1.8.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/wurlitzer-3.1.1-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.23.0-pyhd8ed1ab_0.conda
+      - pypi: https://files.pythonhosted.org/packages/33/83/b5be6755c33d1fa6df51dda11beb15bb4c873b66d9dc7b99aa011d4090c9/uhi-1.0.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/4f/09/47d8633e16793e559bf85598c43bfd46c7e2bb9a53ddedf09f6a8f9fb85a/mplhep-1.1.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/79/39/608a0b4fa24bd07e42acfbe914eff4f32382e3861d81853d81f2c6d9fa7b/py3nj-0.2.1.tar.gz
+      - pypi: https://files.pythonhosted.org/packages/b0/6d/aed31732afe53a3c37d1172aef9e1a282106b47e5b0d06bd69b43b59380b/mplhep_data-0.0.5-py3-none-any.whl
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
   build_number: 20
@@ -5828,6 +5831,84 @@ packages:
   run_exports: {}
   size: 22963
   timestamp: 1749421737203
+- pypi: https://files.pythonhosted.org/packages/33/83/b5be6755c33d1fa6df51dda11beb15bb4c873b66d9dc7b99aa011d4090c9/uhi-1.0.0-py3-none-any.whl
+  name: uhi
+  version: 1.0.0
+  sha256: 653e5b011aaeea0bede4feef5c4b4f3fe750277ab9c9f3d620f1a0acdc7ae740
+  requires_dist:
+  - numpy>=1.19.3
+  - typing-extensions>=4 ; python_full_version < '3.11'
+  - h5py ; extra == 'hdf5'
+  - fastjsonschema ; extra == 'schema'
+  - importlib-resources ; python_full_version < '3.9' and extra == 'schema'
+  requires_python: '>=3.9'
+- pypi: https://files.pythonhosted.org/packages/4f/09/47d8633e16793e559bf85598c43bfd46c7e2bb9a53ddedf09f6a8f9fb85a/mplhep-1.1.3-py3-none-any.whl
+  name: mplhep
+  version: 1.1.3
+  sha256: cae055f2270c4966c0d19db2ed84e5c07699beba4bf3fc392b496fd74a988e8b
+  requires_dist:
+  - matplotlib>=3.4,<3.10 ; python_full_version < '3.10'
+  - matplotlib>=3.10.8 ; python_full_version >= '3.10'
+  - mplhep-data>=0.0.4
+  - numpy>=1.16.0
+  - packaging
+  - pyparsing<3.3.0 ; python_full_version < '3.10'
+  - uhi>=0.2.0
+  - boost-histogram ; extra == 'all'
+  - bumpversion ; extra == 'all'
+  - docstring-inheritance ; extra == 'all'
+  - griffe-inherited-docstrings ; extra == 'all'
+  - hist ; extra == 'all'
+  - jupyter ; extra == 'all'
+  - markdown-exec ; extra == 'all'
+  - mike ; extra == 'all'
+  - mkdocs-git-committers-plugin-2 ; extra == 'all'
+  - mkdocs-git-revision-date-localized-plugin ; extra == 'all'
+  - mkdocs-material[imaging]>=9.0 ; extra == 'all'
+  - mkdocs-minify-plugin ; extra == 'all'
+  - mkdocs>=1.6 ; extra == 'all'
+  - mkdocstrings[python]>=0.20 ; extra == 'all'
+  - neoteroi-mkdocs ; extra == 'all'
+  - prek ; extra == 'all'
+  - pytest-benchmark ; extra == 'all'
+  - pytest-mock ; extra == 'all'
+  - pytest-mpl ; extra == 'all'
+  - pytest-xdist ; extra == 'all'
+  - pytest>=6.0 ; extra == 'all'
+  - questionary ; extra == 'all'
+  - scikit-hep-testdata ; extra == 'all'
+  - scipy>=1.1.0 ; extra == 'all'
+  - seaborn ; extra == 'all'
+  - twine ; extra == 'all'
+  - uproot>=5.0 ; extra == 'all'
+  - bumpversion ; extra == 'dev'
+  - jupyter ; extra == 'dev'
+  - prek ; extra == 'dev'
+  - questionary ; extra == 'dev'
+  - twine ; extra == 'dev'
+  - docstring-inheritance ; extra == 'docs'
+  - griffe-inherited-docstrings ; extra == 'docs'
+  - markdown-exec ; extra == 'docs'
+  - mike ; extra == 'docs'
+  - mkdocs-git-committers-plugin-2 ; extra == 'docs'
+  - mkdocs-git-revision-date-localized-plugin ; extra == 'docs'
+  - mkdocs-material[imaging]>=9.0 ; extra == 'docs'
+  - mkdocs-minify-plugin ; extra == 'docs'
+  - mkdocs>=1.6 ; extra == 'docs'
+  - mkdocstrings[python]>=0.20 ; extra == 'docs'
+  - neoteroi-mkdocs ; extra == 'docs'
+  - boost-histogram ; extra == 'test'
+  - hist ; extra == 'test'
+  - pytest-benchmark ; extra == 'test'
+  - pytest-mock ; extra == 'test'
+  - pytest-mpl ; extra == 'test'
+  - pytest-xdist ; extra == 'test'
+  - pytest>=6.0 ; extra == 'test'
+  - scikit-hep-testdata ; extra == 'test'
+  - scipy>=1.1.0 ; extra == 'test'
+  - seaborn ; extra == 'test'
+  - uproot>=5.0 ; extra == 'test'
+  requires_python: '>=3.9'
 - pypi: https://files.pythonhosted.org/packages/79/39/608a0b4fa24bd07e42acfbe914eff4f32382e3861d81853d81f2c6d9fa7b/py3nj-0.2.1.tar.gz
   name: py3nj
   version: 0.2.1
@@ -5836,3 +5917,11 @@ packages:
   - numpy
   - pytest ; extra == 'test'
   requires_python: ~=3.8
+- pypi: https://files.pythonhosted.org/packages/b0/6d/aed31732afe53a3c37d1172aef9e1a282106b47e5b0d06bd69b43b59380b/mplhep_data-0.0.5-py3-none-any.whl
+  name: mplhep-data
+  version: 0.0.5
+  sha256: 1b88141a1b9e508845febff56b867fc60531e1d81f9464c468e830d63235abd4
+  requires_dist:
+  - pytest>=4.6 ; extra == 'dev'
+  - pytest>=4.6 ; extra == 'test'
+  requires_python: '>=3.8'

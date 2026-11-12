@@ -419,7 +419,7 @@ def cmd_cross_section(args: argparse.Namespace) -> int:
             primary_rundir.plots_dir,
             phase1_comparison=not getattr(args, "no_phase1", False),
             theory_band_file=getattr(args, "theory_band", None),
-            style=getattr(args, "style", None) or getattr(cfg.plotting, "style", "LHCb"),
+            style=getattr(args, "style", None) or getattr(cfg.plotting, "style", "default"),
         )
         return 0
 
@@ -455,7 +455,7 @@ def cmd_cross_section(args: argparse.Namespace) -> int:
         rundir.plots_dir,
         phase1_comparison=not getattr(args, "no_phase1", False),
         theory_band_file=getattr(args, "theory_band", None),
-        style=getattr(args, "style", None) or getattr(cfg.plotting, "style", "LHCb"),
+        style=getattr(args, "style", None) or getattr(cfg.plotting, "style", "default"),
     )
     return 0
 
@@ -519,14 +519,14 @@ def main():
     p_prop.add_argument("--t-bin", "--tbin", dest="t_bin", type=str, default=None, help="Single t-bin directory override (e.g. t010020, t020032)")
     p_prop.add_argument("--tbins", "--t-bins", dest="tbins", nargs="*", default=None, help="t-bins to evaluate (e.g. 'all', 't010020 t020032', '0 1 2')")
     p_prop.add_argument("--plot", "--draw", dest="draw_plots", action="store_true", help="Automatically draw propagated amplitude distributions and credible bands after propagation completes")
-    p_prop.add_argument("--style", "--plot-style", dest="style", type=str, default=None, help="Plot style for --plot (default: from config or 'LHCb'; options: LHCb, LHCb1, LHCb2, ROOT, ATLAS, CMS, ALICE, default)")
+    p_prop.add_argument("--style", "--plot-style", dest="style", type=str, default=None, help="Plot style for --plot (default: from config or 'default'; options: default, LHCb, ROOT, ATLAS, CMS, ALICE)")
 
     # Plot
     p_plot = subparsers.add_parser("plot", help="Generate publication amplitude plots and error bands")
     p_plot.add_argument("config", help="Path to config.yaml")
     p_plot.add_argument("--run-dir", "--output-dir", dest="run_dir", type=str, default=None, help="Run directory")
     p_plot.add_argument("--formats", type=str, default="png,pdf", help="Image output formats (comma-separated, default: png,pdf)")
-    p_plot.add_argument("--style", "--plot-style", dest="style", type=str, default=None, help="Plot style (default: from config or 'LHCb'; options: LHCb, LHCb1, LHCb2, ROOT, ATLAS, CMS, ALICE, default)")
+    p_plot.add_argument("--style", "--plot-style", dest="style", type=str, default=None, help="Plot style (default: from config or 'default'; options: default, LHCb, ROOT, ATLAS, CMS, ALICE)")
     p_plot.add_argument("--n-lowest-chi2", type=int, default=None, help="Number of lowest chi2 fit curves to draw (default: from config or 10)")
     p_plot.add_argument("--unnormalized-moments-file", type=str, default=None, help="Path to UnnormalizedMoments_vs_Mass.root")
     p_plot.add_argument("--moments", type=str, default=None, help="Moments to plot (e.g. 'all', 'L=2', 'H_0_0_0,H_0_2_0')")
@@ -561,7 +561,7 @@ def main():
     p_cs.add_argument("--no-mcmc", action="store_true", help="Disable MCMC uncertainty propagation even if MCMC file is found")
     p_cs.add_argument("--t-bin", "--tbin", dest="t_bin", type=str, default=None, help="Single t-bin directory override (e.g. t010020, t020032)")
     p_cs.add_argument("--tbins", "--t-bins", dest="tbins", nargs="*", default=None, help="t-bins to evaluate (e.g. 'all', 't010020 t020032', '0 1 2')")
-    p_cs.add_argument("--style", "--plot-style", dest="style", type=str, default=None, help="Plot style for cross section (default: from config or 'LHCb'; options: LHCb, LHCb1, LHCb2, ROOT, ATLAS, CMS, ALICE, default)")
+    p_cs.add_argument("--style", "--plot-style", dest="style", type=str, default=None, help="Plot style for cross section (default: from config or 'default'; options: default, LHCb, ROOT, ATLAS, CMS, ALICE)")
 
     # Run (All in one)
     p_run = subparsers.add_parser("run", help="Run full pipeline (multi-start fit + MCMC propagation)")

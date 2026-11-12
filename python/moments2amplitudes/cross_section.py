@@ -844,7 +844,7 @@ def plot_cross_section_vs_t(
     formats: Tuple[str, ...] = ("png", "pdf"),
     phase1_comparison: bool = True,
     theory_band_file: Optional[str] = None,
-    style: Optional[str] = "LHCb",
+    style: Optional[str] = "default",
 ) -> List[Path]:
     """
     Plot differential cross-section dsigma/dt vs -t separated by reflectivity.
