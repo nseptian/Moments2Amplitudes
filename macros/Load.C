@@ -16,10 +16,8 @@ void Load(){
   if (!TClass::GetClass("RooHSSphHarmonic")) {
     TString brufitDir = gSystem->Getenv("BRUFIT");
     if (brufitDir.IsNull()) {
-      if (gSystem->AccessPathName("/d/grid17/septian/brufit_dev/brufit/macros/LoadBru.C") == 0) {
-        brufitDir = "/d/grid17/septian/brufit_dev/brufit";
-      } else if (gSystem->AccessPathName("/d/home/septian/brufit/macros/LoadBru.C") == 0) {
-        brufitDir = "/d/home/septian/brufit";
+      if (gSystem->AccessPathName("/d/grid17/septian/brufit_dev/brufit_negative/macros/LoadBru.C") == 0) {
+        brufitDir = "/d/grid17/septian/brufit_dev/brufit_negative";
       }
     }
     if (!brufitDir.IsNull()) {
@@ -54,10 +52,19 @@ void Load(){
 
   TString brufitDirEnv = gSystem->Getenv("BRUFIT");
   if (!brufitDirEnv.IsNull()) {
+    gInterpreter->AddIncludePath(brufitDirEnv + "/install/include");
     gInterpreter->AddIncludePath(brufitDirEnv + "/include");
     gInterpreter->AddIncludePath(brufitDirEnv + "/core");
+    gInterpreter->AddIncludePath(brufitDirEnv + "/utility");
+    gSystem->AddIncludePath(Form("-I%s/install/include", brufitDirEnv.Data()));
     gSystem->AddIncludePath(Form("-I%s/include", brufitDirEnv.Data()));
     gSystem->AddIncludePath(Form("-I%s/core", brufitDirEnv.Data()));
+    gSystem->AddIncludePath(Form("-I%s/utility", brufitDirEnv.Data()));
+
+    gSystem->AddDynamicPath(brufitDirEnv + "/install/lib64");
+    gSystem->AddDynamicPath(brufitDirEnv + "/install/lib");
+    gSystem->AddDynamicPath(brufitDirEnv + "/build/lib");
+    gSystem->AddDynamicPath(brufitDirEnv + "/lib");
   }
 
   // CleanAclicArtifacts(srcDir);

@@ -6,8 +6,10 @@ import unittest
 import tempfile
 import shutil
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 from moments2amplitudes.config import load_config
-from moments2amplitudes.driver import generate_root_macro
+from moments2amplitudes.driver import generate_root_macro, run_mcmc_propagation_tbins
+from moments2amplitudes.schema import FitConfig
 
 
 class TestDriverMacro(unittest.TestCase):
@@ -34,6 +36,47 @@ class TestDriverMacro(unittest.TestCase):
             self.assertIn("MassDependentMoments moms", content)
             self.assertIn("MassDependentFitter fitter", content)
             self.assertIn("void RunWorker", content)
+
+    @patch("moments2amplitudes.driver.ensure_aclic_updated")
+    @patch("moments2amplitudes.driver.run_mcmc_propagation")
+    def test_run_mcmc_propagation_tbins(self, mock_run, mock_aclic):
+        mock_run.return_value = {"output_file": "results.root", "successful_fits": 10}
+        cfg = FitConfig()
+        cfg.dataset.t_bins = ["t010020", "t020032"]
+        cfg.mcmc_propagation.mcmc_tree_path = "/path/{tbin}/tree.root"
+        
+        results = run_mcmc_propagation_tbins(cfg, n_workers=2, n_tbin_workers=2, max_entries=100)
+        self.assertTrue(results["success"])
+        self.assertEqual(len(results["tbins"]), 2)
+        self.assertIn("t010020", results["tbins"])
+        self.assertIn("t020032", results["tbins"])
+        self.assertEqual(mock_run.call_count, 2)
+
+    @patch("moments2amplitudes.cli.run_mcmc_propagation_tbins")
+    def test_cli_propagate_command(self, mock_prop_tbins):
+        import argparse
+        from moments2amplitudes.cli import cmd_propagate
+        mock_prop_tbins.return_value = {"success": True, "tbins": {}}
+        args = argparse.Namespace(
+            config="configs/d_breit_wigner.yaml",
+            best_params=None,
+            mcmc_tree=None,
+            n_workers=4,
+            tbin_workers=3,
+            max_entries=50,
+            output_file=None,
+            run_dir=None,
+            t_bin=None,
+            tbins=["0", "1"],
+        )
+        res = cmd_propagate(args)
+        self.assertEqual(res, 0)
+        mock_prop_tbins.assert_called_once()
+        _, kwargs = mock_prop_tbins.call_args
+        self.assertEqual(kwargs["n_workers"], 4)
+        self.assertEqual(kwargs["n_tbin_workers"], 3)
+        self.assertEqual(kwargs["max_entries"], 50)
+        self.assertEqual(kwargs["tbins"], ["t010020", "t020032"])
 
 
 if __name__ == "__main__":

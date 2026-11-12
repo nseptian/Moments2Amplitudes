@@ -7,6 +7,7 @@ parallel multi-start fits, and propagates MCMC posterior uncertainties.
 from __future__ import annotations
 import os
 import sys
+import copy
 import time
 import subprocess
 from pathlib import Path
@@ -20,9 +21,31 @@ from .schema import (
     ModelType,
     InitStrategy,
 )
-from .rundir import RunDirectory, get_run_directory
+from .rundir import RunDirectory, get_run_directory, resolve_init_file_for_tbin
 from .plotter import plot_multistart_landscape, plot_amplitudes_and_bands, run_all_diagnostics_and_plots
 from .summary import FitSummary
+from .environment import (
+    get_root_binary,
+    get_root_subprocess_env,
+    resolve_rootsys,
+    resolve_brufit,
+    get_repo_root,
+    get_default_max_workers,
+)
+from .compiler import ensure_aclic_updated
+
+
+def resolve_mcmc_tree_path(raw_path: str, t_bin: Optional[str] = None) -> str:
+    """Resolve MCMC tree file path for a specific t-bin."""
+    if not raw_path or not t_bin:
+        return raw_path
+    if "{tbin}" in raw_path or "{t_bin}" in raw_path or "{t-bin}" in raw_path:
+        return raw_path.replace("{t_bin}", t_bin).replace("{tbin}", t_bin).replace("{t-bin}", t_bin)
+    # If the path explicitly embeds a t-bin name like /t010020/, replace it with /<t_bin>/
+    subbed = re.sub(r"/t\d{6}/", f"/{t_bin}/", raw_path)
+    if Path(subbed).is_file():
+        return subbed
+    return raw_path
 
 
 def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[str], str]:
@@ -121,7 +144,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
 
     # Determine project directory and brufit path
     repo_root = os.environ.get("MOMS2AMPS", str(Path(__file__).resolve().parent.parent.parent))
-    brufit_path = config.environment.brufit_dir or os.environ.get("BRUFIT", "/d/grid17/septian/brufit_dev/brufit")
+    brufit_path = resolve_brufit(config)
 
     # Explicit formula functions at file scope to avoid Cling lambda-mangler issues
     formula_functions: List[str] = []
@@ -184,6 +207,9 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
 
     lines.extend(formula_functions)
 
+    no_use_items = getattr(config.chi2, "no_use", None) or ["H_3"]
+    no_use_str = ", ".join(f'"{x}"' for x in no_use_items)
+
     lines.extend([
         "void RunWorker(const char* mode = \"single\", int seed = 1, int mcmcStart = 0, int mcmcEnd = -1, const char* outDir = \".\", const char* bestParamsFile = \"\") {",
         "    EnsureLoaded();",
@@ -194,10 +220,10 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         f"    const std::vector<double> massBins = {{{mass_bins_str}}};",
         f"    const double lMax = {config.chi2.max_l};",
         "    const double noise = 0.0;",
-        "    const std::vector<TString> noUse = {};",
+        f"    const std::vector<TString> noUse = {{{no_use_str}}};",
         "",
         "    // Setup MassDependentMoments",
-        f'    const TString momentsDir = "{config.dataset.moments_dir}";',
+        f'    const TString momentsDir = "{config.dataset.get_moments_dir()}";',
         f'    const TString resultsFile = "{config.dataset.results_filename}";',
         f'    const TString binPrefix = "{config.dataset.bin_prefix}";',
         f'    const TString varBinPrefix = "{config.dataset.var_bin_prefix}";',
@@ -270,15 +296,21 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
             lines.append(f"    paramManager.SetWaveInitRule({w.l}, MassDependentFitter::WaveInitRule(MassDependentFitter::WaveInitRule::Strategy::RandomPositiveMagnitudeZeroPhase, {w.init.magnitude.min_val}, {w.init.magnitude.max_val}, 0.0, false));")
 
     # Add piecewise parameters
-    if mi_l_list:
-        lines.append(f"    paramManager.AddMassIndependentParameter({{{mi_l_str}}}, seed);")
+    mi_from_file = [w for w in mi_waves if w.init.strategy == InitStrategy.FROM_FILE and w.init.file_path]
+    mi_random = [w for w in mi_waves if not (w.init.strategy == InitStrategy.FROM_FILE and w.init.file_path)]
+
+    for w in mi_from_file:
+        init_file = resolve_init_file_for_tbin(w.init.file_path, config.dataset.t_bin, repo_root)
+        lines.append(f'    paramManager.AddMassIndependentParameter({{{w.l}}}, "{init_file}");')
+
+    if mi_random:
+        rand_l_str = ", ".join(str(w.l) for w in mi_random)
+        lines.append(f"    paramManager.AddMassIndependentParameter({{{rand_l_str}}}, seed);")
 
     # Add mass-dependent parameters
     for w in md_waves:
         if w.init.strategy == InitStrategy.FROM_FILE and w.init.file_path:
-            init_file = Path(w.init.file_path)
-            if not init_file.is_absolute():
-                init_file = repo_root / init_file
+            init_file = resolve_init_file_for_tbin(w.init.file_path, config.dataset.t_bin, repo_root)
             lines.append(f'    paramManager.AddMassDependentParameter({{{w.l}}}, "{init_file}", {w.init.option});')
         else:
             lines.append(f"    paramManager.AddMassDependentParameter({{{w.l}}}, seed, {w.init.option});")
@@ -370,8 +402,13 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
     return output_macro_path
 
 
-def execute_root_command(macro_path: Path, args: Tuple, log_path: Path) -> Tuple[int, str]:
-    """Execute a single ROOT invocation in batch mode and capture output."""
+def execute_root_command(
+    macro_path: Path,
+    args: Tuple,
+    log_path: Path,
+    config: Optional[FitConfig] = None,
+) -> Tuple[int, str]:
+    """Execute a single ROOT invocation in batch mode and capture output using ROOT 6.36."""
     arg_strs = []
     for a in args:
         if isinstance(a, str):
@@ -383,11 +420,7 @@ def execute_root_command(macro_path: Path, args: Tuple, log_path: Path) -> Tuple
     repo_root = Path(os.environ.get("MOMS2AMPS", str(Path(__file__).resolve().parent.parent.parent)))
     load_script = repo_root / "macros" / "Load.C"
 
-    root_bin = "root"
-    if "ROOTSYS" in os.environ:
-        custom_root = Path(os.environ["ROOTSYS"]) / "bin" / "root"
-        if custom_root.is_file():
-            root_bin = str(custom_root)
+    root_bin = get_root_binary(config)
 
     cmd = [
         root_bin,
@@ -395,15 +428,12 @@ def execute_root_command(macro_path: Path, args: Tuple, log_path: Path) -> Tuple
         "-b",
         "-q",
     ]
-    if load_script.is_file():
+    if load_script.is_file() and macro_path.resolve() != load_script.resolve():
         cmd.append(str(load_script))
     cmd.append(f"{macro_path}{call_expr[len(macro_path.name):]}")
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
-    if "ROOTSYS" in env:
-        rootsys_bin = str(Path(env["ROOTSYS"]) / "bin")
-        env["PATH"] = f"{rootsys_bin}:{env.get('PATH', '')}"
+    env = get_root_subprocess_env(config)
 
     with open(log_path, "w") as log_f:
         proc = subprocess.run(
@@ -430,6 +460,7 @@ def run_multi_start(
     n_threads: Optional[int] = None,
     output_dir: Optional[str] = None,
     config_source_path: Optional[Path | str] = None,
+    tag: str = "",
 ) -> Dict[str, Any]:
     """
     Run parallel multi-start randomized fits to find the central global minimum.
@@ -438,18 +469,34 @@ def run_multi_start(
     rundir = get_run_directory(config, output_dir)
     rundir.ensure_directories()
 
+    # Ensure C++ ACLiC shared libraries are compiled and up-to-date before parallel workers launch
+    ensure_aclic_updated(config)
+
     if config_source_path:
         rundir.save_config_snapshot(config_source_path)
 
+    # Propagate t-bin and resolve initial parameters files
+    repo_root = get_repo_root()
+    for w in config.waves:
+        if w.init.strategy == InitStrategy.FROM_FILE and w.init.file_path:
+            init_file = resolve_init_file_for_tbin(w.init.file_path, config.dataset.t_bin, repo_root)
+            w.init.file_path = str(init_file)
+
+    half_cpus = get_default_max_workers()
     starts = n_starts if n_starts is not None else config.multi_start.n_starts
-    threads = n_threads if n_threads is not None else config.multi_start.n_threads
+    threads = n_threads if n_threads is not None else (config.multi_start.n_threads or half_cpus)
+    if n_threads is None:
+        threads = min(threads, half_cpus)
 
     macro_path = rundir.worker_macro
     generate_root_macro(config, macro_path)
 
+    header_tag = f" {tag}" if tag else ""
     print(f"\n=======================================================")
-    print(f" Moments2Amplitudes Multi-Start Fit")
+    print(f" Moments2Amplitudes Multi-Start Fit{header_tag}")
     print(f" Project:      {config.project.name}")
+    if config.dataset.t_bin:
+        print(f" t-Bin:        {config.dataset.t_bin}")
     print(f" Total Trials: {starts}")
     print(f" Threads:      {threads}")
     print(f" Run Dir:      {rundir.root}")
@@ -467,6 +514,7 @@ def run_multi_start(
             macro_path,
             ("single", seed_val, 0, -1, str(rundir.fit_starts_dir), ""),
             log_f,
+            config,
         )
 
         # Parse [RESULT] line
@@ -513,8 +561,9 @@ def run_multi_start(
             results.append(res)
             completed += 1
             status_tag = "CONVERGED" if res["is_valid"] and res["status"] == 0 else "FAIL"
+            prefix = f"{tag} " if tag else ""
             print(
-                f"[{completed:3d}/{starts:3d}] Seed {res['seed']:4d} | "
+                f"{prefix}[{completed:3d}/{starts:3d}] Seed {res['seed']:4d} | "
                 f"Chi2: {res['chi2']:10.2f} | Status: {status_tag} ({res['status']})"
             )
 
@@ -522,11 +571,12 @@ def run_multi_start(
     valid_results = [r for r in results if r["is_valid"] and r["status"] == 0 and r["chi2"] < 1e8]
     valid_results.sort(key=lambda x: x["chi2"])
 
+    summary_tag = f" {tag}" if tag else ""
     print("\n-------------------------------------------------------")
-    print(f" Multi-Start Summary: {len(valid_results)}/{starts} converged in {elapsed:.1f}s")
+    print(f" Multi-Start Summary{summary_tag}: {len(valid_results)}/{starts} converged in {elapsed:.1f}s")
 
     if not valid_results:
-        print("[ERROR] No fits converged cleanly. Check logs in:", rundir.fit_starts_dir)
+        print(f"[ERROR]{summary_tag} No fits converged cleanly. Check logs in:", rundir.fit_starts_dir)
         return {"converged": False, "results": results, "rundir": rundir}
 
     min_chi2 = valid_results[0]["chi2"]
@@ -547,7 +597,7 @@ def run_multi_start(
     if Path(best_file).is_file():
         import shutil
         shutil.copyfile(best_file, legacy_best)
-        print(f"[OK] Saved nominal best parameters to: {best_target}")
+        print(f"[OK]{summary_tag} Saved nominal best parameters to: {best_target}")
 
     # Plot multi-start landscape using plotter
     try:
@@ -558,7 +608,7 @@ def run_multi_start(
             plateau_delta=config.multi_start.plateau_delta_chi2,
         )
     except Exception as e:
-        print(f"[WARNING] Could not generate multi-start plot: {e}")
+        print(f"[WARNING]{summary_tag} Could not generate multi-start plot: {e}")
 
     # Generate summary report tables
     summary = FitSummary(config, rundir)
@@ -590,6 +640,152 @@ def run_multi_start(
     }
 
 
+def run_multi_start_tbins(
+    config: FitConfig,
+    tbins: Optional[List[str]] = None,
+    n_starts: Optional[int] = None,
+    n_threads: Optional[int] = None,
+    n_tbin_workers: Optional[int] = None,
+    output_dir: Optional[str] = None,
+    config_source_path: Optional[Path | str] = None,
+) -> Dict[str, Any]:
+    """
+    Run multi-start fits across one or more t-bins.
+    When multiple t-bins are provided, executes them in parallel across concurrent worker threads.
+    """
+    import copy
+    import concurrent.futures
+
+    tbins_list = tbins if tbins is not None else config.dataset.get_t_bins()
+
+    # Single t-bin fallback
+    if len(tbins_list) <= 1:
+        single_cfg = copy.deepcopy(config)
+        if tbins_list:
+            single_cfg.dataset.t_bin = tbins_list[0]
+            if output_dir:
+                resolved_out = output_dir.replace("{t_bin}", tbins_list[0]).replace("{tbin}", tbins_list[0])
+            else:
+                resolved_out = None
+        else:
+            resolved_out = output_dir
+        return run_multi_start(
+            single_cfg,
+            n_starts=n_starts,
+            n_threads=n_threads,
+            output_dir=resolved_out,
+            config_source_path=config_source_path,
+        )
+
+    # Ensure C++ ACLiC shared libraries are compiled before multi-tbin workers start
+    ensure_aclic_updated(config)
+
+    # Multi-t-bin parallel execution
+    half_cpus = get_default_max_workers()
+    max_tbin_workers = (
+        n_tbin_workers
+        or getattr(config.multi_start, "n_tbin_workers", None)
+        or min(len(tbins_list), half_cpus)
+    )
+    max_tbin_workers = max(1, min(len(tbins_list), max_tbin_workers, half_cpus))
+
+    starts = n_starts if n_starts is not None else config.multi_start.n_starts
+    threads = n_threads if n_threads is not None else (config.multi_start.n_threads or half_cpus)
+    if n_threads is None:
+        threads = min(threads, max(1, half_cpus // max_tbin_workers))
+
+    print(f"\n=======================================================")
+    print(f" Moments2Amplitudes Parallel t-Bins Execution")
+    print(f" Project:           {config.project.name}")
+    print(f" t-Bins ({len(tbins_list)}):     {', '.join(tbins_list)}")
+    print(f" Starts per t-bin:  {starts}")
+    print(f" Threads per fit:   {threads}")
+    print(f" Concurrent t-Bins: {max_tbin_workers}")
+    print(f"=======================================================\n")
+
+    def run_single_tbin(t_name: str) -> Dict[str, Any]:
+        cfg_t = copy.deepcopy(config)
+        cfg_t.dataset.t_bin = t_name
+
+        # Propagate t_bin to wave initialization paths
+        repo_root = get_repo_root()
+        for w in cfg_t.waves:
+            if w.init.strategy == InitStrategy.FROM_FILE and w.init.file_path:
+                resolved_f = resolve_init_file_for_tbin(w.init.file_path, t_name, repo_root)
+                w.init.file_path = str(resolved_f)
+
+        if cfg_t.mcmc_propagation.mcmc_tree_path:
+            cfg_t.mcmc_propagation.mcmc_tree_path = resolve_mcmc_tree_path(
+                cfg_t.mcmc_propagation.mcmc_tree_path, t_name
+            )
+
+        if output_dir:
+            if "{t_bin}" in output_dir or "{tbin}" in output_dir:
+                t_out = output_dir.replace("{t_bin}", t_name).replace("{tbin}", t_name)
+            else:
+                t_out = str(Path(output_dir) / t_name)
+        elif cfg_t.multi_start.output_dir and cfg_t.multi_start.output_dir not in ("logs", "run/central_fits", ""):
+            raw_out = cfg_t.multi_start.output_dir
+            if "{t_bin}" in raw_out or "{tbin}" in raw_out:
+                t_out = raw_out.replace("{t_bin}", t_name).replace("{tbin}", t_name)
+            else:
+                t_out = str(Path(raw_out) / t_name)
+        else:
+            t_out = str(Path("runs") / f"{cfg_t.project.name}_{t_name}")
+
+        res = run_multi_start(
+            cfg_t,
+            n_starts=n_starts,
+            n_threads=threads,
+            output_dir=t_out,
+            config_source_path=config_source_path,
+            tag=f"[{t_name}]",
+        )
+        res["t_bin"] = t_name
+        return res
+
+    results_by_tbin: Dict[str, Dict[str, Any]] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_tbin_workers) as executor:
+        future_to_tbin = {executor.submit(run_single_tbin, t): t for t in tbins_list}
+        for future in concurrent.futures.as_completed(future_to_tbin):
+            t_name = future_to_tbin[future]
+            try:
+                res = future.result()
+                results_by_tbin[t_name] = res
+            except Exception as e:
+                print(f"[ERROR] Failed fit for t-bin {t_name}: {e}")
+                results_by_tbin[t_name] = {"t_bin": t_name, "converged": False, "error": str(e)}
+
+    # Consolidated summary table across t-bins
+    print(f"\n=========================================================================================")
+    print(f" Parallel t-Bins Execution Summary ({len(tbins_list)} t-bins)")
+    print(f"=========================================================================================")
+    print(f" {'t-bin':<10} {'Chi2':<12} {'Best Seed':<12} {'Plateau':<14} {'Status':<12} {'Run Directory'}")
+    print(f" -----------------------------------------------------------------------------------------")
+    all_converged = True
+    for t_name in tbins_list:
+        res = results_by_tbin.get(t_name, {})
+        conv = res.get("converged", False)
+        if not conv:
+            all_converged = False
+        status_str = "CONVERGED" if conv else "FAILED"
+        rundir_obj = res.get("rundir")
+        r_dir_str = str(rundir_obj.root) if rundir_obj else "-"
+        best_seed_str = str(res.get("best_seed", "-"))
+        chi2_val = res.get("best_chi2")
+        chi2_str = f"{chi2_val:.4f}" if chi2_val is not None else "-"
+        plateau_count = res.get("plateau_count", "-")
+        valid_count = res.get("valid_count", "-")
+        plat_str = f"{plateau_count}/{valid_count}" if plateau_count != "-" else "-"
+        print(f" {t_name:<10} {chi2_str:<12} {best_seed_str:<12} {plat_str:<14} {status_str:<12} {r_dir_str}")
+    print(f"=========================================================================================\n")
+
+    return {
+        "converged": all_converged,
+        "tbins": results_by_tbin,
+    }
+
+
 def run_mcmc_propagation(
     config: FitConfig,
     best_params_file: Optional[str] = None,
@@ -597,6 +793,7 @@ def run_mcmc_propagation(
     max_entries: Optional[int] = None,
     output_file: Optional[str] = None,
     run_dir: Optional[str] = None,
+    tag: str = "",
 ) -> Dict[str, Any]:
     """
     Run parallel MCMC posterior uncertainty propagation across workers and merge with hadd.
@@ -604,27 +801,41 @@ def run_mcmc_propagation(
     rundir = get_run_directory(config, run_dir)
     rundir.ensure_directories()
 
-    workers = n_workers if n_workers is not None else config.mcmc_propagation.n_workers
+    # Ensure C++ ACLiC shared libraries are compiled before MCMC workers start
+    ensure_aclic_updated(config)
+
+    half_cpus = get_default_max_workers()
+    workers = n_workers if n_workers is not None else (config.mcmc_propagation.n_workers or half_cpus)
+    if n_workers is None:
+        workers = min(workers, half_cpus)
     total_entries = max_entries if max_entries is not None else config.mcmc_propagation.max_entries
     burn_in = config.mcmc_propagation.burn_in
     out_file = Path(output_file or rundir.mcmc_propagated_root).resolve()
 
     # Determine best parameters file
+    repo_root = get_repo_root()
     if not best_params_file:
         if rundir.nominal_best_root.is_file():
             best_params_file = str(rundir.nominal_best_root)
-        else:
-            candidate = rundir.root / "central_best_params.root"
-            if candidate.is_file():
-                best_params_file = str(candidate)
-            else:
-                raise FileNotFoundError("Best parameters file not found. Run multi-start fit first or pass --best-params-file.")
+        elif (rundir.root / "central_best_params.root").is_file():
+            best_params_file = str(rundir.root / "central_best_params.root")
+        elif config.multi_start.output_dir:
+            cand_p = resolve_init_file_for_tbin(config.multi_start.output_dir, config.dataset.t_bin, repo_root)
+            if cand_p.is_file():
+                best_params_file = str(cand_p)
+        if not best_params_file:
+            raise FileNotFoundError(f"Best parameters file not found in {rundir.root}. Run multi-start fit first or pass --best-params.")
+    else:
+        resolved_best = resolve_init_file_for_tbin(best_params_file, config.dataset.t_bin, repo_root)
+        if resolved_best.is_file():
+            best_params_file = str(resolved_best)
 
     macro_path = rundir.worker_macro
     generate_root_macro(config, macro_path)
 
+    tag_str = f"{tag} " if tag else ""
     print(f"\n=======================================================")
-    print(f" Moments2Amplitudes MCMC Propagation")
+    print(f" {tag_str}Moments2Amplitudes MCMC Propagation")
     print(f" Project:      {config.project.name}")
     print(f" Total Entries:{total_entries} (burn-in: {burn_in})")
     print(f" Workers:      {workers}")
@@ -650,6 +861,7 @@ def run_mcmc_propagation(
             macro_path,
             ("mcmc", wid, wstart, wend, str(rundir.mcmc_workers_dir), str(best_params_file)),
             log_f,
+            config,
         )
         out_root = str(rundir.mcmc_workers_dir / f"mcmc_worker_{wid}.root")
         return {"worker_id": wid, "ret_code": ret_code, "output_file": out_root, "entries": wend - wstart}
@@ -659,32 +871,159 @@ def run_mcmc_propagation(
         futures = [executor.submit(run_worker_task, task) for task in worker_tasks]
         for f in concurrent.futures.as_completed(futures):
             res = f.result()
-            print(f"[Worker {res['worker_id']}] Completed {res['entries']} entries (exit {res['ret_code']})")
+            print(f"{tag}[Worker {res['worker_id']}] Completed {res['entries']} entries (exit {res['ret_code']})")
             if Path(res["output_file"]).is_file():
                 worker_outputs.append(res["output_file"])
 
     elapsed = time.time() - start_time
-    print(f"\n[OK] All MCMC workers finished in {elapsed:.1f}s.")
+    print(f"\n{tag}[OK] All MCMC workers finished in {elapsed:.1f}s.")
 
     # Merge worker outputs using hadd
     if len(worker_outputs) == 0:
         raise RuntimeError("No MCMC worker root files were generated.")
 
-    print(f"[Merge] Merging {len(worker_outputs)} root files with hadd -> {out_file}...")
-    hadd_cmd = ["hadd", "-f", str(out_file)] + worker_outputs
-    hadd_res = subprocess.run(hadd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    print(f"{tag}[Merge] Merging {len(worker_outputs)} root files with hadd -> {out_file}...")
+    rootsys_val = resolve_rootsys(config)
+    hadd_bin = str(Path(rootsys_val) / "bin" / "hadd") if (Path(rootsys_val) / "bin" / "hadd").is_file() else "hadd"
+    hadd_cmd = [hadd_bin, "-f", str(out_file)] + worker_outputs
+    hadd_env = get_root_subprocess_env(config)
+    hadd_res = subprocess.run(hadd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=hadd_env)
     if hadd_res.returncode != 0:
         print("[WARNING] hadd output:\n", hadd_res.stderr)
         raise RuntimeError(f"hadd failed with exit code {hadd_res.returncode}")
 
-    print(f"[SUCCESS] Successfully created merged MCMC propagation results: {out_file}")
+    print(f"{tag}[SUCCESS] Successfully created merged MCMC propagation results: {out_file}")
 
     # Generate full diagnostics and plots with MCMC error bands
     try:
         diag_res = run_all_diagnostics_and_plots(config, rundir)
-        print(f"[OK] Generated amplitude plots and updated diagnostics in: {rundir.plots_dir}")
+        print(f"{tag}[OK] Generated amplitude plots and updated diagnostics in: {rundir.plots_dir}")
     except Exception as e:
-        print(f"[WARNING] Diagnostic plot generation encountered: {e}")
+        print(f"{tag}[WARNING] Diagnostic plot generation encountered: {e}")
 
     return {"output_file": str(out_file), "merged_workers": len(worker_outputs), "rundir": rundir}
+
+
+def run_mcmc_propagation_tbins(
+    config: FitConfig,
+    tbins: Optional[List[str]] = None,
+    best_params_file: Optional[str] = None,
+    n_workers: Optional[int] = None,
+    max_entries: Optional[int] = None,
+    output_file: Optional[str] = None,
+    run_dir: Optional[str] = None,
+    n_tbin_workers: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Run parallel MCMC posterior uncertainty propagation concurrently across multiple t-bins.
+    """
+    import concurrent.futures
+
+    tbins_list = tbins if tbins is not None else config.dataset.get_t_bins()
+    if len(tbins_list) <= 1:
+        single_cfg = copy.deepcopy(config)
+        if tbins_list:
+            single_cfg.dataset.t_bin = tbins_list[0]
+        return run_mcmc_propagation(
+            single_cfg,
+            best_params_file=best_params_file,
+            n_workers=n_workers,
+            max_entries=max_entries,
+            output_file=output_file,
+            run_dir=run_dir,
+        )
+
+    # Ensure C++ ACLiC shared libraries are compiled before MCMC workers start
+    ensure_aclic_updated(config)
+
+    half_cpus = get_default_max_workers()
+    max_tbin_workers = (
+        n_tbin_workers
+        or getattr(config.mcmc_propagation, "n_tbin_workers", None)
+        or getattr(config.multi_start, "n_tbin_workers", None)
+        or min(len(tbins_list), half_cpus)
+    )
+    max_tbin_workers = max(1, min(len(tbins_list), max_tbin_workers, half_cpus))
+
+    effective_workers = n_workers
+    if effective_workers is None:
+        cfg_workers = getattr(config.mcmc_propagation, "n_workers", None) or half_cpus
+        effective_workers = min(cfg_workers, max(1, half_cpus // max_tbin_workers))
+
+    print(f"\n=======================================================")
+    print(f" Moments2Amplitudes Parallel MCMC Propagation Across t-Bins")
+    print(f" Project:           {config.project.name}")
+    print(f" t-Bins ({len(tbins_list)}):     {', '.join(tbins_list)}")
+    print(f" Concurrent t-Bins: {max_tbin_workers}")
+    print(f"=======================================================\n")
+
+    repo_root = get_repo_root()
+
+    def run_single_tbin_mcmc(t_name: str) -> Dict[str, Any]:
+        cfg_t = copy.deepcopy(config)
+        cfg_t.dataset.t_bin = t_name
+        if cfg_t.mcmc_propagation.mcmc_tree_path:
+            cfg_t.mcmc_propagation.mcmc_tree_path = resolve_mcmc_tree_path(
+                cfg_t.mcmc_propagation.mcmc_tree_path, t_name
+            )
+
+        t_rundir = get_run_directory(cfg_t, run_dir)
+        t_best_params = None
+        if best_params_file:
+            t_best_params = str(resolve_init_file_for_tbin(best_params_file, t_name, repo_root))
+        elif t_rundir.nominal_best_root.is_file():
+            t_best_params = str(t_rundir.nominal_best_root)
+        elif (t_rundir.root / "central_best_params.root").is_file():
+            t_best_params = str(t_rundir.root / "central_best_params.root")
+
+        t_outfile = None
+        if output_file:
+            t_outfile = output_file.replace("{t_bin}", t_name).replace("{tbin}", t_name)
+
+        res = run_mcmc_propagation(
+            cfg_t,
+            best_params_file=t_best_params,
+            n_workers=effective_workers,
+            max_entries=max_entries,
+            output_file=t_outfile,
+            run_dir=str(t_rundir.root),
+            tag=f"[{t_name}]",
+        )
+        res["t_bin"] = t_name
+        return res
+
+    results_by_tbin: Dict[str, Dict[str, Any]] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_tbin_workers) as executor:
+        future_to_tbin = {executor.submit(run_single_tbin_mcmc, t): t for t in tbins_list}
+        for future in concurrent.futures.as_completed(future_to_tbin):
+            t_name = future_to_tbin[future]
+            try:
+                res = future.result()
+                results_by_tbin[t_name] = res
+            except Exception as e:
+                print(f"[ERROR] [{t_name}] MCMC propagation failed: {e}")
+                results_by_tbin[t_name] = {"t_bin": t_name, "error": str(e)}
+
+    # Summary across t-bins
+    print(f"\n=========================================================================================")
+    print(f" Parallel MCMC Propagation Summary ({len(tbins_list)} t-bins)")
+    print(f"=========================================================================================")
+    print(f" {'t-bin':<10} {'Status':<12} {'MCMC Output File'}")
+    print(f" -----------------------------------------------------------------------------------------")
+    all_success = True
+    for t_name in tbins_list:
+        res = results_by_tbin.get(t_name, {})
+        succ = "output_file" in res
+        if not succ:
+            all_success = False
+        status_str = "SUCCESS" if succ else "FAILED"
+        out_f = res.get("output_file", res.get("error", "-"))
+        print(f" {t_name:<10} {status_str:<12} {out_f}")
+    print(f"=========================================================================================\n")
+
+    return {
+        "success": all_success,
+        "tbins": results_by_tbin,
+    }
+
 

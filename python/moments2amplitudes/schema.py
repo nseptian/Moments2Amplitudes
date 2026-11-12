@@ -6,8 +6,10 @@ Uses standard Python dataclasses for lightweight, dependency-free validation.
 from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from enum import Enum
+from pathlib import Path
 from typing import List, Dict, Optional, Union, Any
 import numpy as np
+from .environment import get_default_max_workers
 
 
 class WaveType(str, Enum):
@@ -60,11 +62,49 @@ class MassBinsConfig:
 @dataclass
 class DatasetConfig:
     moments_dir: str
+    t_bin: Optional[str] = None
+    t_bins: List[str] = field(default_factory=list)
     results_filename: str = "ResultsBruMcmcFixedCovariance.root"
     bin_prefix: str = "Mpi0eta"
     var_bin_prefix: str = "t010030"
     mass_bins: MassBinsConfig = field(default_factory=MassBinsConfig)
     use_covariance: bool = True
+
+    def get_t_bins(self) -> List[str]:
+        """Return the list of configured t-bins. If t_bins is empty, falls back to [t_bin] if set."""
+        if self.t_bins:
+            return list(self.t_bins)
+        tbins_alias = getattr(self, "tbins", None)
+        if tbins_alias:
+            return list(tbins_alias)
+        if self.t_bin:
+            return [self.t_bin]
+        return []
+
+    def get_moments_dir(self, target_t_bin: Optional[str] = None) -> str:
+        """
+        Return the resolved directory containing the moment mass-bin folders.
+        If target_t_bin (or self.t_bin) is configured and not already the terminal
+        directory in moments_dir, it resolves moments_dir / t_bin.
+        """
+        t_choice = target_t_bin if target_t_bin is not None else self.t_bin
+        if not t_choice:
+            return self.moments_dir
+
+        t_clean = str(t_choice).strip()
+        if not t_clean:
+            return self.moments_dir
+
+        t_path = Path(t_clean)
+        if t_path.is_absolute():
+            return str(t_path)
+
+        base_path = Path(self.moments_dir)
+        # Avoid duplicating if moments_dir already ends with t_clean (e.g. ".../t010020")
+        if base_path.name == t_clean:
+            return str(base_path)
+
+        return str(base_path / t_clean)
 
 
 @dataclass
@@ -73,6 +113,7 @@ class Chi2Config:
     excluded_l: List[int] = field(default_factory=list)
     max_l: int = 4
     include_all: bool = False
+    no_use: List[str] = field(default_factory=lambda: ["H_3"])
 
 
 @dataclass
@@ -144,7 +185,8 @@ class MinimizerConfig:
 class MultiStartConfig:
     enabled: bool = True
     n_starts: int = 100
-    n_threads: int = 8
+    n_threads: int = field(default_factory=get_default_max_workers)
+    n_tbin_workers: Optional[int] = None
     output_dir: str = "logs"
     plateau_delta_chi2: float = 0.05
     seed_offset: int = 1
@@ -186,7 +228,8 @@ class MCMCPropagationConfig:
     burn_in: int = 0
     max_entries: int = 200
     stride: int = 1
-    n_workers: int = 8
+    n_workers: int = field(default_factory=get_default_max_workers)
+    n_tbin_workers: Optional[int] = None
     output_file: str = "mcmc_propagation_results.root"
     log_dir: str = "logs_mcmc"
 

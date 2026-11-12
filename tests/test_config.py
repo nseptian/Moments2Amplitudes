@@ -57,6 +57,39 @@ class TestConfig(unittest.TestCase):
         errors = validate_config(cfg)
         self.assertTrue(any("moments_dir" in e for e in errors))
 
+    def test_t_bin_resolution_and_aliases(self):
+        # Multiple t-bins from a2CS_D_BreitWigner.yaml
+        cfg = load_config(Path("configs/a2CS_D_BreitWigner.yaml"))
+        self.assertEqual(len(cfg.dataset.get_t_bins()), 5)
+        self.assertEqual(cfg.dataset.get_t_bins()[0], "t010020")
+        self.assertTrue(cfg.dataset.get_moments_dir().endswith("t010020"))
+        self.assertTrue(cfg.dataset.get_moments_dir("t020032").endswith("t020032"))
+
+        # Do not duplicate if moments_dir already ends with t_bin
+        cfg.dataset.moments_dir = "/path/to/data/t010020"
+        cfg.dataset.t_bin = "t010020"
+        self.assertEqual(cfg.dataset.get_moments_dir(), "/path/to/data/t010020")
+
+        # Absolute t_bin
+        cfg.dataset.t_bin = "/custom/path/to/t020032"
+        self.assertEqual(cfg.dataset.get_moments_dir(), "/custom/path/to/t020032")
+
+    def test_parse_t_bins_forms(self):
+        from moments2amplitudes.config import parse_t_bins_input, STANDARD_TBINS
+
+        self.assertEqual(parse_t_bins_input("all"), STANDARD_TBINS)
+        self.assertEqual(parse_t_bins_input(["all"]), STANDARD_TBINS)
+        self.assertEqual(parse_t_bins_input([0, 1, 2]), ["t010020", "t020032", "t032050"])
+        self.assertEqual(parse_t_bins_input("t010020,t020032"), ["t010020", "t020032"])
+        self.assertEqual(parse_t_bins_input(["t010020", "t032050"]), ["t010020", "t032050"])
+        self.assertEqual(parse_t_bins_input(3), ["t050075"])
+
+    def test_optional_environment_block(self):
+        cfg = load_config(Path("configs/a2CS_D_BreitWigner.yaml"))
+        self.assertIsNotNone(cfg.environment)
+        self.assertIsNotNone(cfg.environment.brufit_dir)
+        self.assertGreater(len(cfg.environment.brufit_dir), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

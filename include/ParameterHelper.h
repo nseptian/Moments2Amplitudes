@@ -25,8 +25,8 @@ namespace m2pw{
       for(auto formp:formulas){
 	auto var  = dynamic_cast<RooFormulaVar*>(formp);
 	//valid formula contain H_ or a_ where the a_ is the last wave used for normalisation
-	if(TString(formp->GetName()).Contains("H_") //a moment
-	   ||TString(formp->GetName()).Contains("a_")) //or constraint amp
+	if(var && (TString(formp->GetName()).Contains("H_") //a moment
+	   ||TString(formp->GetName()).Contains("a_"))) //or constraint amp
 	   {
 	     UseRooFormula(var);
 	   }

@@ -6,10 +6,6 @@ project:
   name: "EtaPi0_SFlatte_DBreitWigner"
   description: "Fit S-wave a0(980) Flatté and D-wave a2(1320) Breit-Wigner using H0, H2, H4 moments"
 
-environment:
-  brufit_dir: "${BRUFIT:-/d/grid17/septian/brufit_dev/brufit}"
-  root_dir: "${ROOTSYS:-}"
-
 dataset:
   moments_dir: "/d/grid17/septian/Moments2Amplitudes/Moments.out/nominal"
   results_filename: "ResultsBruMcmcFixedCovariance.root"

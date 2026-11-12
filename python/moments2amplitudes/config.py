@@ -32,6 +32,59 @@ from .schema import (
     PlottingConfig,
     CrossSectionConfig,
 )
+from .environment import get_default_max_workers
+
+
+TBIN_INDEX_MAP = {
+    0: "t010020",
+    1: "t020032",
+    2: "t032050",
+    3: "t050075",
+    4: "t075100",
+}
+STANDARD_TBINS = ["t010020", "t020032", "t032050", "t050075", "t075100"]
+
+
+def parse_t_bins_input(val: Any) -> List[str]:
+    """
+    Parse t-bins from various user input forms:
+    - "all" / ["all"] -> all 5 standard t-bins
+    - [0, 1, 2] -> ["t010020", "t020032", "t032050"]
+    - "t010020,t020032" or ["t010020", "t020032"]
+    """
+    if val is None:
+        return []
+
+    if isinstance(val, int):
+        return [TBIN_INDEX_MAP.get(val, f"t{val}")]
+
+    if isinstance(val, str):
+        val_str = val.strip()
+        if not val_str:
+            return []
+        if val_str.lower() == "all":
+            return list(STANDARD_TBINS)
+        parts = [p.strip() for p in val_str.replace(",", " ").split() if p.strip()]
+        out: List[str] = []
+        for p in parts:
+            if p.lower() == "all":
+                return list(STANDARD_TBINS)
+            if p.isdigit() and int(p) in TBIN_INDEX_MAP:
+                out.append(TBIN_INDEX_MAP[int(p)])
+            else:
+                out.append(p)
+        return out
+
+    if isinstance(val, (list, tuple)):
+        out_list: List[str] = []
+        for item in val:
+            sub = parse_t_bins_input(item)
+            for s in sub:
+                if s not in out_list:
+                    out_list.append(s)
+        return out_list
+
+    return [str(val).strip()]
 
 
 def expand_env_vars(val: Any) -> Any:
@@ -203,8 +256,8 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         description=proj_dict.get("description", ""),
     )
 
-    # Environment
-    env_dict = data.get("environment", {})
+    # Environment (optional, defaults to environment variables or system paths)
+    env_dict = data.get("environment") or {}
     brufit_dir = env_dict.get("brufit_dir") or os.environ.get("BRUFIT", "/d/grid17/septian/brufit_dev/brufit")
     root_dir = env_dict.get("root_dir") or os.environ.get("ROOTSYS")
     environment = EnvironmentConfig(
@@ -223,8 +276,31 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         bins=[float(b) for b in mb_dict["bins"]] if "bins" in mb_dict and mb_dict["bins"] is not None else None,
     )
 
+    # Resolve t-bins (single or list, configurable via t_bins, tbins, t_bin, tbin, t_bin_dir, tbins_dir)
+    raw_tbins = None
+    for k in ("t_bins", "tbins"):
+        if k in ds_dict and ds_dict[k] is not None:
+            raw_tbins = ds_dict[k]
+            break
+
+    raw_single = None
+    for k in ("t_bin", "tbin", "t_bin_dir", "tbins_dir"):
+        if k in ds_dict and ds_dict[k] is not None:
+            raw_single = ds_dict[k]
+            break
+
+    t_bins: List[str] = []
+    if raw_tbins is not None:
+        t_bins = parse_t_bins_input(raw_tbins)
+    elif raw_single is not None:
+        t_bins = parse_t_bins_input(raw_single)
+
+    t_bin = t_bins[0] if t_bins else None
+
     dataset = DatasetConfig(
         moments_dir=ds_dict.get("moments_dir", ""),
+        t_bin=t_bin,
+        t_bins=t_bins,
         results_filename=ds_dict.get("results_filename", "ResultsBruMcmcFixedCovariance.root"),
         bin_prefix=ds_dict.get("bin_prefix", "Mpi0eta"),
         var_bin_prefix=ds_dict.get("var_bin_prefix", "t010030"),
@@ -260,10 +336,16 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
     # MultiStart
     ms_dict = data.get("multi_start", {})
     n_lowest_ms = ms_dict.get("n_lowest_chi2", 10)
+    n_tbin_workers = (
+        int(ms_dict["n_tbin_workers"])
+        if "n_tbin_workers" in ms_dict and ms_dict["n_tbin_workers"] is not None
+        else None
+    )
     multi_start = MultiStartConfig(
         enabled=bool(ms_dict.get("enabled", True)),
         n_starts=int(ms_dict.get("n_starts", 100)),
-        n_threads=int(ms_dict.get("n_threads", 8)),
+        n_threads=int(ms_dict["n_threads"]) if "n_threads" in ms_dict and ms_dict["n_threads"] is not None else get_default_max_workers(),
+        n_tbin_workers=n_tbin_workers,
         output_dir=ms_dict.get("output_dir", "logs"),
         plateau_delta_chi2=float(ms_dict.get("plateau_delta_chi2", 0.05)),
         seed_offset=int(ms_dict.get("seed_offset", 1)),
@@ -284,13 +366,19 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
 
     # MCMCPropagation
     mcmc_dict = data.get("mcmc_propagation", {})
+    n_tbin_workers_mcmc = (
+        int(mcmc_dict["n_tbin_workers"])
+        if "n_tbin_workers" in mcmc_dict and mcmc_dict["n_tbin_workers"] is not None
+        else None
+    )
     mcmc_propagation = MCMCPropagationConfig(
         enabled=bool(mcmc_dict.get("enabled", False)),
         mcmc_tree_path=mcmc_dict.get("mcmc_tree_path", ""),
         burn_in=int(mcmc_dict.get("burn_in", 0)),
         max_entries=int(mcmc_dict.get("max_entries", 200)),
         stride=int(mcmc_dict.get("stride", 1)),
-        n_workers=int(mcmc_dict.get("n_workers", 8)),
+        n_workers=int(mcmc_dict["n_workers"]) if "n_workers" in mcmc_dict and mcmc_dict["n_workers"] is not None else get_default_max_workers(),
+        n_tbin_workers=n_tbin_workers_mcmc,
         output_file=mcmc_dict.get("output_file", "mcmc_propagation_results.root"),
         log_dir=mcmc_dict.get("log_dir", "logs_mcmc"),
     )

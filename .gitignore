@@ -21,6 +21,9 @@ __pycache__/
 *.d
 *_ACLiC_*
 *.pcm
+*.lock
+.aclic.lock
+*_tmp_*
 
 # Log files
 *.log
@@ -35,6 +38,7 @@ logs_*/
 *.tmp
 *.swp
 *~
+.env
 
 # OS files
 .DS_Store

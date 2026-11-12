@@ -5,12 +5,9 @@ project:
   name: "EtaPi0_DBreitWigner_Stage1"
   description: "Fit D-wave a2(1320) resonance parameters using H4 moments"
 
-environment:
-  brufit_dir: "${BRUFIT:-/d/grid17/septian/brufit_dev/brufit}"
-  root_dir: "${ROOTSYS:-}"
-
 dataset:
-  moments_dir: "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200/t010020"
+  moments_dir: "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200"
+  t_bin: "t010020"
   results_filename: "ResultsBruMcmcCovariance.root"
   bin_prefix: "Mpi0eta"
   var_bin_prefix: ""

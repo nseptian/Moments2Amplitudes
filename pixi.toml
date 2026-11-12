@@ -6,6 +6,7 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [tasks]
+compile = "python -m moments2amplitudes.cli compile"
 fit = "python -m moments2amplitudes.cli fit"
 propagate = "python -m moments2amplitudes.cli propagate"
 validate = "python -m moments2amplitudes.cli validate"
@@ -18,6 +19,8 @@ mom2amp = "python -m moments2amplitudes.cli"
 
 [dependencies]
 # --- Core Environment ---
+# Note: Pixi's python 3.9 and root 6.28 are strictly for the Python environment and linear algebra libraries.
+# BruFit and Moments2Amplitudes C++ fitting engines use the system ROOT 6.36 (/d/grid17/septian/root_v6-36-08_cuda_install) and brufit_negative.
 python = "3.9.*"
 root = "6.28.*"
 
@@ -48,7 +51,10 @@ py3nj = "~=0.2.1"
 PYTHONNOUSERSITE = "1"
 MOMS2AMPS = "${PIXI_PROJECT_ROOT}"
 # BruFit directory: picks up $BRUFIT if exported, otherwise falls back to default
-BRUFIT = "${BRUFIT:-/d/grid17/septian/brufit_dev/brufit}"
-ROOT_INCLUDE_PATH = "${PIXI_PROJECT_ROOT}/include:${BRUFIT}/include:${ROOT_INCLUDE_PATH}"
+BRUFIT = "${BRUFIT:-/d/grid17/septian/brufit_dev/brufit_negative}"
+ROOTSYS = "${ROOTSYS:-/d/grid17/septian/root_v6-36-08_cuda_install}"
+ROOT_INCLUDE_PATH = "${PIXI_PROJECT_ROOT}/include:${PIXI_PROJECT_ROOT}/macros:${BRUFIT}/install/include:${BRUFIT}/core:${BRUFIT}/include:${ROOTSYS}/include:${ROOT_INCLUDE_PATH}"
 PYTHONPATH = "${PIXI_PROJECT_ROOT}/python:${PYTHONPATH}"
+PATH = "${ROOTSYS}/bin:${PATH}"
+LD_LIBRARY_PATH = "${ROOTSYS}/lib:${BRUFIT}/install/lib64:${BRUFIT}/build/lib:${BRUFIT}/lib:${LD_LIBRARY_PATH}"
 MPLCONFIGDIR = "/tmp"

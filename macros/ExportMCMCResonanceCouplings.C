@@ -227,3 +227,4 @@ void ExportMCMCResonanceCouplings(
 
     std::cout << "[OK] Exported MCMC resonance couplings (" << nEntries << " entries) to: " << outJsonPath << std::endl;
 }
+

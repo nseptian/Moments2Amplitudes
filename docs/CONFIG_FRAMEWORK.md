@@ -43,13 +43,8 @@ You can configure the BruFit and ROOT locations through several mechanisms:
    export BRUFIT=/path/to/your/brufit
    ```
 
-4. **Via the YAML Configuration File**:
-   Under the `environment` block in your fit config:
-   ```yaml
-   environment:
-     brufit_dir: "/path/to/your/brufit"
-     root_dir: ""  # Optional: uses conda ROOT if empty
-   ```
+> [!NOTE]
+> The `environment:` block in YAML config files is completely optional and no longer required. BruFit and ROOT paths are resolved automatically from your active Pixi environment, `.env`, or `$BRUFIT`/`$ROOTSYS`.
 
 ---
 
@@ -71,6 +66,10 @@ pixi run fit configs/d_breit_wigner.yaml
 Optional CLI overrides:
 ```bash
 pixi run fit configs/d_breit_wigner.yaml --n-starts 50 --n-threads 12 --output-dir my_run
+
+# Parallel execution across all or specific t-bins:
+pixi run fit configs/a2CS_D_BreitWigner.yaml --tbins all
+pixi run fit configs/a2CS_D_BreitWigner.yaml --tbins t010020 t020032 t032050 --tbin-workers 3
 ```
 
 ### 3. Display Physics Summary Report
@@ -226,17 +225,13 @@ project:
   name: "EtaPi0_SPiecewise_DBreitWigner"
   description: "Stage 2: Piecewise S-wave + D-wave Breit-Wigner fit"
 
-# Environment configuration (BruFit and ROOT)
-environment:
-  brufit_dir: "${BRUFIT:-/d/grid17/septian/brufit_dev/brufit}"
-  root_dir: "${ROOTSYS:-}"
-
 # Dataset moments and covariance settings
 dataset:
-  moments_dir: "/path/to/Moments.out/nominal"
+  moments_dir: "/path/to/MomentFit"
+  t_bin: "t010020"       # Configurable t-bin directory (e.g. t010020, t020032, or index 0..4)
   results_filename: "ResultsBruMcmcFixedCovariance.root"
   bin_prefix: "Mpi0eta"
-  var_bin_prefix: "t010030"
+  var_bin_prefix: ""
   mass_bins:
     min: 1.04
     max: 1.72

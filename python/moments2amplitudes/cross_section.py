@@ -28,7 +28,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp")
 
 from .schema import FitConfig, CrossSectionConfig
 from .rundir import RunDirectory
-from .plotter import get_root_binary
+from .environment import get_root_binary, get_root_subprocess_env
 
 
 # Published Phase-1 PWA cross-section reference points for a2(1320)
@@ -225,9 +225,7 @@ def extract_resonance_parameters_from_root(
         f'{export_macro}("{root_p}", "{resonance_name}", "{json_tmp}")'
     ]
 
-    env = os.environ.copy()
-    if "ROOTSYS" in env and "LD_LIBRARY_PATH" not in env:
-        env["LD_LIBRARY_PATH"] = f"{env['ROOTSYS']}/lib"
+    env = get_root_subprocess_env(config)
 
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
     if proc.returncode != 0 or not json_tmp.is_file():
@@ -316,9 +314,7 @@ def extract_mcmc_resonance_parameters_from_root(
         f'{export_macro}("{mcmc_p}", "{resonance_name}", "{json_tmp}", "{tree_name}")'
     ]
 
-    env = os.environ.copy()
-    if "ROOTSYS" in env and "LD_LIBRARY_PATH" not in env:
-        env["LD_LIBRARY_PATH"] = f"{env['ROOTSYS']}/lib"
+    env = get_root_subprocess_env(config)
 
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
     if proc.returncode != 0 or not json_tmp.is_file():
@@ -533,10 +529,13 @@ def calculate_resonance_cross_section(
     t_hi = t_max if t_max is not None else cs_cfg.t_max
 
     if t_lo is None or t_hi is None:
-        # Try auto-detecting from rundir or moments_dir
+        # Try auto-detecting from rundir, dataset.t_bin, or moments_dir
         parsed = parse_t_bin_from_string(str(rundir.root))
+        if not parsed and getattr(config.dataset, "t_bin", None):
+            parsed = parse_t_bin_from_string(config.dataset.t_bin)
         if not parsed:
-            parsed = parse_t_bin_from_string(config.dataset.moments_dir)
+            resolved_dir = config.dataset.get_moments_dir() if hasattr(config.dataset, "get_moments_dir") else config.dataset.moments_dir
+            parsed = parse_t_bin_from_string(resolved_dir)
         if not parsed:
             parsed = parse_t_bin_from_string(config.dataset.var_bin_prefix)
 

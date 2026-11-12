@@ -6,12 +6,14 @@ intervals, generating terminal ASCII tables and saved markdown reports.
 """
 
 from __future__ import annotations
+import os
 import math
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
 from .schema import FitConfig, WaveType
 from .rundir import RunDirectory
+from .environment import is_pixi_or_conda_path
 
 
 def format_parameter_label(raw_name: str) -> str:
@@ -84,16 +86,10 @@ class FitSummary:
         if not root_path.is_file():
             return False
 
-        # Attempt PyROOT or uproot
+        # Attempt uproot
         try:
             import uproot
             return self._load_with_uproot(root_path, mcmc_file)
-        except ImportError:
-            pass
-
-        try:
-            import ROOT
-            return self._load_with_pyroot(root_path, mcmc_file)
         except ImportError:
             pass
 

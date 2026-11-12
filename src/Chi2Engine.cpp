@@ -342,6 +342,17 @@ namespace m2pw {
                     L_value = ExtractLFromEquationName(eqn.GetName());
                 }
                 if (L_value < 0 || hMomentsConfig_.ShouldIncludeL(L_value)) {
+                    // Ensure moment exists in dataset covariance matrix or has valid measurements
+                    if (useCovarianceMatrix_ && moments.HasCovarianceMatrix()) {
+                        if (moments.GetCovarianceIndex(eqn.GetName()) < 0) {
+                            continue;
+                        }
+                    } else {
+                        if (moments.GetUnnormalizedError(eqn.GetName()) <= 0.0 &&
+                            moments.GetUnnormalizedVal(eqn.GetName()) == 0.0) {
+                            continue;
+                        }
+                    }
                     cache.eqnIndices.push_back(idx);
                     cache.momentNames.push_back(eqn.GetName());
                 }
@@ -382,7 +393,7 @@ namespace m2pw {
                     invV.Invert(&det);
                     gErrorIgnoreLevel = prevIgnore;
 
-                    if (invV.IsValid() && det > 1e-15 && !std::isnan(det)) {
+                    if (invV.IsValid() && det != 0.0 && !std::isnan(det) && !std::isinf(det)) {
                         cache.invCovMatrix = invV;
                         cache.isValid = true;
                     } else {
