@@ -287,6 +287,62 @@ class TestPlotter(unittest.TestCase):
         self.assertEqual(loaded_h0["mass"], [1.06, 1.10, 1.14])
         self.assertEqual(loaded_h0["val"], [1000.0, 2000.0, 3000.0])
 
+    def test_plot_amplitudes_and_bands_2panel(self):
+        from moments2amplitudes.plotter import plot_amplitudes_and_bands
+        import json
+
+        cfg = FitConfig()
+        out_dir = self.test_dir / "plots_2panel"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        cache_dir = out_dir / ".cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        json_path = cache_dir / "amplitudes_data.json"
+
+        data = {
+            "masses": [1.1, 1.2, 1.3, 1.4],
+            "nominal": {
+                "a_2_1": [10.0, 20.0, 30.0, 40.0],
+                "aphi_2_1": [0.1, 0.2, 0.3, 0.4],
+                "a_0_0": [5.0, 8.0, 12.0, 15.0],
+                "aphi_0_0": [0.0, 0.0, 0.0, 0.0],
+            },
+            "mcmc": {
+                "a_2_1": {
+                    "1.1": [9.0, 10.0, 11.0],
+                    "1.2": [19.0, 20.0, 21.0],
+                    "1.3": [29.0, 30.0, 31.0],
+                    "1.4": [39.0, 40.0, 41.0],
+                },
+                "aphi_2_1": {
+                    "1.1": [0.08, 0.1, 0.12],
+                    "1.2": [0.18, 0.2, 0.22],
+                    "1.3": [0.28, 0.3, 0.32],
+                    "1.4": [0.38, 0.4, 0.42],
+                },
+            },
+            "h0_data": {
+                "mass": [1.1, 1.2, 1.3, 1.4],
+                "val": [100.0, 400.0, 900.0, 1600.0],
+                "err": [10.0, 20.0, 30.0, 40.0],
+            },
+        }
+        with open(json_path, "w") as f:
+            json.dump(data, f)
+
+        dummy_nom = self.test_dir / "dummy_nom.root"
+        dummy_nom.touch()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            plots = plot_amplitudes_and_bands(dummy_nom, None, out_dir, cfg, formats=("png",))
+
+        plot_names = {p.name for p in plots}
+        self.assertIn("amplitudes_magnitude_vs_mass.png", plot_names)
+        self.assertIn("amplitudes_intensity_vs_mass.png", plot_names)
+        self.assertIn("amplitudes_phase_vs_mass.png", plot_names)
+        self.assertIn("a_2_1_intensity_and_phase.png", plot_names)
+        self.assertIn("a_0_0_intensity_and_phase.png", plot_names)
+
 
 if __name__ == "__main__":
     unittest.main()

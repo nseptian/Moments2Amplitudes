@@ -474,7 +474,10 @@ Generated Figures:
    - Comprehensive multi-panel overview grid of all requested angular moments.
    - Saved to `<output_dir>/plots/moments_overview.png` and `.pdf`.
 4. **Fitted Amplitude Magnitudes & Phases**:
-   - Saved to `<output_dir>/plots/amplitudes_magnitude_vs_mass.png` and `amplitudes_phase_vs_mass.png` with MCMC credible intervals if propagated.
+   - Saved to `<output_dir>/plots/amplitudes_magnitude_vs_mass.png` and `.pdf` as a two-panel publication figure sharing the mass axis:
+     - **Top panel**: Amplitude intensities $|V_\alpha|^2$ and total fit intensity $\sum |V|^2$ overlaid on acceptance-corrected yield data $H_0(0,0)$ with error bars.
+     - **Bottom panel**: Wave phases $\phi_\alpha$ as a function of mass with MCMC 68% credible intervals.
+   - Also saved to `amplitudes_intensity_vs_mass.png` and standalone `amplitudes_phase_vs_mass.png`, along with individual wave two-panel plots in `<output_dir>/plots/amplitudes/individual/{wave}_intensity_and_phase.png`.
 
 ---
 
