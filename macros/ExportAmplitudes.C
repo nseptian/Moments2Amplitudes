@@ -157,7 +157,7 @@ void ExportAmplitudes(
                 // Map: ampName -> mass_bin -> list of samples
                 std::map<std::string, std::map<double, std::vector<double>>> samps;
                 const Long64_t nMcmc = t_mcmc->GetEntries();
-                const size_t nMassBins = (masses.empty() ? 1 : masses.size());
+                const size_t nMassBins = (massBins.empty() ? 1 : massBins.size());
                 for (Long64_t e = 0; e < nMcmc; ++e) {
                     t_mcmc->GetEntry(e);
                     if (hasConvCheck) {

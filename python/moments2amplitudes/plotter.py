@@ -507,8 +507,11 @@ def plot_amplitudes_and_bands(
                             for pk, pvals in raw_params.items():
                                 mcmc_params[pk] = [float(v) for v in pvals]
                             loaded = True
+                else:
+                    if run_res.returncode != 0:
+                        print(f"[WARNING] ExportAmplitudes macro execution failed:\n{run_res.stderr}\n{run_res.stdout}")
         except Exception as e:
-            pass
+            print(f"[WARNING] Error running ExportAmplitudes fallback: {e}")
 
     if not loaded or not masses:
         print(f"[WARNING] Could not read amplitude branches from {nominal_root}")
