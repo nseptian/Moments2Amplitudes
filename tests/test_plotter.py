@@ -149,6 +149,13 @@ class TestPlotter(unittest.TestCase):
         self.assertAlmostEqual(edges[2], 1.12)
         self.assertAlmostEqual(edges[3], 1.16)
 
+    def test_format_amplitude_squared_label(self):
+        from moments2amplitudes.plotter import format_amplitude_squared_label
+        self.assertEqual(format_amplitude_squared_label("a_2_1"), "$|a_{2,1}|^2$")
+        self.assertEqual(format_amplitude_squared_label("b_2_-1"), "$|b_{2,-1}|^2$")
+        self.assertEqual(format_amplitude_squared_label("a_0_0"), "$|a_{0,0}|^2$")
+        self.assertEqual(format_amplitude_squared_label("other_var"), "$|other\\_var|^2$")
+
     @patch("moments2amplitudes.plotter.as_completed")
     @patch("moments2amplitudes.plotter.ProcessPoolExecutor")
     def test_plot_tbins_parallel(self, mock_executor_cls, mock_as_completed):
@@ -172,6 +179,31 @@ class TestPlotter(unittest.TestCase):
         self.assertEqual(res["total_plots"], 20)
         self.assertEqual(len(res["tbins"]), 2)
         self.assertEqual(mock_executor.submit.call_count, 2)
+
+    @patch("moments2amplitudes.plotter.plot_amplitudes_and_bands")
+    def test_run_all_diagnostics_propagated_options(self, mock_plot_amps):
+        from moments2amplitudes.plotter import run_all_diagnostics_and_plots
+        cfg = FitConfig()
+        mock_plot_amps.return_value = [self.rundir.plots_dir / "test.png"]
+
+        # 1. only_distributions=True
+        res = run_all_diagnostics_and_plots(cfg, self.rundir, only_distributions=True)
+        self.assertEqual(len(res["plots"]), 1)
+        self.assertIsNone(res["summary"])
+        mock_plot_amps.assert_called_with(
+            self.rundir.nominal_best_root,
+            self.rundir.mcmc_propagated_root,
+            self.rundir.plots_dir,
+            cfg,
+            formats=("png", "pdf"),
+            only_distributions=True,
+            only_amplitudes=False,
+        )
+
+        # 2. only_propagated=True
+        res_prop = run_all_diagnostics_and_plots(cfg, self.rundir, only_propagated=True)
+        self.assertEqual(len(res_prop["plots"]), 1)
+        self.assertIsNone(res_prop["summary"])
 
 
 if __name__ == "__main__":

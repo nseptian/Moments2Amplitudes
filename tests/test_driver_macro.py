@@ -78,6 +78,58 @@ class TestDriverMacro(unittest.TestCase):
         self.assertEqual(kwargs["max_entries"], 50)
         self.assertEqual(kwargs["tbins"], ["t010020", "t020032"])
 
+    @patch("moments2amplitudes.cli.plot_tbins_parallel")
+    def test_cli_plot_only_propagated(self, mock_plot_parallel):
+        import argparse
+        from moments2amplitudes.cli import cmd_plot
+        mock_plot_parallel.return_value = {"success": True, "total_plots": 15}
+        args = argparse.Namespace(
+            config="configs/d_breit_wigner.yaml",
+            run_dir=None,
+            formats="png",
+            n_lowest_chi2=None,
+            unnormalized_moments_file=None,
+            moments=None,
+            t_bin=None,
+            tbins=["t010020", "t020032"],
+            n_workers=2,
+            only_propagated=True,
+            only_distributions=False,
+            only_amplitudes=False,
+        )
+        res = cmd_plot(args)
+        self.assertEqual(res, 0)
+        mock_plot_parallel.assert_called_once()
+        _, kwargs = mock_plot_parallel.call_args
+        self.assertTrue(kwargs["only_propagated"])
+        self.assertFalse(kwargs["only_distributions"])
+
+    @patch("moments2amplitudes.cli.plot_tbins_parallel")
+    def test_cli_plot_only_distributions(self, mock_plot_parallel):
+        import argparse
+        from moments2amplitudes.cli import cmd_plot
+        mock_plot_parallel.return_value = {"success": True, "total_plots": 8}
+        args = argparse.Namespace(
+            config="configs/d_breit_wigner.yaml",
+            run_dir=None,
+            formats="png",
+            n_lowest_chi2=None,
+            unnormalized_moments_file=None,
+            moments=None,
+            t_bin=None,
+            tbins=["t010020", "t020032"],
+            n_workers=2,
+            only_propagated=False,
+            only_distributions=True,
+            only_amplitudes=False,
+        )
+        res = cmd_plot(args)
+        self.assertEqual(res, 0)
+        mock_plot_parallel.assert_called_once()
+        _, kwargs = mock_plot_parallel.call_args
+        self.assertTrue(kwargs["only_distributions"])
+        self.assertFalse(kwargs["only_propagated"])
+
 
 if __name__ == "__main__":
     unittest.main()

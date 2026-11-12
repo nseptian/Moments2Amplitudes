@@ -138,6 +138,19 @@ def format_amplitude_label(name: str) -> str:
     return name.replace("_", "\\_")
 
 
+def format_amplitude_squared_label(name: str) -> str:
+    """Format amplitude names into valid LaTeX squared mathtext (e.g. a_2_-1 -> $|a_{2,-1}|^2$)."""
+    parts = name.split("_")
+    if len(parts) >= 3:
+        prefix = parts[0]
+        l_str = parts[1]
+        m_str = "_".join(parts[2:])
+        if prefix in ("a", "b"):
+            return f"$|{prefix}_{{{l_str},{m_str}}}|^2$"
+    clean_name = name.replace("_", r"\_")
+    return f"$|{clean_name}|^2$"
+
+
 def smooth_curve(
     x: List[float] | Any,
     y: List[float] | Any,
@@ -278,20 +291,25 @@ def extract_credible_bounds(
     masses: List[float],
     mcmc_dict: Dict[float, List[float]],
     nom_vals: List[float],
+    percentiles: Tuple[float, float] = (16.0, 84.0),
+    squared: bool = False,
 ) -> Tuple[List[float], List[float]]:
-    """Extract 16th and 84th percentiles for credible interval band across mass bins."""
+    """Extract lower and upper percentiles for credible interval band across mass bins."""
     import numpy as np
-    lo_68, hi_68 = [], []
+    lo, hi = [], []
+    p_lo, p_hi = percentiles
     for idx, m in enumerate(masses):
         m_round = round(m, 4)
         samps = mcmc_dict.get(m_round, [])
         if samps:
-            lo_68.append(float(np.percentile(samps, 16)))
-            hi_68.append(float(np.percentile(samps, 84)))
+            vals = [v**2 for v in samps] if squared else samps
+            lo.append(float(np.percentile(vals, p_lo)))
+            hi.append(float(np.percentile(vals, p_hi)))
         else:
-            lo_68.append(nom_vals[idx])
-            hi_68.append(nom_vals[idx])
-    return lo_68, hi_68
+            ref = nom_vals[idx]**2 if squared else nom_vals[idx]
+            lo.append(ref)
+            hi.append(ref)
+    return lo, hi
 
 
 def plot_amplitudes_and_bands(
@@ -300,9 +318,12 @@ def plot_amplitudes_and_bands(
     output_dir: Path | str,
     config: FitConfig,
     formats: Tuple[str, ...] = ("png", "pdf"),
+    only_distributions: bool = False,
+    only_amplitudes: bool = False,
 ) -> List[Path]:
     """
-    Plot fitted amplitude magnitudes and phases vs mass with shaded MCMC 68%/95% credible intervals.
+    Plot fitted amplitude magnitudes and phases vs mass with shaded MCMC 68%/95% credible intervals,
+    individual wave intensities/phases, wave overview panels, and 1D posterior distributions.
     """
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -321,14 +342,16 @@ def plot_amplitudes_and_bands(
     masses: List[float] = []
     nominal_amps: Dict[str, List[float]] = {}
     mcmc_samples: Dict[str, Dict[float, List[float]]] = {}
+    mcmc_params: Dict[str, List[float]] = {}
 
     # Read with uproot or PyROOT
     loaded = False
     try:
         import uproot
         with uproot.open(nominal_root) as f:
-            if "result" in f:
-                tree = f["result"]
+            tname = "result" if "result" in f else ("central_result" if "central_result" in f else None)
+            if tname:
+                tree = f[tname]
                 masses = list(tree["mass_bin"].array())
                 for k in tree.keys():
                     if k != "mass_bin" and not k.startswith("H_"):
@@ -337,15 +360,21 @@ def plot_amplitudes_and_bands(
 
         if mcmc_root and Path(mcmc_root).is_file():
             with uproot.open(mcmc_root) as mf:
-                if "result" in mf:
-                    mtree = mf["result"]
+                mtname = "mcmc_result" if "mcmc_result" in mf else ("result" if "result" in mf else None)
+                if mtname:
+                    mtree = mf[mtname]
                     mbins = list(mtree["mass_bin"].array())
                     for k in nominal_amps.keys():
                         if k in mtree:
                             arr = list(mtree[k].array())
                             mcmc_samples[k] = {}
                             for m, v in zip(mbins, arr):
-                                mcmc_samples[k].setdefault(round(m, 4), []).append(v)
+                                mcmc_samples[k].setdefault(round(float(m), 4), []).append(float(v))
+                if "mcmc_params" in mf:
+                    ptree = mf["mcmc_params"]
+                    for pk in ptree.keys():
+                        if pk not in ("mcmc_entry", "Status", "isValid", "isValidError"):
+                            mcmc_params[pk] = [float(v) for v in ptree[pk].array()]
     except Exception:
         pass
 
@@ -385,6 +414,9 @@ def plot_amplitudes_and_bands(
                                         mcmc_samples[k][round(float(m_str), 4)] = [float(v) for v in vals]
                                     except ValueError:
                                         pass
+                            raw_params = jdata.get("mcmc_params", {})
+                            for pk, pvals in raw_params.items():
+                                mcmc_params[pk] = [float(v) for v in pvals]
                             loaded = True
         except Exception as e:
             pass
@@ -415,7 +447,7 @@ def plot_amplitudes_and_bands(
         fit_step = float(np.median(np.diff(masses)))
 
     # --- 1. Amplitude Magnitudes Plot ---
-    if magnitudes:
+    if not only_distributions and magnitudes:
         fig, ax = plt.subplots(figsize=(9, 6), dpi=300)
         colors = plt.cm.tab10(np.linspace(0, 1, len(magnitudes)))
 
@@ -466,7 +498,7 @@ def plot_amplitudes_and_bands(
         plt.close(fig)
 
     # --- 2. Relative Phases Plot ---
-    if phases:
+    if not only_distributions and phases:
         fig, ax = plt.subplots(figsize=(9, 6), dpi=300)
         colors = plt.cm.tab10(np.linspace(0, 1, len(phases)))
 
@@ -515,6 +547,363 @@ def plot_amplitudes_and_bands(
             fig.savefig(p, bbox_inches="tight")
             generated.append(p)
         plt.close(fig)
+
+    # Subdirectories for organized outputs
+    amp_dir = out_dir / "amplitudes"
+    indiv_dir = amp_dir / "individual"
+    dist_dir = amp_dir / "distributions"
+    amp_dir.mkdir(parents=True, exist_ok=True)
+    indiv_dir.mkdir(parents=True, exist_ok=True)
+    dist_dir.mkdir(parents=True, exist_ok=True)
+
+    if not only_distributions:
+        # --- 3. Individual Amplitude Magnitude & Squared Intensity Plots ---
+        for k in sorted(magnitudes):
+            y_nom = nominal_amps[k]
+            label = format_amplitude_label(k)
+            sqr_label = format_amplitude_squared_label(k)
+            is_mass_dep = is_amplitude_mass_dependent(k, config)
+
+            # 3a. Magnitude vs Mass
+            fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
+            if is_mass_dep:
+                m_s, y_s = smooth_curve(masses, y_nom, num_points=200)
+                ax.plot(m_s, y_s, "-", linewidth=2.2, color="navy", label=f"Nominal {label}")
+                if k in mcmc_samples:
+                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
+                    lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5))
+                    m_s95, lo_95s = smooth_curve(masses, lo_95, num_points=200)
+                    m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
+                    m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
+                    m_s68, hi_68s = smooth_curve(masses, hi_68, num_points=200)
+                    ax.fill_between(m_s95, lo_95s, hi_95s, color="cornflowerblue", alpha=0.25, label="MCMC 95% CI")
+                    ax.fill_between(m_s68, lo_68s, hi_68s, color="royalblue", alpha=0.45, label="MCMC 68% CI")
+            else:
+                edges = compute_bin_edges(masses, default_step=fit_step)
+                if hasattr(ax, "stairs"):
+                    ax.stairs(y_nom, edges, linewidth=2.2, color="navy", label=f"Nominal {label}")
+                else:
+                    ax.step(masses, y_nom, where="mid", linewidth=2.2, color="navy", label=f"Nominal {label}")
+                if k in mcmc_samples:
+                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
+                    lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5))
+                    x_step = np.repeat(edges, 2)[1:-1]
+                    lo_95s = np.repeat(lo_95, 2)
+                    hi_95s = np.repeat(hi_95, 2)
+                    lo_68s = np.repeat(lo_68, 2)
+                    hi_68s = np.repeat(hi_68, 2)
+                    ax.fill_between(x_step, lo_95s, hi_95s, color="cornflowerblue", alpha=0.25, label="MCMC 95% CI")
+                    ax.fill_between(x_step, lo_68s, hi_68s, color="royalblue", alpha=0.45, label="MCMC 68% CI")
+
+            ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
+            ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11)
+            ax.set_ylabel(f"Magnitude {label}", fontsize=11)
+            ax.set_title(f"{config.project.name} - Amplitude {label}", fontsize=12, fontweight="bold")
+            ax.legend(frameon=True, fontsize=9)
+            ax.grid(True, linestyle=":", alpha=0.5)
+            for fmt in formats:
+                p_indiv = indiv_dir / f"{k}_magnitude.{fmt}"
+                fig.savefig(p_indiv, bbox_inches="tight")
+                generated.append(p_indiv)
+            plt.close(fig)
+
+            # 3b. Squared Intensity vs Mass
+            fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
+            y_nom_sqr = [v**2 for v in y_nom]
+            if is_mass_dep:
+                m_s, y_s = smooth_curve(masses, y_nom_sqr, num_points=200)
+                ax.plot(m_s, y_s, "-", linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}")
+                if k in mcmc_samples:
+                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
+                    lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
+                    m_s95, lo_95s = smooth_curve(masses, lo_95, num_points=200)
+                    m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
+                    m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
+                    m_s68, hi_68s = smooth_curve(masses, hi_68, num_points=200)
+                    ax.fill_between(m_s95, lo_95s, hi_95s, color="lightcoral", alpha=0.3, label="MCMC 95% CI")
+                    ax.fill_between(m_s68, lo_68s, hi_68s, color="crimson", alpha=0.45, label="MCMC 68% CI")
+            else:
+                edges = compute_bin_edges(masses, default_step=fit_step)
+                if hasattr(ax, "stairs"):
+                    ax.stairs(y_nom_sqr, edges, linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}")
+                else:
+                    ax.step(masses, y_nom_sqr, where="mid", linewidth=2.2, color="darkred", label=f"Nominal {sqr_label}")
+                if k in mcmc_samples:
+                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
+                    lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
+                    x_step = np.repeat(edges, 2)[1:-1]
+                    lo_95s = np.repeat(lo_95, 2)
+                    hi_95s = np.repeat(hi_95, 2)
+                    lo_68s = np.repeat(lo_68, 2)
+                    hi_68s = np.repeat(hi_68, 2)
+                    ax.fill_between(x_step, lo_95s, hi_95s, color="lightcoral", alpha=0.3, label="MCMC 95% CI")
+                    ax.fill_between(x_step, lo_68s, hi_68s, color="crimson", alpha=0.45, label="MCMC 68% CI")
+
+            ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
+            ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11)
+            ax.set_ylabel(f"Intensity {sqr_label}", fontsize=11)
+            ax.set_title(f"{config.project.name} - Intensity {sqr_label}", fontsize=12, fontweight="bold")
+            ax.legend(frameon=True, fontsize=9)
+            ax.grid(True, linestyle=":", alpha=0.5)
+            for fmt in formats:
+                p_indiv_sqr = indiv_dir / f"{k}_squared.{fmt}"
+                fig.savefig(p_indiv_sqr, bbox_inches="tight")
+                generated.append(p_indiv_sqr)
+            plt.close(fig)
+
+        # --- 4. Individual Phase Plots ---
+        for k in sorted(phases):
+            y_nom = nominal_amps[k]
+            label = format_amplitude_label(k)
+            is_mass_dep = is_amplitude_mass_dependent(k, config)
+
+            fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
+            if is_mass_dep:
+                m_s, y_s = smooth_curve(masses, y_nom, num_points=200)
+                ax.plot(m_s, y_s, "-", linewidth=2.2, color="darkgreen", label=f"Nominal {label}")
+                if k in mcmc_samples:
+                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
+                    m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
+                    m_s68, hi_68s = smooth_curve(masses, hi_68, num_points=200)
+                    ax.fill_between(m_s68, lo_68s, hi_68s, color="mediumseagreen", alpha=0.35, label="MCMC 68% CI")
+            else:
+                edges = compute_bin_edges(masses, default_step=fit_step)
+                if hasattr(ax, "stairs"):
+                    ax.stairs(y_nom, edges, linewidth=2.2, color="darkgreen", label=f"Nominal {label}")
+                else:
+                    ax.step(masses, y_nom, where="mid", linewidth=2.2, color="darkgreen", label=f"Nominal {label}")
+                if k in mcmc_samples:
+                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
+                    x_step = np.repeat(edges, 2)[1:-1]
+                    lo_68s = np.repeat(lo_68, 2)
+                    hi_68s = np.repeat(hi_68, 2)
+                    ax.fill_between(x_step, lo_68s, hi_68s, color="mediumseagreen", alpha=0.35, label="MCMC 68% CI")
+
+            ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
+            ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11)
+            ax.set_ylabel(f"Phase {label} [rad]", fontsize=11)
+            ax.set_title(f"{config.project.name} - Phase {label}", fontsize=12, fontweight="bold")
+            ax.legend(frameon=True, fontsize=9)
+            ax.grid(True, linestyle=":", alpha=0.5)
+            for fmt in formats:
+                p_indiv_phi = indiv_dir / f"{k}_phase.{fmt}"
+                fig.savefig(p_indiv_phi, bbox_inches="tight")
+                generated.append(p_indiv_phi)
+            plt.close(fig)
+
+        # --- 5. Grouped Wave Overview Panels ---
+        def draw_wave_grid(wave_keys: List[str], grid_title: str, out_filename_base: str):
+            if not wave_keys:
+                return
+            n_w = len(wave_keys)
+            ncols = min(5, n_w)
+            nrows = math.ceil(n_w / ncols)
+            fig, axes = plt.subplots(nrows, ncols, figsize=(4.0 * ncols, 3.5 * nrows), dpi=300, sharex=True)
+            axes_flat = [axes] if n_w == 1 else (axes.flatten() if hasattr(axes, "flatten") else [axes])
+
+            for i, k in enumerate(wave_keys):
+                ax = axes_flat[i]
+                y_nom_sqr = [v**2 for v in nominal_amps[k]]
+                sqr_label = format_amplitude_squared_label(k)
+                is_mass_dep = is_amplitude_mass_dependent(k, config)
+
+                if is_mass_dep:
+                    m_s, y_s = smooth_curve(masses, y_nom_sqr, num_points=200)
+                    ax.plot(m_s, y_s, "-", linewidth=2.0, color="crimson")
+                    if k in mcmc_samples:
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True)
+                        m_s68, lo_s = smooth_curve(masses, lo_68, num_points=200)
+                        m_s68, hi_s = smooth_curve(masses, hi_68, num_points=200)
+                        ax.fill_between(m_s68, lo_s, hi_s, color="crimson", alpha=0.3)
+                else:
+                    edges = compute_bin_edges(masses, default_step=fit_step)
+                    if hasattr(ax, "stairs"):
+                        ax.stairs(y_nom_sqr, edges, linewidth=2.0, color="crimson")
+                    else:
+                        ax.step(masses, y_nom_sqr, where="mid", linewidth=2.0, color="crimson")
+                    if k in mcmc_samples:
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True)
+                        x_step = np.repeat(edges, 2)[1:-1]
+                        lo_s = np.repeat(lo_68, 2)
+                        hi_s = np.repeat(hi_68, 2)
+                        ax.fill_between(x_step, lo_s, hi_s, color="crimson", alpha=0.3)
+
+                ax.set_title(sqr_label, fontsize=12, fontweight="bold")
+                ax.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
+                ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=9)
+                ax.set_ylabel(r"Intensity", fontsize=9)
+                ax.grid(True, linestyle=":", alpha=0.5)
+
+            for i in range(n_w, len(axes_flat)):
+                axes_flat[i].set_visible(False)
+
+            fig.suptitle(f"{config.project.name} - {grid_title}", fontsize=13, fontweight="bold", y=0.995)
+            plt.tight_layout()
+            for fmt in formats:
+                p_grid = amp_dir / f"{out_filename_base}.{fmt}"
+                fig.savefig(p_grid, bbox_inches="tight")
+                generated.append(p_grid)
+            plt.close(fig)
+
+        a_2_waves = [k for k in magnitudes if k.startswith("a_2_")]
+        b_2_waves = [k for k in magnitudes if k.startswith("b_2_")]
+        s_waves = [k for k in magnitudes if k.startswith("a_0_") or k.startswith("b_0_")]
+
+        draw_wave_grid(a_2_waves, "D-Waves Positive Reflectivity Intensity vs Mass", "overview_D_waves_positive")
+        draw_wave_grid(b_2_waves, "D-Waves Negative Reflectivity Intensity vs Mass", "overview_D_waves_negative")
+        draw_wave_grid(s_waves, "S-Wave Intensity vs Mass", "overview_S_waves")
+
+    # --- 6. 1D MCMC Posterior Distributions ---
+    if not only_amplitudes:
+        # 6a. Fitted Parameter Posterior Distributions
+        if mcmc_params:
+            for pname, pvals in mcmc_params.items():
+                vals = np.array(pvals, dtype=float)
+                if len(vals) < 2 or np.std(vals) < 1e-12:
+                    continue
+                fig, ax = plt.subplots(figsize=(6, 4.5), dpi=300)
+                q16, q50, q84 = np.percentile(vals, [16, 50, 84])
+                mean_v = np.mean(vals)
+                std_v = np.std(vals)
+
+                n_bins = min(50, max(15, int(np.sqrt(len(vals)))))
+                ax.hist(vals, bins=n_bins, color="skyblue", edgecolor="steelblue", alpha=0.7, density=True)
+                ax.axvline(q50, color="navy", linestyle="--", linewidth=1.8, label=f"Median: {q50:.4f}")
+                ax.axvline(q16, color="royalblue", linestyle=":", linewidth=1.5, label=f"68% CI: [{q16:.4f}, {q84:.4f}]")
+                ax.axvline(q84, color="royalblue", linestyle=":", linewidth=1.5)
+                ax.axvspan(q16, q84, color="royalblue", alpha=0.15)
+
+                clean_name = pname.replace("_", "\\_")
+                ax.set_title(f"MCMC Posterior Distribution: {clean_name}", fontsize=11, fontweight="bold")
+                ax.set_xlabel(f"{clean_name}", fontsize=10)
+                ax.set_ylabel("Probability Density", fontsize=10)
+                ax.legend(frameon=True, fontsize=8, loc="upper right")
+                ax.grid(True, linestyle=":", alpha=0.4)
+
+                safe_name = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", pname)
+                for fmt in formats:
+                    p_dist = dist_dir / f"{safe_name}_dist.{fmt}"
+                    fig.savefig(p_dist, bbox_inches="tight")
+                    generated.append(p_dist)
+                plt.close(fig)
+
+            # Overview grid of resonance/key parameters (MD_* and chi2)
+            key_params = [p for p in mcmc_params.keys() if p.startswith("MD_") or p == "chi2"]
+            if key_params:
+                ncols = min(4, len(key_params))
+                nrows = math.ceil(len(key_params) / ncols)
+                fig, axes = plt.subplots(nrows, ncols, figsize=(4.0 * ncols, 3.2 * nrows), dpi=300)
+                axes_flat = [axes] if len(key_params) == 1 else (axes.flatten() if hasattr(axes, "flatten") else [axes])
+
+                for i, pname in enumerate(key_params):
+                    ax = axes_flat[i]
+                    vals = np.array(mcmc_params[pname], dtype=float)
+                    q16, q50, q84 = np.percentile(vals, [16, 50, 84])
+                    n_bins = min(40, max(12, int(np.sqrt(len(vals)))))
+                    ax.hist(vals, bins=n_bins, color="lightsteelblue", edgecolor="royalblue", alpha=0.7, density=True)
+                    ax.axvline(q50, color="navy", linestyle="--", linewidth=1.5)
+                    ax.axvline(q16, color="royalblue", linestyle=":", linewidth=1.2)
+                    ax.axvline(q84, color="royalblue", linestyle=":", linewidth=1.2)
+                    ax.axvspan(q16, q84, color="royalblue", alpha=0.15)
+
+                    short_name = pname.replace("MD_", "").replace("_a2_1320", "").replace("_", "\\_")
+                    ax.set_title(f"{short_name} [{q50:.3f}]", fontsize=10, fontweight="bold")
+                    ax.grid(True, linestyle=":", alpha=0.4)
+                    ax.tick_params(axis="both", which="major", labelsize=8)
+
+                for i in range(len(key_params), len(axes_flat)):
+                    axes_flat[i].set_visible(False)
+
+                fig.suptitle(f"{config.project.name} - MCMC Resonance Parameters Posterior Distributions", fontsize=13, fontweight="bold", y=0.995)
+                plt.tight_layout()
+                for fmt in formats:
+                    p_dist_grid = dist_dir / f"distributions_overview.{fmt}"
+                    fig.savefig(p_dist_grid, bbox_inches="tight")
+                    generated.append(p_dist_grid)
+                plt.close(fig)
+
+        # 6b. Amplitude Yield / Integrated Intensity Posterior Distributions
+        if mcmc_samples and masses:
+            yield_samples: Dict[str, List[float]] = {}
+            first_m = round(masses[0], 4)
+            for k in sorted(magnitudes):
+                m_dict = mcmc_samples.get(k, {})
+                n_s = len(m_dict.get(first_m, []))
+                if n_s > 0:
+                    y_samples = []
+                    for s_idx in range(n_s):
+                        tot = 0.0
+                        for m in masses:
+                            m_r = round(m, 4)
+                            samps = m_dict.get(m_r, [])
+                            if s_idx < len(samps):
+                                tot += (samps[s_idx] ** 2) * fit_step
+                        y_samples.append(tot)
+                    if y_samples and np.std(y_samples) > 1e-12:
+                        yield_samples[k] = y_samples
+
+            for k, y_vals in yield_samples.items():
+                vals = np.array(y_vals, dtype=float)
+                fig, ax = plt.subplots(figsize=(6, 4.5), dpi=300)
+                q16, q50, q84 = np.percentile(vals, [16, 50, 84])
+                nom_yield = sum((v**2) * fit_step for v in nominal_amps.get(k, []))
+
+                n_bins = min(50, max(15, int(np.sqrt(len(vals)))))
+                ax.hist(vals, bins=n_bins, color="coral", edgecolor="darkred", alpha=0.7, density=True)
+                ax.axvline(q50, color="darkred", linestyle="--", linewidth=1.8, label=f"Median: {q50:.2f}")
+                ax.axvline(q16, color="firebrick", linestyle=":", linewidth=1.5, label=f"68% CI: [{q16:.2f}, {q84:.2f}]")
+                ax.axvline(q84, color="firebrick", linestyle=":", linewidth=1.5)
+                ax.axvspan(q16, q84, color="firebrick", alpha=0.15)
+                if nom_yield > 0:
+                    ax.axvline(nom_yield, color="black", linestyle="-", linewidth=1.5, label=f"Nominal: {nom_yield:.2f}")
+
+                sqr_label = format_amplitude_squared_label(k)
+                ax.set_title(f"Propagated Amplitude Posterior: $\\int {sqr_label}\\ dM$", fontsize=11, fontweight="bold")
+                ax.set_xlabel(f"Integrated Intensity $\\int {sqr_label}\\ dM$", fontsize=10)
+                ax.set_ylabel("Probability Density", fontsize=10)
+                ax.legend(frameon=True, fontsize=8, loc="upper right")
+                ax.grid(True, linestyle=":", alpha=0.4)
+
+                for fmt in formats:
+                    p_ydist = dist_dir / f"{k}_yield_dist.{fmt}"
+                    fig.savefig(p_ydist, bbox_inches="tight")
+                    generated.append(p_ydist)
+                plt.close(fig)
+
+            # Overview grid of amplitude yields
+            if yield_samples:
+                y_keys = list(yield_samples.keys())
+                ncols = min(4, len(y_keys))
+                nrows = math.ceil(len(y_keys) / ncols)
+                fig, axes = plt.subplots(nrows, ncols, figsize=(4.0 * ncols, 3.2 * nrows), dpi=300)
+                axes_flat = [axes] if len(y_keys) == 1 else (axes.flatten() if hasattr(axes, "flatten") else [axes])
+
+                for i, k in enumerate(y_keys):
+                    ax = axes_flat[i]
+                    vals = np.array(yield_samples[k], dtype=float)
+                    q16, q50, q84 = np.percentile(vals, [16, 50, 84])
+                    n_bins = min(40, max(12, int(np.sqrt(len(vals)))))
+                    ax.hist(vals, bins=n_bins, color="lightcoral", edgecolor="darkred", alpha=0.7, density=True)
+                    ax.axvline(q50, color="darkred", linestyle="--", linewidth=1.5)
+                    ax.axvline(q16, color="firebrick", linestyle=":", linewidth=1.2)
+                    ax.axvline(q84, color="firebrick", linestyle=":", linewidth=1.2)
+                    ax.axvspan(q16, q84, color="firebrick", alpha=0.15)
+
+                    sqr_label = format_amplitude_squared_label(k)
+                    ax.set_title(f"{sqr_label} [{q50:.1f}]", fontsize=10, fontweight="bold")
+                    ax.grid(True, linestyle=":", alpha=0.4)
+                    ax.tick_params(axis="both", which="major", labelsize=8)
+
+                for i in range(len(y_keys), len(axes_flat)):
+                    axes_flat[i].set_visible(False)
+
+                fig.suptitle(f"{config.project.name} - Propagated Amplitude Yields Posterior Distributions", fontsize=13, fontweight="bold", y=0.995)
+                plt.tight_layout()
+                for fmt in formats:
+                    p_ydist_grid = dist_dir / f"amplitude_yields_overview.{fmt}"
+                    fig.savefig(p_ydist_grid, bbox_inches="tight")
+                    generated.append(p_ydist_grid)
+                plt.close(fig)
 
     return generated
 
@@ -892,9 +1281,29 @@ def run_all_diagnostics_and_plots(
     config: FitConfig,
     rundir: RunDirectory,
     formats: Tuple[str, ...] = ("png", "pdf"),
+    only_propagated: bool = False,
+    only_distributions: bool = False,
+    only_amplitudes: bool = False,
 ) -> Dict[str, Any]:
     """Run full diagnostic report generation and publication plotting."""
     from .summary import FitSummary
+
+    # Fast path: only generate propagated amplitude/distribution plots
+    if only_propagated or only_distributions or only_amplitudes:
+        plot_files = plot_amplitudes_and_bands(
+            rundir.nominal_best_root,
+            rundir.mcmc_propagated_root,
+            rundir.plots_dir,
+            config,
+            formats=formats,
+            only_distributions=only_distributions,
+            only_amplitudes=only_amplitudes,
+        )
+        return {
+            "summary": None,
+            "reports": [],
+            "plots": plot_files,
+        }
 
     summary = FitSummary(config, rundir)
     has_nominal = summary.load_from_root(rundir.nominal_best_root, rundir.mcmc_propagated_root)
@@ -911,6 +1320,8 @@ def run_all_diagnostics_and_plots(
         rundir.plots_dir,
         config,
         formats=formats,
+        only_distributions=only_distributions,
+        only_amplitudes=only_amplitudes,
     )
 
     # Generate multi-start landscape plot if starts exist
@@ -984,6 +1395,9 @@ def _plot_single_tbin_worker(
     t_name: str,
     run_dir: Optional[str] = None,
     formats: Tuple[str, ...] = ("png", "pdf"),
+    only_propagated: bool = False,
+    only_distributions: bool = False,
+    only_amplitudes: bool = False,
 ) -> Tuple[str, bool, int, str]:
     """
     Worker function to generate diagnostics and publication plots for a single t-bin.
@@ -1006,10 +1420,19 @@ def _plot_single_tbin_worker(
             legacy_best = rundir.root / "central_best_params.root"
             if legacy_best.is_file():
                 rundir.save_nominal_best(legacy_best)
+            elif rundir.mcmc_propagated_root.is_file():
+                rundir.save_nominal_best(rundir.mcmc_propagated_root)
             else:
                 return (t_name, False, 0, f"No nominal best fit found at {rundir.nominal_best_root}. Skipping.")
 
-        res = run_all_diagnostics_and_plots(cfg_t, rundir, formats=formats)
+        res = run_all_diagnostics_and_plots(
+            cfg_t,
+            rundir,
+            formats=formats,
+            only_propagated=only_propagated,
+            only_distributions=only_distributions,
+            only_amplitudes=only_amplitudes,
+        )
         num_plots = len(res.get("plots", []))
         return (t_name, True, num_plots, f"Generated {num_plots} plot files in {rundir.plots_dir}")
     except Exception as e:
@@ -1023,6 +1446,9 @@ def plot_tbins_parallel(
     run_dir: Optional[str] = None,
     formats: Tuple[str, ...] = ("png", "pdf"),
     max_workers: Optional[int] = None,
+    only_propagated: bool = False,
+    only_distributions: bool = False,
+    only_amplitudes: bool = False,
 ) -> Dict[str, Any]:
     """
     Generate diagnostics and publication plots concurrently across all configured t-bins.
@@ -1037,8 +1463,11 @@ def plot_tbins_parallel(
         max_workers = min(len(tbins_list), int(cfg_workers)) if cfg_workers else min(len(tbins_list), half_cpus)
     max_workers = max(1, min(max_workers, half_cpus))
 
+    mode_label = "MCMC Posterior Distributions" if only_distributions else (
+        "Propagated Amplitude Plots" if only_propagated else "Publication Plots"
+    )
     print(f"\n=======================================================")
-    print(f" Moments2Amplitudes Publication Plotting Across t-Bins")
+    print(f" Moments2Amplitudes {mode_label} Across t-Bins")
     print(f" Project:      {config.project.name}")
     print(f" t-Bins ({len(tbins_list)}): {', '.join(tbins_list)}")
     print(f" Parallel:     {max_workers} worker processes")
@@ -1055,6 +1484,9 @@ def plot_tbins_parallel(
                 t_name,
                 run_dir,
                 formats,
+                only_propagated,
+                only_distributions,
+                only_amplitudes,
             )
             futures[f] = t_name
 

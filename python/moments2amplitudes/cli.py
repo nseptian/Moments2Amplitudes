@@ -143,7 +143,13 @@ def cmd_propagate(args: argparse.Namespace) -> int:
         run_dir=getattr(args, "run_dir", None),
     )
 
-    return 0 if (res.get("success", False) or "output_file" in res) else 1
+    success = res.get("success", False) or "output_file" in res
+    if success and getattr(args, "draw_plots", False):
+        print("\n>>> Automatically drawing propagated amplitude plots and distributions...")
+        args.only_propagated = True
+        cmd_plot(args)
+
+    return 0 if success else 1
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -220,6 +226,10 @@ def cmd_plot(args: argparse.Namespace) -> int:
     formats = tuple(args.formats.split(",")) if hasattr(args, "formats") and args.formats else ("png", "pdf")
     tbins = cfg.dataset.get_t_bins()
 
+    only_prop = getattr(args, "only_propagated", False)
+    only_dist = getattr(args, "only_distributions", False)
+    only_amp = getattr(args, "only_amplitudes", False)
+
     if len(tbins) > 1 and not getattr(args, "t_bin", None):
         max_workers = getattr(args, "n_workers", None) or getattr(cfg.multi_start, "n_tbin_workers", None)
         res = plot_tbins_parallel(
@@ -228,6 +238,9 @@ def cmd_plot(args: argparse.Namespace) -> int:
             run_dir=getattr(args, "run_dir", None) or getattr(args, "output_dir", None),
             formats=formats,
             max_workers=max_workers,
+            only_propagated=only_prop,
+            only_distributions=only_dist,
+            only_amplitudes=only_amp,
         )
         return 0 if (res.get("success", False) or res.get("total_plots", 0) > 0) else 1
 
@@ -239,11 +252,20 @@ def cmd_plot(args: argparse.Namespace) -> int:
         legacy_best = rundir.root / "central_best_params.root"
         if legacy_best.is_file():
             rundir.save_nominal_best(legacy_best)
+        elif rundir.mcmc_propagated_root.is_file():
+            rundir.save_nominal_best(rundir.mcmc_propagated_root)
         else:
             print(f"[ERROR] No nominal best fit found at {rundir.nominal_best_root}")
             return 1
 
-    res = run_all_diagnostics_and_plots(cfg, rundir, formats=formats)
+    res = run_all_diagnostics_and_plots(
+        cfg,
+        rundir,
+        formats=formats,
+        only_propagated=only_prop,
+        only_distributions=only_dist,
+        only_amplitudes=only_amp,
+    )
     print(f"[SUCCESS] Generated {len(res['plots'])} plot files in: {rundir.plots_dir}")
     return 0
 
@@ -490,6 +512,7 @@ def main():
     p_prop.add_argument("--run-dir", type=str, default=None, help="Run directory")
     p_prop.add_argument("--t-bin", "--tbin", dest="t_bin", type=str, default=None, help="Single t-bin directory override (e.g. t010020, t020032)")
     p_prop.add_argument("--tbins", "--t-bins", dest="tbins", nargs="*", default=None, help="t-bins to evaluate (e.g. 'all', 't010020 t020032', '0 1 2')")
+    p_prop.add_argument("--plot", "--draw", dest="draw_plots", action="store_true", help="Automatically draw propagated amplitude distributions and credible bands after propagation completes")
 
     # Plot
     p_plot = subparsers.add_parser("plot", help="Generate publication amplitude plots and error bands")
@@ -502,6 +525,9 @@ def main():
     p_plot.add_argument("--t-bin", "--tbin", dest="t_bin", type=str, default=None, help="Single t-bin directory override (e.g. t010020, t020032)")
     p_plot.add_argument("--tbins", "--t-bins", dest="tbins", nargs="*", default=None, help="t-bins to evaluate (e.g. 'all', 't010020 t020032', '0 1 2')")
     p_plot.add_argument("--n-workers", "--tbin-workers", dest="n_workers", type=int, default=None, help="Number of parallel worker processes across t-bins")
+    p_plot.add_argument("--only-propagated", "--propagated-only", dest="only_propagated", action="store_true", help="Only draw plots derived from propagated MCMC results (credible bands, individual amplitudes, and posterior distributions)")
+    p_plot.add_argument("--only-distributions", "--distributions-only", "--only-distribution", "--distribution-only", dest="only_distributions", action="store_true", help="Only draw 1D posterior distributions of propagated MCMC parameters and yields")
+    p_plot.add_argument("--only-amplitudes", "--amplitudes-only", dest="only_amplitudes", action="store_true", help="Only draw amplitude curves and credible bands (individual amplitudes and wave overviews)")
 
     # Summary
     p_sum = subparsers.add_parser("summary", help="Display fit parameter summary and save report tables")

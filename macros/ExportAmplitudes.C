@@ -31,7 +31,10 @@ void ExportAmplitudes(
 
     TTree* t_nom = dynamic_cast<TTree*>(f_nom->Get("result"));
     if (!t_nom) {
-        std::cerr << "Error: TTree 'result' not found in " << nominalRootFile << std::endl;
+        t_nom = dynamic_cast<TTree*>(f_nom->Get("central_result"));
+    }
+    if (!t_nom) {
+        std::cerr << "Error: TTree 'result' or 'central_result' not found in " << nominalRootFile << std::endl;
         f_nom->Close();
         out << "{}\n";
         return;
@@ -100,7 +103,10 @@ void ExportAmplitudes(
     if (mcmcRootFile && std::string(mcmcRootFile) != "" && std::string(mcmcRootFile) != "none") {
         TFile* f_mcmc = TFile::Open(mcmcRootFile);
         if (f_mcmc && !f_mcmc->IsZombie()) {
-            TTree* t_mcmc = dynamic_cast<TTree*>(f_mcmc->Get("result"));
+            TTree* t_mcmc = dynamic_cast<TTree*>(f_mcmc->Get("mcmc_result"));
+            if (!t_mcmc) {
+                t_mcmc = dynamic_cast<TTree*>(f_mcmc->Get("result"));
+            }
             if (t_mcmc) {
                 double mcmc_mass = 0.0;
                 t_mcmc->SetBranchAddress("mass_bin", &mcmc_mass);
@@ -141,9 +147,55 @@ void ExportAmplitudes(
                     out << "\n    }" << (i + 1 < validMcmcAmps.size() ? ",\n" : "\n");
                 }
             }
+
+            out << "  }";
+
+            // Also export mcmc_params tree if present
+            TTree* t_params = dynamic_cast<TTree*>(f_mcmc->Get("mcmc_params"));
+            if (t_params) {
+                out << ",\n  \"mcmc_params\": {\n";
+                TObjArray* pBranches = t_params->GetListOfBranches();
+                std::vector<std::string> paramNames;
+                std::map<std::string, double> pBuffers;
+                for (int i = 0; i < pBranches->GetEntries(); ++i) {
+                    TBranch* br = dynamic_cast<TBranch*>(pBranches->At(i));
+                    if (!br) continue;
+                    TString bName = br->GetName();
+                    if (bName == "mcmc_entry" || bName == "Status" || bName == "isValid" || bName == "isValidError") continue;
+                    std::string pStr = bName.Data();
+                    paramNames.push_back(pStr);
+                    pBuffers[pStr] = 0.0;
+                    t_params->SetBranchAddress(bName, &pBuffers[pStr]);
+                }
+                std::map<std::string, std::vector<double>> paramVals;
+                const Long64_t nParEntries = t_params->GetEntries();
+                for (Long64_t e = 0; e < nParEntries; ++e) {
+                    t_params->GetEntry(e);
+                    for (const auto& p : paramNames) {
+                        paramVals[p].push_back(pBuffers[p]);
+                    }
+                }
+                for (size_t i = 0; i < paramNames.size(); ++i) {
+                    const std::string& p = paramNames[i];
+                    out << "    \"" << p << "\": [";
+                    const auto& vec = paramVals[p];
+                    for (size_t j = 0; j < vec.size(); ++j) {
+                        if (j > 0) out << ", ";
+                        out << std::setprecision(6) << vec[j];
+                    }
+                    out << "]" << (i + 1 < paramNames.size() ? ",\n" : "\n");
+                }
+                out << "  }\n";
+            } else {
+                out << "\n";
+            }
+
             f_mcmc->Close();
+        } else {
+            out << "  }\n";
         }
+    } else {
+        out << "  }\n";
     }
-    out << "  }\n";
     out << "}\n";
 }
