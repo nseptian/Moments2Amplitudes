@@ -3,7 +3,8 @@ run/
 runs/
 /test_*
 test_*.root
-macros/test_output/
+test_output/
+macros/**/test_output/
 plots*
 data*
 brufit*
