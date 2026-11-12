@@ -123,32 +123,73 @@ def plot_multistart_landscape(
     return generated
 
 
-def format_amplitude_label(name: str) -> str:
-    """Format amplitude names into valid LaTeX mathtext (e.g. a_2_-1 -> $a_{2,-1}$)."""
+L_SPECTROSCOPIC: Dict[int, str] = {
+    0: "S",
+    1: "P",
+    2: "D",
+    3: "F",
+    4: "G",
+    5: "H",
+}
+
+
+def get_amplitude_symbol_parts(name: str) -> Optional[Tuple[str, str, str, str]]:
+    """
+    Parse amplitude branch name (e.g. 'a_2_-1', 'b_0_0', 'aphi_1_1') into:
+    (l_symbol, refl, m_str, wave_kind)
+    where:
+      l_symbol: 'S', 'P', 'D', 'F', ...
+      refl: '+' for 'a'/'aphi', '-' for 'b'/'bphi'
+      m_str: '-1', '0', '1', etc.
+      wave_kind: 'amp' or 'phase'
+    """
     parts = name.split("_")
     if len(parts) >= 3:
         prefix = parts[0]
         l_str = parts[1]
         m_str = "_".join(parts[2:])
-        if prefix in ("a", "b"):
-            return f"${prefix}_{{{l_str},{m_str}}}$"
-        elif prefix in ("aphi", "bphi"):
-            base = "a" if prefix == "aphi" else "b"
-            return f"$\\phi({base}_{{{l_str},{m_str}}})$"
-    return name.replace("_", "\\_")
+        if prefix in ("a", "b", "aphi", "bphi"):
+            try:
+                l_val = int(l_str)
+                l_sym = L_SPECTROSCOPIC.get(l_val, f"L_{{{l_val}}}")
+            except ValueError:
+                l_sym = l_str
+            refl = "+" if prefix in ("a", "aphi") else "-"
+            kind = "phase" if prefix in ("aphi", "bphi") else "amp"
+            return (l_sym, refl, m_str, kind)
+    return None
+
+
+def format_amplitude_symbol(name: str) -> str:
+    """Format amplitude name into bare LaTeX mathtext (e.g. a_2_-1 -> D^{+}_{-1}, a_0_0 -> S^{+}_{0})."""
+    parsed = get_amplitude_symbol_parts(name)
+    if parsed:
+        l_sym, refl, m_str, kind = parsed
+        if kind == "phase":
+            return f"\\phi({l_sym}^{{{refl}}}_{{{m_str}}})"
+        return f"{l_sym}^{{{refl}}}_{{{m_str}}}"
+    clean_name = name.replace("_", r"\_")
+    return clean_name
+
+
+def format_amplitude_label(name: str) -> str:
+    """Format amplitude name into LaTeX math string (e.g. a_2_-1 -> $D^{+}_{-1}$, aphi_2_1 -> $\\phi(D^{+}_{1})$)."""
+    return f"${format_amplitude_symbol(name)}$"
+
+
+def format_amplitude_squared_symbol(name: str) -> str:
+    """Format amplitude squared name into bare LaTeX mathtext (e.g. a_2_-1 -> |D^{+}_{-1}|^2)."""
+    parsed = get_amplitude_symbol_parts(name)
+    if parsed:
+        l_sym, refl, m_str, _ = parsed
+        return f"|{l_sym}^{{{refl}}}_{{{m_str}}}|^2"
+    clean_name = name.replace("_", r"\_")
+    return f"|{clean_name}|^2"
 
 
 def format_amplitude_squared_label(name: str) -> str:
-    """Format amplitude names into valid LaTeX squared mathtext (e.g. a_2_-1 -> $|a_{2,-1}|^2$)."""
-    parts = name.split("_")
-    if len(parts) >= 3:
-        prefix = parts[0]
-        l_str = parts[1]
-        m_str = "_".join(parts[2:])
-        if prefix in ("a", "b"):
-            return f"$|{prefix}_{{{l_str},{m_str}}}|^2$"
-    clean_name = name.replace("_", r"\_")
-    return f"$|{clean_name}|^2$"
+    """Format amplitude squared name into LaTeX math string (e.g. a_2_-1 -> $|D^{+}_{-1}|^2$)."""
+    return f"${format_amplitude_squared_symbol(name)}$"
 
 
 def smooth_curve(
@@ -773,7 +814,27 @@ def plot_amplitudes_and_bands(
                 ax.axvline(q84, color="royalblue", linestyle=":", linewidth=1.5)
                 ax.axvspan(q16, q84, color="royalblue", alpha=0.15)
 
-                clean_name = pname.replace("_", "\\_")
+                clean_name = pname
+                if pname.startswith("MI_"):
+                    m_parts = pname.split("_")
+                    if len(m_parts) >= 4:
+                        mb = m_parts[1]
+                        amp = "_".join(m_parts[2:])
+                        clean_name = f"{format_amplitude_label(amp)} @ {mb} GeV"
+                    else:
+                        clean_name = pname.replace("_", "\\_")
+                elif pname.startswith("MD_"):
+                    parts = pname[3:].split("_")
+                    if len(parts) >= 3 and parts[0] in ("a", "b", "aphi", "bphi"):
+                        amp_key = f"{parts[0]}_{parts[1]}_{parts[2]}"
+                        sym = format_amplitude_symbol(amp_key)
+                        suffix = "_".join(parts[3:]) if len(parts) > 3 else ""
+                        clean_name = f"$k({sym})$" if suffix == "k" else f"${sym}$"
+                    else:
+                        clean_name = pname.replace("_", "\\_")
+                else:
+                    clean_name = pname.replace("_", "\\_")
+
                 ax.set_title(f"MCMC Posterior Distribution: {clean_name}", fontsize=11, fontweight="bold")
                 ax.set_xlabel(f"{clean_name}", fontsize=10)
                 ax.set_ylabel("Probability Density", fontsize=10)
@@ -806,7 +867,21 @@ def plot_amplitudes_and_bands(
                     ax.axvline(q84, color="royalblue", linestyle=":", linewidth=1.2)
                     ax.axvspan(q16, q84, color="royalblue", alpha=0.15)
 
-                    short_name = pname.replace("MD_", "").replace("_a2_1320", "").replace("_", "\\_")
+                    raw_short = pname.replace("MD_", "").replace("_a2_1320", "")
+                    p_parts = raw_short.split("_")
+                    if len(p_parts) >= 3 and p_parts[0] in ("a", "b", "aphi", "bphi"):
+                        amp_key = f"{p_parts[0]}_{p_parts[1]}_{p_parts[2]}"
+                        sym = format_amplitude_symbol(amp_key)
+                        suffix = "_".join(p_parts[3:]) if len(p_parts) > 3 else ""
+                        if suffix == "k":
+                            short_name = f"$k({sym})$"
+                        elif suffix:
+                            short_name = f"${sym}_{{{suffix}}}$"
+                        else:
+                            short_name = f"${sym}$"
+                    else:
+                        short_name = raw_short.replace("_", "\\_")
+
                     ax.set_title(f"{short_name} [{q50:.3f}]", fontsize=10, fontweight="bold")
                     ax.grid(True, linestyle=":", alpha=0.4)
                     ax.tick_params(axis="both", which="major", labelsize=8)
@@ -858,8 +933,9 @@ def plot_amplitudes_and_bands(
                     ax.axvline(nom_yield, color="black", linestyle="-", linewidth=1.5, label=f"Nominal: {nom_yield:.2f}")
 
                 sqr_label = format_amplitude_squared_label(k)
-                ax.set_title(f"Propagated Amplitude Posterior: $\\int {sqr_label}\\ dM$", fontsize=11, fontweight="bold")
-                ax.set_xlabel(f"Integrated Intensity $\\int {sqr_label}\\ dM$", fontsize=10)
+                sqr_sym = format_amplitude_squared_symbol(k)
+                ax.set_title(f"Propagated Amplitude Posterior: $\\int {sqr_sym}\\ dM$", fontsize=11, fontweight="bold")
+                ax.set_xlabel(f"Integrated Intensity $\\int {sqr_sym}\\ dM$", fontsize=10)
                 ax.set_ylabel("Probability Density", fontsize=10)
                 ax.legend(frameon=True, fontsize=8, loc="upper right")
                 ax.grid(True, linestyle=":", alpha=0.4)

@@ -150,11 +150,33 @@ class TestPlotter(unittest.TestCase):
         self.assertAlmostEqual(edges[3], 1.16)
 
     def test_format_amplitude_squared_label(self):
-        from moments2amplitudes.plotter import format_amplitude_squared_label
-        self.assertEqual(format_amplitude_squared_label("a_2_1"), "$|a_{2,1}|^2$")
-        self.assertEqual(format_amplitude_squared_label("b_2_-1"), "$|b_{2,-1}|^2$")
-        self.assertEqual(format_amplitude_squared_label("a_0_0"), "$|a_{0,0}|^2$")
+        from moments2amplitudes.plotter import (
+            format_amplitude_label,
+            format_amplitude_symbol,
+            format_amplitude_squared_label,
+            format_amplitude_squared_symbol,
+        )
+        # Magnitude labels: [l]^refl_m (l=0,1,2,3 -> S,P,D,F; refl=+ for a, - for b)
+        self.assertEqual(format_amplitude_label("a_0_0"), "$S^{+}_{0}$")
+        self.assertEqual(format_amplitude_label("b_0_0"), "$S^{-}_{0}$")
+        self.assertEqual(format_amplitude_label("a_1_0"), "$P^{+}_{0}$")
+        self.assertEqual(format_amplitude_label("b_1_-1"), "$P^{-}_{-1}$")
+        self.assertEqual(format_amplitude_label("a_2_1"), "$D^{+}_{1}$")
+        self.assertEqual(format_amplitude_label("b_2_-1"), "$D^{-}_{-1}$")
+        self.assertEqual(format_amplitude_label("a_3_2"), "$F^{+}_{2}$")
+        self.assertEqual(format_amplitude_label("aphi_2_1"), "$\\phi(D^{+}_{1})$")
+        self.assertEqual(format_amplitude_label("bphi_2_-1"), "$\\phi(D^{-}_{-1})$")
+
+        # Squared labels: |[l]^refl_m|^2
+        self.assertEqual(format_amplitude_squared_label("a_0_0"), "$|S^{+}_{0}|^2$")
+        self.assertEqual(format_amplitude_squared_label("b_0_0"), "$|S^{-}_{0}|^2$")
+        self.assertEqual(format_amplitude_squared_label("a_2_1"), "$|D^{+}_{1}|^2$")
+        self.assertEqual(format_amplitude_squared_label("b_2_-1"), "$|D^{-}_{-1}|^2$")
         self.assertEqual(format_amplitude_squared_label("other_var"), "$|other\\_var|^2$")
+
+        # Bare symbols (without surrounding $)
+        self.assertEqual(format_amplitude_symbol("a_2_1"), "D^{+}_{1}")
+        self.assertEqual(format_amplitude_squared_symbol("a_2_1"), "|D^{+}_{1}|^2")
 
     @patch("moments2amplitudes.plotter.as_completed")
     @patch("moments2amplitudes.plotter.ProcessPoolExecutor")
