@@ -46,6 +46,7 @@ pytest = "*"
 
 [pypi-dependencies]
 py3nj = "~=0.2.1"
+mplhep = ">=0.3.50"
 
 [activation.env]
 PYTHONNOUSERSITE = "1"

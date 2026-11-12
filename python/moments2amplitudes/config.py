@@ -362,6 +362,7 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         unnormalized_moments_file=plot_dict.get("unnormalized_moments_file"),
         moments=plot_dict.get("moments", ["all"]),
         formats=plot_dict.get("formats", ["png", "pdf"]),
+        style=str(plot_dict.get("style", "LHCb")),
     )
 
     # MCMCPropagation

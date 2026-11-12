@@ -239,12 +239,19 @@ class TestPlotter(unittest.TestCase):
             formats=("png", "pdf"),
             only_distributions=True,
             only_amplitudes=False,
+            style="LHCb",
         )
 
         # 2. only_propagated=True
         res_prop = run_all_diagnostics_and_plots(cfg, self.rundir, only_propagated=True)
         self.assertEqual(len(res_prop["plots"]), 1)
         self.assertIsNone(res_prop["summary"])
+
+    def test_apply_plot_style_options(self):
+        from moments2amplitudes.plotter import apply_plot_style
+        # Should cleanly apply without raising exceptions
+        for st in ["LHCb", "LHCb2", "ROOT", "ATLAS", "CMS", "ALICE", "default"]:
+            apply_plot_style(st)
 
 
 if __name__ == "__main__":

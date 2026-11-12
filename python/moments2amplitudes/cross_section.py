@@ -844,6 +844,7 @@ def plot_cross_section_vs_t(
     formats: Tuple[str, ...] = ("png", "pdf"),
     phase1_comparison: bool = True,
     theory_band_file: Optional[str] = None,
+    style: Optional[str] = "LHCb",
 ) -> List[Path]:
     """
     Plot differential cross-section dsigma/dt vs -t separated by reflectivity.
@@ -866,6 +867,12 @@ def plot_cross_section_vs_t(
     except ImportError:
         print("[WARNING] matplotlib not found. Skipping cross-section plot.")
         return generated
+
+    try:
+        from .plotter import apply_plot_style
+        apply_plot_style(style)
+    except Exception:
+        pass
 
     # Sort results by -t center
     sorted_res = sorted(results, key=lambda x: x.t_center)

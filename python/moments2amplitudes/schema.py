@@ -201,6 +201,7 @@ class PlottingConfig:
     unnormalized_moments_file: Optional[str] = None
     moments: List[str] = field(default_factory=lambda: ["all"])
     formats: List[str] = field(default_factory=lambda: ["png", "pdf"])
+    style: str = "LHCb"
 
 
 @dataclass

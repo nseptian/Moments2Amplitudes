@@ -96,6 +96,7 @@ mcmc_propagation:
 
 plotting:
   enabled: true
+  style: "LHCb"
   n_lowest_chi2: 10
   draw_best_fits: true
   moments: ["all"]

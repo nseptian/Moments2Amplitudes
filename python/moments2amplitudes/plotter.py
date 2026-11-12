@@ -34,6 +34,47 @@ from .environment import (
 )
 
 
+def apply_plot_style(style: Optional[str] = "LHCb") -> None:
+    """
+    Apply high-energy physics plotting style using mplhep.
+    Defaults to LHCb format.
+    Supports LHCb, LHCb1, LHCb2, ROOT, ATLAS, CMS, ALICE, DUNE, or 'default' (standard matplotlib).
+    Falls back gracefully if mplhep or style is unavailable.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    chosen = (style or "LHCb").strip()
+    if chosen.lower() in ("default", "none", "matplotlib", "standard"):
+        plt.style.use("default")
+        return
+
+    try:
+        import mplhep as hep
+        style_map = {
+            "lhcb": hep.style.LHCb,
+            "lhcb1": hep.style.LHCb1,
+            "lhcb2": hep.style.LHCb2,
+            "root": hep.style.ROOT,
+            "atlas": hep.style.ATLAS,
+            "atlas1": hep.style.ATLAS1,
+            "atlas2": hep.style.ATLAS2,
+            "cms": hep.style.CMS,
+            "alice": hep.style.ALICE,
+            "dune": hep.style.DUNE,
+        }
+        if chosen.lower() in style_map:
+            hep.style.use(style_map[chosen.lower()])
+        else:
+            hep.style.use(chosen)
+    except Exception:
+        try:
+            plt.style.use(chosen)
+        except Exception:
+            plt.style.use("default")
+
+
 def discover_lowest_chi2_fits(rundir: RunDirectory, n_lowest: int = 10) -> List[Tuple[float, Path]]:
     """
     Discover completed fit runs in fit_starts_dir, sort by chi2 ascending,
@@ -97,6 +138,7 @@ def plot_multistart_landscape(
     project_name: str = "Moments2Amplitudes",
     plateau_delta: float = 10.0,
     formats: Tuple[str, ...] = ("png", "pdf"),
+    style: Optional[str] = "LHCb",
 ) -> List[Path]:
     """Plot multi-start Chi2 distribution histogram and clustering plateau."""
     out_dir = Path(output_dir)
@@ -111,6 +153,8 @@ def plot_multistart_landscape(
     except ImportError:
         print("[WARNING] matplotlib not found. Skipping multi-start plot.")
         return generated
+
+    apply_plot_style(style)
 
     chi2s = [r["chi2"] for r in results if r.get("is_valid", False) and r.get("status", -1) == 0 and r.get("chi2", 1e9) < 1e6]
     if not chi2s:
@@ -378,6 +422,7 @@ def plot_amplitudes_and_bands(
     formats: Tuple[str, ...] = ("png", "pdf"),
     only_distributions: bool = False,
     only_amplitudes: bool = False,
+    style: Optional[str] = None,
 ) -> List[Path]:
     """
     Plot fitted amplitude magnitudes and phases vs mass with shaded MCMC 68%/95% credible intervals,
@@ -395,6 +440,9 @@ def plot_amplitudes_and_bands(
     except ImportError:
         print("[WARNING] matplotlib not found. Skipping amplitude plots.")
         return generated
+
+    effective_style = style or (getattr(config.plotting, "style", "LHCb") if getattr(config, "plotting", None) else "LHCb")
+    apply_plot_style(effective_style)
 
     # Extract nominal result tree
     masses: List[float] = []
@@ -1042,6 +1090,7 @@ def plot_moments_comparison(
     moments: Optional[List[str]] = None,
     unnormalized_moments_file: Optional[Path | str] = None,
     formats: Tuple[str, ...] = ("png", "pdf"),
+    style: Optional[str] = None,
 ) -> List[Path]:
     """
     Plot experimental unnormalized moments (from MCMC) vs mass-dependent model fit results.
@@ -1058,6 +1107,9 @@ def plot_moments_comparison(
     except ImportError:
         print("[WARNING] matplotlib not found. Skipping moment comparison plots.")
         return generated
+
+    effective_style = style or (getattr(config.plotting, "style", "LHCb") if getattr(config, "plotting", None) else "LHCb")
+    apply_plot_style(effective_style)
 
     # Resolve number of lowest chi2 results to draw
     n_lowest = n_lowest_chi2
@@ -1415,9 +1467,12 @@ def run_all_diagnostics_and_plots(
     only_propagated: bool = False,
     only_distributions: bool = False,
     only_amplitudes: bool = False,
+    style: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run full diagnostic report generation and publication plotting."""
     from .summary import FitSummary
+
+    effective_style = style or (getattr(config.plotting, "style", "LHCb") if getattr(config, "plotting", None) else "LHCb")
 
     # Fast path: only generate propagated amplitude/distribution plots
     if only_propagated or only_distributions or only_amplitudes:
@@ -1429,6 +1484,7 @@ def run_all_diagnostics_and_plots(
             formats=formats,
             only_distributions=only_distributions,
             only_amplitudes=only_amplitudes,
+            style=effective_style,
         )
         return {
             "summary": None,
@@ -1453,6 +1509,7 @@ def run_all_diagnostics_and_plots(
         formats=formats,
         only_distributions=only_distributions,
         only_amplitudes=only_amplitudes,
+        style=effective_style,
     )
 
     # Generate multi-start landscape plot if starts exist
@@ -1483,6 +1540,7 @@ def run_all_diagnostics_and_plots(
                 project_name=config.project.name,
                 plateau_delta=config.multi_start.plateau_delta_chi2,
                 formats=formats,
+                style=effective_style,
             )
             plot_files.extend(ms_plots)
 
@@ -1492,6 +1550,7 @@ def run_all_diagnostics_and_plots(
             config,
             rundir,
             formats=formats,
+            style=effective_style,
         )
         plot_files.extend(mom_plots)
 
@@ -1512,6 +1571,7 @@ def run_all_diagnostics_and_plots(
                 formats=formats,
                 phase1_comparison=config.cross_section.phase1_comparison,
                 theory_band_file=config.cross_section.theory_band_file,
+                style=effective_style,
             )
             plot_files.extend(cs_plots)
         except Exception as e:
@@ -1532,6 +1592,7 @@ def _plot_single_tbin_worker(
     only_propagated: bool = False,
     only_distributions: bool = False,
     only_amplitudes: bool = False,
+    style: Optional[str] = None,
 ) -> Tuple[str, bool, int, str]:
     """
     Worker function to generate diagnostics and publication plots for a single t-bin.
@@ -1566,6 +1627,7 @@ def _plot_single_tbin_worker(
             only_propagated=only_propagated,
             only_distributions=only_distributions,
             only_amplitudes=only_amplitudes,
+            style=style,
         )
         num_plots = len(res.get("plots", []))
         return (t_name, True, num_plots, f"Generated {num_plots} plot files in {rundir.plots_dir}")
@@ -1583,6 +1645,7 @@ def plot_tbins_parallel(
     only_propagated: bool = False,
     only_distributions: bool = False,
     only_amplitudes: bool = False,
+    style: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Generate diagnostics and publication plots concurrently across all configured t-bins.
@@ -1597,6 +1660,8 @@ def plot_tbins_parallel(
         max_workers = min(len(tbins_list), int(cfg_workers)) if cfg_workers else min(len(tbins_list), half_cpus)
     max_workers = max(1, min(max_workers, half_cpus))
 
+    effective_style = style or (getattr(config.plotting, "style", "LHCb") if getattr(config, "plotting", None) else "LHCb")
+
     mode_label = "MCMC Posterior Distributions" if only_distributions else (
         "Propagated Amplitude Plots" if only_propagated else "Publication Plots"
     )
@@ -1604,6 +1669,7 @@ def plot_tbins_parallel(
     print(f" Moments2Amplitudes {mode_label} Across t-Bins")
     print(f" Project:      {config.project.name}")
     print(f" t-Bins ({len(tbins_list)}): {', '.join(tbins_list)}")
+    print(f" Style:        {effective_style} (mplhep)")
     print(f" Parallel:     {max_workers} worker processes")
     print(f"=======================================================\n")
 
@@ -1621,6 +1687,7 @@ def plot_tbins_parallel(
                 only_propagated,
                 only_distributions,
                 only_amplitudes,
+                effective_style,
             )
             futures[f] = t_name
 
