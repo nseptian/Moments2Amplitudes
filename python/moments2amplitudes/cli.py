@@ -13,7 +13,7 @@ from .config import load_config, validate_config, parse_t_bins_input
 from .driver import run_multi_start, run_multi_start_tbins, run_mcmc_propagation, run_mcmc_propagation_tbins
 from .rundir import get_run_directory, RunDirectory
 from .summary import FitSummary
-from .plotter import run_all_diagnostics_and_plots, plot_tbins_parallel
+from .plotter import run_all_diagnostics_and_plots, plot_tbins_parallel, plot_moments_across_tbins
 
 
 def apply_cli_overrides(cfg: FitConfig, args: argparse.Namespace) -> None:
@@ -229,6 +229,18 @@ def cmd_plot(args: argparse.Namespace) -> int:
 
     formats = tuple(args.formats.split(",")) if hasattr(args, "formats") and args.formats else ("png", "pdf")
     tbins = cfg.dataset.get_t_bins()
+
+    if getattr(args, "moments_vs_t", False):
+        run_dir = getattr(args, "run_dir", None) or getattr(args, "output_dir", None)
+        res_plots = plot_moments_across_tbins(
+            cfg,
+            tbins=tbins,
+            run_dir=run_dir,
+            formats=formats,
+            style=getattr(args, "style", None),
+        )
+        print(f"[SUCCESS] Generated {len(res_plots)} multi-t-bin moment comparison plot files.")
+        return 0 if res_plots else 1
 
     only_prop = getattr(args, "only_propagated", False)
     only_dist = getattr(args, "only_distributions", False)
@@ -536,6 +548,7 @@ def main():
     p_plot.add_argument("--only-propagated", "--propagated-only", dest="only_propagated", action="store_true", help="Only draw plots derived from propagated MCMC results (credible bands, individual amplitudes, and posterior distributions)")
     p_plot.add_argument("--only-distributions", "--distributions-only", "--only-distribution", "--distribution-only", dest="only_distributions", action="store_true", help="Only draw 1D posterior distributions of propagated MCMC parameters and yields")
     p_plot.add_argument("--only-amplitudes", "--amplitudes-only", dest="only_amplitudes", action="store_true", help="Only draw amplitude curves and credible bands (individual amplitudes and wave overviews)")
+    p_plot.add_argument("--moments-vs-t", dest="moments_vs_t", action="store_true", help="Plot each moment vs mass for all t-bins in one plot to inspect evolution with -t")
 
     # Summary
     p_sum = subparsers.add_parser("summary", help="Display fit parameter summary and save report tables")

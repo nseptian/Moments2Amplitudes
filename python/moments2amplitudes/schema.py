@@ -205,6 +205,7 @@ class PlottingConfig:
     show_phase_ambiguity: bool = True
     posterior_density_bands: bool = True
     distributions: bool = True
+    moments_vs_t: bool = True
 
 
 @dataclass

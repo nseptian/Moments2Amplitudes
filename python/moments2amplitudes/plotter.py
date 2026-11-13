@@ -13,6 +13,7 @@ import math
 import os
 import re
 import json
+import copy
 import subprocess
 import shutil
 from pathlib import Path
@@ -2037,6 +2038,83 @@ def plot_amplitudes_and_bands(
     return generated
 
 
+def load_or_export_moment_comparison_data(
+    config: FitConfig,
+    rundir: RunDirectory,
+    unnormalized_moments_file: Optional[Path | str] = None,
+    n_lowest_chi2: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Load cached moment comparison JSON or export it using ExportMomentComparison.C."""
+    cache_dir = rundir.root / ".cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    json_path = cache_dir / "moment_comparison_data.json"
+
+    unnorm_path = resolve_unnormalized_moments_file(config, rundir, unnormalized_moments_file)
+
+    # Check if cache exists and is fresh
+    if json_path.is_file() and json_path.stat().st_size > 10:
+        is_stale = False
+        json_mtime = json_path.stat().st_mtime
+        if unnorm_path and unnorm_path.is_file():
+            if json_mtime < unnorm_path.stat().st_mtime:
+                is_stale = True
+        if rundir.nominal_best_root.is_file() and json_mtime < rundir.nominal_best_root.stat().st_mtime:
+            is_stale = True
+        if not is_stale:
+            try:
+                with open(json_path, "r") as f:
+                    data = json.load(f)
+                if "data" in data and data["data"]:
+                    return data
+            except Exception:
+                pass
+
+    if not unnorm_path or not unnorm_path.is_file():
+        resolved_dir_str = config.dataset.get_moments_dir() if hasattr(config.dataset, "get_moments_dir") else config.dataset.moments_dir
+        print(f"[WARNING] Unnormalized moments file not found in {resolved_dir_str}.")
+        return None
+
+    # Resolve lowest chi2 fit files
+    n_lowest = n_lowest_chi2 or 10
+    best_fits = discover_lowest_chi2_fits(rundir, n_lowest=n_lowest)
+    if not best_fits and rundir.nominal_best_root.is_file():
+        best_fits = [(0.0, rundir.nominal_best_root)]
+
+    if not best_fits:
+        print(f"[WARNING] No fit result ROOT files found to overlay in {rundir.fit_dir}.")
+        return None
+
+    fit_files = [str(f[1].resolve()) for f in best_fits]
+    files_str = ",".join(fit_files)
+
+    repo_root = Path(os.environ.get("MOMS2AMPS", str(Path(__file__).resolve().parent.parent.parent)))
+    export_macro = repo_root / "macros" / "ExportMomentComparison.C"
+    if not export_macro.is_file():
+        print(f"[WARNING] Export macro not found at {export_macro}.")
+        return None
+
+    root_bin = get_root_binary(config)
+    cmd = [
+        root_bin,
+        "-l",
+        "-b",
+        "-q",
+        f'{export_macro}("{unnorm_path.resolve()}", "{files_str}", "{json_path.resolve()}")'
+    ]
+    env = get_root_subprocess_env(config)
+    run_res = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    if run_res.returncode != 0 or not json_path.is_file():
+        print(f"[WARNING] ExportMomentComparison failed:\n{run_res.stderr}\n{run_res.stdout}")
+        return None
+
+    try:
+        with open(json_path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[WARNING] Could not parse exported moment comparison JSON: {e}")
+        return None
+
+
 def plot_moments_comparison(
     config: FitConfig,
     rundir: RunDirectory,
@@ -2074,58 +2152,13 @@ def plot_moments_comparison(
     if n_lowest is None or n_lowest <= 0:
         n_lowest = 10
 
-    # Resolve unnormalized moments file
-    unnorm_path = resolve_unnormalized_moments_file(config, rundir, unnormalized_moments_file)
-
-    if not unnorm_path or not unnorm_path.is_file():
-        resolved_dir_str = config.dataset.get_moments_dir() if hasattr(config.dataset, "get_moments_dir") else config.dataset.moments_dir
-        print(f"[WARNING] Unnormalized moments file not found in {resolved_dir_str}. Skipping moment comparison plots.")
-        return generated
-
-    # Resolve lowest chi2 fit files
-    best_fits = discover_lowest_chi2_fits(rundir, n_lowest=n_lowest)
-    if not best_fits and rundir.nominal_best_root.is_file():
-        best_fits = [(0.0, rundir.nominal_best_root)]
-
-    if not best_fits:
-        print(f"[WARNING] No fit result ROOT files found to overlay in {rundir.fit_dir}.")
-        return generated
-
-    fit_files = [str(f[1].resolve()) for f in best_fits]
-    files_str = ",".join(fit_files)
-
-    # Locate ExportMomentComparison.C
-    repo_root = Path(os.environ.get("MOMS2AMPS", str(Path(__file__).resolve().parent.parent.parent)))
-    export_macro = repo_root / "macros" / "ExportMomentComparison.C"
-    if not export_macro.is_file():
-        print(f"[WARNING] Export macro not found at {export_macro}. Skipping moment comparison plots.")
-        return generated
-
-    cache_dir = rundir.root / ".cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    json_path = cache_dir / "moment_comparison_data.json"
-
-    root_bin = get_root_binary(config)
-    cmd = [
-        root_bin,
-        "-l",
-        "-b",
-        "-q",
-        f'{export_macro}("{unnorm_path.resolve()}", "{files_str}", "{json_path.resolve()}")'
-    ]
-
-    env = get_root_subprocess_env(config)
-
-    run_res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
-    if run_res.returncode != 0 or not json_path.is_file():
-        print(f"[WARNING] ExportMomentComparison failed:\n{run_res.stderr}\n{run_res.stdout}")
-        return generated
-
-    try:
-        with open(json_path, "r") as f:
-            comp_data = json.load(f)
-    except Exception as e:
-        print(f"[WARNING] Could not parse exported moment comparison JSON: {e}")
+    comp_data = load_or_export_moment_comparison_data(
+        config=config,
+        rundir=rundir,
+        unnormalized_moments_file=unnormalized_moments_file,
+        n_lowest_chi2=n_lowest,
+    )
+    if not comp_data:
         return generated
 
     data_moments: Dict[str, Any] = comp_data.get("data", {})
@@ -2136,7 +2169,7 @@ def plot_moments_comparison(
     ]
 
     if not data_moments:
-        print(f"[WARNING] No moment data found in {unnorm_path}.")
+        print(f"[WARNING] No moment data found for {rundir.root}.")
         return generated
 
     # Filter requested moments
@@ -2361,6 +2394,365 @@ def plot_moments_comparison(
         plt.close(fig)
 
     print(f"[OK] Generated {len(generated)} moment comparison plot files in {rundir.plots_dir}")
+    return generated
+
+
+def plot_moments_across_tbins(
+    config: FitConfig,
+    tbins: Optional[List[str]] = None,
+    run_dir: Optional[str] = None,
+    output_dir: Optional[Path | str] = None,
+    moments: Optional[List[str]] = None,
+    formats: Tuple[str, ...] = ("png", "pdf"),
+    style: Optional[str] = None,
+    draw_best_fits: Optional[bool] = None,
+) -> List[Path]:
+    """
+    Plot each moment as a function of mass for all t-bins in one plot.
+    Enables inspecting how angular moments evolve across Mandelstam -t transfers.
+    Overlays data points with error bars and nominal model fit curves for each t-bin
+    with distinct colors and markers.
+
+    Generates:
+      - Individual moment plots across all t-bins: <out_dir>/moments_vs_t/<moment_name>.<fmt>
+      - Multi-panel overview grid of key moments: <out_dir>/moments_vs_t/moments_overview_all_tbins.<fmt>
+    """
+    generated: List[Path] = []
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        print("[WARNING] matplotlib not found. Skipping multi-t-bin moment comparison plots.")
+        return generated
+
+    tbins_list = tbins if tbins is not None else config.dataset.get_t_bins()
+    if not tbins_list or len(tbins_list) < 2:
+        return generated
+
+    effective_style = style or (getattr(config.plotting, "style", "default") if getattr(config, "plotting", None) else "default")
+    apply_plot_style(effective_style)
+
+    from .cross_section import parse_t_bin_from_string
+    from .rundir import get_run_directory
+
+    # Resolve output directory
+    if output_dir:
+        out_dir = Path(output_dir)
+    else:
+        base_dir = None
+        if getattr(config, "multi_start", None) and getattr(config.multi_start, "output_dir", None):
+            cand = Path(config.multi_start.output_dir)
+            if cand.is_dir():
+                base_dir = cand
+        if base_dir is None and run_dir:
+            cand = Path(run_dir)
+            if cand.is_dir():
+                base_dir = cand
+        if base_dir is None:
+            cfg_first = copy.deepcopy(config)
+            cfg_first.dataset.t_bin = tbins_list[0]
+            first_rdir = get_run_directory(cfg_first, run_dir)
+            base_dir = first_rdir.root.parent
+
+        out_dir = base_dir / "plots" / "moments_vs_t"
+
+    indiv_dir = out_dir / "individual"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    indiv_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load moment data for each t-bin
+    t_data: Dict[str, Dict[str, Any]] = {}
+    for t_name in tbins_list:
+        cfg_t = copy.deepcopy(config)
+        cfg_t.dataset.t_bin = t_name
+        t_rundir = get_run_directory(cfg_t, run_dir)
+        comp = load_or_export_moment_comparison_data(cfg_t, t_rundir, n_lowest_chi2=1)
+        if not comp:
+            continue
+
+        parsed_t = parse_t_bin_from_string(t_name)
+        if parsed_t:
+            t_min, t_max = parsed_t
+            t_lbl = f"${t_min:.2f} < -t < {t_max:.2f}\\ \\mathrm{{GeV}}^2$"
+        else:
+            t_min, t_max = 0.0, 0.0
+            t_lbl = t_name
+
+        raw_fits = comp.get("fits", [])
+        valid_fits = [
+            f for f in raw_fits
+            if f.get("status", 0) == 0 and f.get("is_valid", True)
+        ]
+        best_fit = valid_fits[0] if valid_fits else None
+
+        t_data[t_name] = {
+            "name": t_name,
+            "t_min": t_min,
+            "t_max": t_max,
+            "label": t_lbl,
+            "data": comp.get("data", {}),
+            "best_fit": best_fit,
+            "rundir": t_rundir,
+        }
+
+    sorted_tbins = [t for t in tbins_list if t in t_data]
+    sorted_tbins.sort(key=lambda t: (t_data[t]["t_min"] if t_data[t]["t_min"] is not None else 0.0))
+
+    if not sorted_tbins:
+        print("[WARNING] No moment comparison data available across t-bins.")
+        return generated
+
+    # Filter requested moments
+    req_moments = moments if moments is not None else getattr(config.plotting, "moments", ["all"])
+    if not req_moments:
+        req_moments = ["all"]
+
+    all_moment_keys = set()
+    for t in sorted_tbins:
+        all_moment_keys.update(t_data[t]["data"].keys())
+
+    selected_moments: List[str] = []
+    if any(m.lower().strip() == "all" for m in req_moments):
+        selected_moments = list(all_moment_keys)
+    elif any(m.lower().strip() == "fitted" for m in req_moments):
+        selected_moments = [k for k in all_moment_keys if is_moment_fitted(k, config)]
+    else:
+        for m_req in req_moments:
+            m_str = m_req.strip()
+            m_lower = m_str.lower()
+            if m_lower.startswith("l="):
+                try:
+                    target_l = int(m_lower.replace("l=", ""))
+                    for k in all_moment_keys:
+                        parts = k.split("_")
+                        if len(parts) >= 4 and int(parts[2]) == target_l:
+                            if k not in selected_moments:
+                                selected_moments.append(k)
+                except ValueError:
+                    pass
+            elif m_str in all_moment_keys:
+                if m_str not in selected_moments:
+                    selected_moments.append(m_str)
+            else:
+                if not m_str.startswith("H_"):
+                    alt = f"H_{m_str}"
+                    if alt in all_moment_keys and alt not in selected_moments:
+                        selected_moments.append(alt)
+
+    def sort_key(name: str):
+        parts = name.split("_")
+        if len(parts) >= 4:
+            try:
+                return (int(parts[1]), int(parts[2]), int(parts[3]))
+            except ValueError:
+                pass
+        return (999, 999, 999)
+
+    selected_moments.sort(key=sort_key)
+    if not selected_moments:
+        return generated
+
+    draw_fits = draw_best_fits if draw_best_fits is not None else getattr(config.plotting, "draw_best_fits", True)
+
+    # Fitted mass range from config
+    fit_mass_min = None
+    fit_mass_max = None
+    fit_mass_step = 0.04
+    if hasattr(config, "dataset") and getattr(config.dataset, "mass_bins", None):
+        mb = config.dataset.mass_bins
+        fit_mass_min = getattr(mb, "min", None)
+        fit_mass_max = getattr(mb, "max", None)
+        fit_mass_step = getattr(mb, "step", 0.04) or 0.04
+
+    palette = PHYSICS_PALETTE
+    markers = ["o", "s", "^", "D", "v", "<", ">", "p", "*", "X"]
+
+    # 1. Individual Moment Plots across all t-bins
+    for mom_name in selected_moments:
+        parts = mom_name.split("_")
+        if len(parts) >= 4:
+            alpha, l_val, m_val = parts[1], parts[2], parts[3]
+            latex_title = f"H_{{{alpha}}}({l_val},{m_val})"
+        else:
+            latex_title = mom_name
+
+        fig, ax = plt.subplots(
+            figsize=(7.5, 5.2), dpi=300,
+            gridspec_kw={"top": 0.91, "bottom": 0.12, "left": 0.13, "right": 0.95}
+        )
+
+        for idx, t_name in enumerate(sorted_tbins):
+            t_info = t_data[t_name]
+            c = palette[idx % len(palette)]
+            m_sym = markers[idx % len(markers)]
+            lbl = t_info["label"]
+
+            d_val = t_info["data"].get(mom_name)
+            if d_val:
+                m_pts = d_val.get("mass", [])
+                y_pts = d_val.get("val", [])
+                e_pts = d_val.get("err", [])
+
+                if fit_mass_min is not None and fit_mass_max is not None:
+                    tol = fit_mass_step * 0.5
+                    filtered = [
+                        (m, y, e) for m, y, e in zip(m_pts, y_pts, e_pts)
+                        if (fit_mass_min - tol) <= m <= (fit_mass_max + tol)
+                    ]
+                    if filtered:
+                        m_pts = [p[0] for p in filtered]
+                        y_pts = [p[1] for p in filtered]
+                        e_pts = [p[2] for p in filtered]
+
+                ax.errorbar(
+                    m_pts, y_pts, yerr=e_pts,
+                    fmt=m_sym, color=c, markersize=3.8,
+                    capsize=1.5, elinewidth=0.9,
+                    label=lbl, alpha=0.9, zorder=4 + idx
+                )
+
+            if draw_fits and t_info["best_fit"]:
+                f_mom = t_info["best_fit"].get("moments", {}).get(mom_name)
+                if f_mom:
+                    mf = f_mom.get("mass", [])
+                    yf = f_mom.get("val", [])
+                    if len(mf) > 3:
+                        ms, ys = smooth_curve(mf, yf, num_points=200)
+                        ax.plot(ms, ys, "-", color=c, linewidth=1.8, alpha=0.85, zorder=3 + idx)
+
+        ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
+        if fit_mass_min is not None and fit_mass_max is not None:
+            pad = fit_mass_step * 0.6
+            ax.set_xlim(fit_mass_min - pad, fit_mass_max + pad)
+
+        ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11.5)
+        ax.set_ylabel(f"${latex_title}$", fontsize=12)
+        ax.set_title(f"{config.project.name} - ${latex_title}$ vs Mass Across $-t$ Bins", fontsize=12.5, pad=8)
+        ax.legend(frameon=True, fontsize=9.5, loc="best")
+        ax.grid(True, linestyle=":", alpha=0.45)
+
+        for fmt in formats:
+            p_indiv = indiv_dir / f"{mom_name}_vs_t.{fmt}"
+            p_top = out_dir / f"{mom_name}.{fmt}"
+            fig.savefig(p_indiv, bbox_inches="tight")
+            fig.savefig(p_top, bbox_inches="tight")
+            generated.append(p_indiv)
+            generated.append(p_top)
+        plt.close(fig)
+
+    # 2. Multi-panel Overview Grid
+    overview_moments = [m for m in selected_moments if is_moment_fitted(m, config)]
+    if not overview_moments:
+        overview_moments = selected_moments
+
+    K = len(overview_moments)
+    if K >= 1:
+        ncols = min(4, K)
+        nrows = math.ceil(K / ncols)
+        fig, axes = plt.subplots(nrows, ncols, figsize=(3.8 * ncols, 3.0 * nrows), dpi=250)
+        axes_flat = np.array(axes).reshape(-1)
+
+        for idx, mom_name in enumerate(overview_moments):
+            ax = axes_flat[idx]
+            parts = mom_name.split("_")
+            if len(parts) >= 4:
+                alpha, l_val, m_val = parts[1], parts[2], parts[3]
+                latex_title = f"H_{{{alpha}}}({l_val},{m_val})"
+            else:
+                latex_title = mom_name
+
+            for t_idx, t_name in enumerate(sorted_tbins):
+                t_info = t_data[t_name]
+                c = palette[t_idx % len(palette)]
+                m_sym = markers[t_idx % len(markers)]
+                lbl = t_info["label"]
+
+                d_val = t_info["data"].get(mom_name)
+                if d_val:
+                    m_pts = d_val.get("mass", [])
+                    y_pts = d_val.get("val", [])
+                    e_pts = d_val.get("err", [])
+
+                    if fit_mass_min is not None and fit_mass_max is not None:
+                        tol = fit_mass_step * 0.5
+                        filtered = [
+                            (m, y, e) for m, y, e in zip(m_pts, y_pts, e_pts)
+                            if (fit_mass_min - tol) <= m <= (fit_mass_max + tol)
+                        ]
+                        if filtered:
+                            m_pts = [p[0] for p in filtered]
+                            y_pts = [p[1] for p in filtered]
+                            e_pts = [p[2] for p in filtered]
+
+                    ax.errorbar(
+                        m_pts, y_pts, yerr=e_pts,
+                        fmt=m_sym, color=c, markersize=2.2,
+                        capsize=1.0, elinewidth=0.7,
+                        label=lbl if idx == 0 else None,
+                        alpha=0.9, zorder=4 + t_idx
+                    )
+
+                if draw_fits and t_info["best_fit"]:
+                    f_mom = t_info["best_fit"].get("moments", {}).get(mom_name)
+                    if f_mom:
+                        mf = f_mom.get("mass", [])
+                        yf = f_mom.get("val", [])
+                        if len(mf) > 3:
+                            ms, ys = smooth_curve(mf, yf, num_points=200)
+                            ax.plot(ms, ys, "-", color=c, linewidth=1.4, alpha=0.85, zorder=3 + t_idx)
+
+            ax.axhline(0, color="gray", linestyle="--", linewidth=0.7, alpha=0.5)
+            if fit_mass_min is not None and fit_mass_max is not None:
+                pad = fit_mass_step * 0.6
+                ax.set_xlim(fit_mass_min - pad, fit_mass_max + pad)
+
+            ax.set_title(f"${latex_title}$", fontsize=10.5, pad=4)
+            ax.grid(True, linestyle=":", alpha=0.4)
+            ax.tick_params(axis="both", which="major", labelsize=8)
+            if (idx + ncols >= K) or (idx >= (nrows - 1) * ncols):
+                ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=9)
+
+        for idx in range(K, len(axes_flat)):
+            axes_flat[idx].set_visible(False)
+
+        # Unified figure legend across the top
+        handles, labels = axes_flat[0].get_legend_handles_labels()
+        if handles:
+            fig.legend(
+                handles, labels,
+                loc="upper center",
+                bbox_to_anchor=(0.5, 0.995),
+                ncol=min(5, len(sorted_tbins)),
+                frameon=True,
+                fontsize=9
+            )
+
+        fig.suptitle(
+            f"{config.project.name} - Moments vs Mass Across All $-t$ Bins",
+            fontsize=12.5,
+            y=0.965 if handles else 0.985,
+        )
+        plt.tight_layout(rect=[0, 0.02, 1, 0.93 if handles else 0.96])
+
+        for fmt in formats:
+            p_overview = out_dir / f"moments_overview_all_tbins.{fmt}"
+            fig.savefig(p_overview, bbox_inches="tight")
+            generated.append(p_overview)
+
+            # Also copy overview plot to each individual t-bin's plots directory
+            for t_name in sorted_tbins:
+                t_pdir = t_data[t_name]["rundir"].plots_dir
+                if t_pdir.is_dir():
+                    dst_p = t_pdir / f"moments_overview_all_tbins.{fmt}"
+                    shutil.copyfile(p_overview, dst_p)
+                    generated.append(dst_p)
+
+        plt.close(fig)
+
+    print(f"[OK] Generated {len(generated)} multi-t-bin moment comparison plot files in {out_dir}")
     return generated
 
 
@@ -2636,6 +3028,21 @@ def plot_tbins_parallel(
         print(f" {t_name:<10} {status_str:<16} {n_p}")
     print(f"=========================================================================================\n")
     print(f"[SUCCESS] Generated {total_plots} plot files across {len(tbins_list)} t-bins in parallel.")
+
+    # Generate multi-t-bin moment evolution plots across all t-bins
+    plot_mom_t = getattr(config.plotting, "moments_vs_t", True) if getattr(config, "plotting", None) else True
+    if plot_mom_t and len(tbins_list) > 1 and not (only_distributions or only_amplitudes):
+        try:
+            t_mom_plots = plot_moments_across_tbins(
+                config,
+                tbins=tbins_list,
+                run_dir=run_dir,
+                formats=formats,
+                style=effective_style,
+            )
+            total_plots += len(t_mom_plots)
+        except Exception as e:
+            print(f"[WARNING] Could not generate multi-t-bin moment plots: {e}")
 
     return {
         "success": all_success,

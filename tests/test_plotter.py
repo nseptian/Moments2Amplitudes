@@ -18,6 +18,7 @@ from moments2amplitudes.plotter import (
     compute_bin_edges,
     plot_tbins_parallel,
     plot_phase_with_ambiguity,
+    plot_moments_across_tbins,
 )
 
 
@@ -464,6 +465,63 @@ class TestPlotter(unittest.TestCase):
         labels = [t.get_text() for t in ax.get_yticklabels()]
         self.assertEqual(labels, PHASE_Y_TICKLABELS)
         plt.close(fig)
+
+    def test_plot_moments_across_tbins(self):
+        import json
+        out_dir = self.test_dir / "plots" / "moments_vs_t"
+        cfg = FitConfig()
+        cfg.project.name = "TestProject"
+        cfg.dataset.tbins = ["t010020", "t020032"]
+
+        # Single t-bin should return empty
+        self.assertEqual(plot_moments_across_tbins(cfg, tbins=["t010020"]), [])
+
+        # Create dummy moment comparison data in rundir caches
+        for t in ["t010020", "t020032"]:
+            t_dir = self.test_dir / t
+            cache_dir = t_dir / ".cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            json_file = cache_dir / "moment_comparison_data.json"
+            dummy_data = {
+                "data": {
+                    "H_0_0_0": {
+                        "mass": [1.1, 1.2, 1.3],
+                        "val": [100.0, 150.0, 120.0],
+                        "err": [10.0, 15.0, 12.0],
+                    },
+                    "H_0_2_0": {
+                        "mass": [1.1, 1.2, 1.3],
+                        "val": [20.0, 30.0, 25.0],
+                        "err": [5.0, 6.0, 5.5],
+                    },
+                },
+                "fits": [
+                    {
+                        "chi2": 10.0,
+                        "status": 0,
+                        "is_valid": True,
+                        "moments": {
+                            "H_0_0_0": {"mass": [1.1, 1.2, 1.3], "val": [98.0, 148.0, 122.0]},
+                            "H_0_2_0": {"mass": [1.1, 1.2, 1.3], "val": [19.0, 31.0, 24.0]},
+                        },
+                    }
+                ],
+            }
+            with open(json_file, "w") as f:
+                json.dump(dummy_data, f)
+
+        plots = plot_moments_across_tbins(
+            cfg,
+            tbins=["t010020", "t020032"],
+            run_dir=str(self.test_dir),
+            output_dir=out_dir,
+            formats=("png",),
+        )
+
+        self.assertTrue(len(plots) > 0)
+        self.assertTrue((out_dir / "H_0_0_0.png").is_file())
+        self.assertTrue((out_dir / "H_0_2_0.png").is_file())
+        self.assertTrue((out_dir / "moments_overview_all_tbins.png").is_file())
 
 
 if __name__ == "__main__":

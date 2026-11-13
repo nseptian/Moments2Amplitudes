@@ -103,6 +103,7 @@ plotting:
   draw_best_fits: true
   distributions: true
   posterior_density_bands: true
+  moments_vs_t: true
   moments: ["all"]
   formats: ["png", "pdf"]
 
