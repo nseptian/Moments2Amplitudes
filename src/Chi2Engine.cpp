@@ -276,7 +276,7 @@ namespace m2pw {
         };
         
         const size_t nBins = massBins_.size();
-        const bool useParallel = enableParallelization_ && nBins >= 8 && numThreads_ != 1;
+        const bool useParallel = enableParallelization_ && (!inMinimization_ || parallelDuringMinimization_) && nBins >= 8 && numThreads_ != 1;
 
         if (useParallel) {
             const unsigned int hw = std::thread::hardware_concurrency();
@@ -696,7 +696,7 @@ namespace m2pw {
             return fitter_.EvaluateChi2ForMassBin(i, pars);
         };
 
-        const bool useParallel = fitter_.enableParallelization_ && nBins >= 8 && fitter_.numThreads_ != 1;
+        const bool useParallel = fitter_.enableParallelization_ && (!fitter_.inMinimization_ || fitter_.parallelDuringMinimization_) && nBins >= 8 && fitter_.numThreads_ != 1;
         if (useParallel) {
             const unsigned int hw = std::thread::hardware_concurrency();
             size_t requestedWorkers = (fitter_.numThreads_ > 0) ? static_cast<size_t>(fitter_.numThreads_) : ((hw > 0) ? static_cast<size_t>(hw) : 2);

@@ -38,8 +38,8 @@ waves:
       - name: "a2_1320"
         mass: 1.318
         width: 0.107
-        mass_fixed: true
-        width_fixed: true
+        mass_fixed: false
+        width_fixed: false
         mass_limits: [1.20, 1.45]
         width_limits: [0.05, 0.25]
     init:

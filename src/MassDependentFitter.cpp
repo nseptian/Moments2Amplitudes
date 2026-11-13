@@ -442,7 +442,9 @@ namespace m2pw {
             }
         }
 
+        inMinimization_ = true;
         const bool minimizerConverged = minimizer->Minimize();
+        inMinimization_ = false;
 
         minimizerIsValid_ = minimizerConverged && (minimizer->Status() == 0);
         minimizerHasValidErrors_ = minimizer->IsValidError();

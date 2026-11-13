@@ -627,7 +627,7 @@ private:
     int maxIterations_ = 100000;
     
     // Parallel execution control
-    bool enableParallelization_ = true;  // Enable/disable parallel chi2 evaluation
+    bool enableParallelization_ = false;  // Disabled by default: sequential 14-bin evaluation is faster and deadlock-free
     int numThreads_ = 0;  // Number of threads (0 = auto policy, >0 = explicit count)
     bool parallelDuringMinimization_ = false;  // Default off: minimizer gradients are usually faster sequentially
     mutable bool inMinimization_ = false;  // Internal state flag for DoEval behavior

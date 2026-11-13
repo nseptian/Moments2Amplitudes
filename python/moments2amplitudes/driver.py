@@ -436,6 +436,7 @@ def execute_root_command(
     args: Tuple,
     log_path: Path,
     config: Optional[FitConfig] = None,
+    timeout: Optional[int] = None,
 ) -> Tuple[int, str]:
     """Execute a single ROOT invocation in batch mode and capture output using ROOT 6.36."""
     arg_strs = []
@@ -464,23 +465,33 @@ def execute_root_command(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     env = get_root_subprocess_env(config)
 
-    with open(log_path, "w") as log_f:
-        proc = subprocess.run(
-            cmd,
-            stdout=log_f,
-            stderr=subprocess.STDOUT,
-            cwd=str(macro_path.parent),
-            text=True,
-            env=env,
-        )
+    ret_code = -1
+    log_content = ""
+    try:
+        with open(log_path, "w") as log_f:
+            proc = subprocess.run(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                cwd=str(macro_path.parent),
+                text=True,
+                env=env,
+                timeout=timeout,
+            )
+            ret_code = proc.returncode
+    except subprocess.TimeoutExpired:
+        with open(log_path, "a") as log_f:
+            log_f.write(f"\n[ERROR] Process timed out after {timeout} seconds\n")
+        log_content = f"[TIMEOUT] Execution timed out after {timeout} seconds"
+        return -1, log_content
 
     # Read log
-    log_content = ""
     if log_path.is_file():
         with open(log_path, "r") as f:
             log_content = f.read()
 
-    return proc.returncode, log_content
+    return ret_code, log_content
 
 
 def run_multi_start(
@@ -539,11 +550,15 @@ def run_multi_start(
 
     def run_seed_task(seed_val: int) -> Dict[str, Any]:
         log_f = rundir.get_seed_log_file(seed_val)
+        seed_timeout = getattr(config.minimizer, "timeout", None) if config and hasattr(config, "minimizer") else None
+        if seed_timeout is None:
+            seed_timeout = 600
         ret_code, output = execute_root_command(
             macro_path,
             ("single", seed_val, 0, -1, str(rundir.fit_starts_dir), ""),
             log_f,
             config,
+            timeout=seed_timeout,
         )
 
         # Parse [RESULT] line
