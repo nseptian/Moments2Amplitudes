@@ -2414,6 +2414,160 @@ def plot_moments_comparison(
     return generated
 
 
+def compute_moment_chi2(
+    data_moment: Dict[str, Any],
+    fit_moment: Optional[Dict[str, Any]],
+    fit_mass_min: Optional[float] = None,
+    fit_mass_max: Optional[float] = None,
+    fit_mass_step: float = 0.04,
+) -> Optional[Tuple[float, int]]:
+    """
+    Compute chi-square between experimental data points and model curve for an individual moment.
+    Restricted to the fitted mass range [fit_mass_min, fit_mass_max].
+    Returns (chi2, num_points) or None if data or fit is unavailable.
+    """
+    if not data_moment or not fit_moment:
+        return None
+
+    import numpy as np
+
+    m_data = np.asarray(data_moment.get("mass", []))
+    y_data = np.asarray(data_moment.get("val", []))
+    e_data = np.asarray(data_moment.get("err", []))
+
+    if len(m_data) == 0 or len(y_data) == 0 or len(e_data) == 0:
+        return None
+
+    # Restrict to fitted mass range
+    if fit_mass_min is not None and fit_mass_max is not None:
+        tol = fit_mass_step * 0.5
+        mask = (m_data >= (fit_mass_min - tol)) & (m_data <= (fit_mass_max + tol))
+        m_data = m_data[mask]
+        y_data = y_data[mask]
+        e_data = e_data[mask]
+
+    # Filter valid points with positive error and finite values
+    valid = (e_data > 0) & np.isfinite(y_data) & np.isfinite(e_data)
+    m_data = m_data[valid]
+    y_data = y_data[valid]
+    e_data = e_data[valid]
+
+    if len(m_data) == 0:
+        return None
+
+    mf = np.asarray(fit_moment.get("mass", []))
+    yf = np.asarray(fit_moment.get("val", []))
+    if len(mf) == 0 or len(yf) == 0:
+        return None
+
+    # Sort fit arrays if needed
+    sort_idx = np.argsort(mf)
+    mf = mf[sort_idx]
+    yf = yf[sort_idx]
+
+    # Interpolate model to data mass points
+    y_model = np.interp(m_data, mf, yf)
+    residuals = (y_data - y_model) / e_data
+    chi2 = float(np.sum(residuals ** 2))
+    return chi2, len(m_data)
+
+
+def _draw_overview_grid_cells(
+    axes: Any,
+    moments_subset: List[str],
+    sorted_tbins: List[str],
+    t_data: Dict[str, Any],
+    fit_mass_min: Optional[float],
+    fit_mass_max: Optional[float],
+    fit_mass_step: float,
+    draw_fits: bool,
+) -> None:
+    """Populate grid cells for multi-t-bin moments overview matrix."""
+    import numpy as np
+    n_r = len(moments_subset)
+    n_c = len(sorted_tbins)
+    pad = fit_mass_step * 0.6 if (fit_mass_min is not None and fit_mass_max is not None) else 0.024
+
+    for r_idx, mom_name in enumerate(moments_subset):
+        parts = mom_name.split("_")
+        if len(parts) >= 4:
+            latex_mom = f"H_{{{parts[1]}}}({parts[2]},{parts[3]})"
+        else:
+            latex_mom = mom_name
+
+        for c_idx, t_name in enumerate(sorted_tbins):
+            ax = axes[r_idx, c_idx]
+            t_info = t_data[t_name]
+            d_val = t_info["data"].get(mom_name)
+
+            f_mom_best = None
+            if draw_fits and t_info.get("best_fit"):
+                f_mom_best = t_info["best_fit"].get("moments", {}).get(mom_name)
+
+            if d_val:
+                m_pts = d_val.get("mass", [])
+                y_pts = d_val.get("val", [])
+                e_pts = d_val.get("err", [])
+
+                if fit_mass_min is not None and fit_mass_max is not None:
+                    tol = fit_mass_step * 0.5
+                    filtered = [
+                        (m, y, e) for m, y, e in zip(m_pts, y_pts, e_pts)
+                        if (fit_mass_min - tol) <= m <= (fit_mass_max + tol)
+                    ]
+                    if filtered:
+                        m_pts = [p[0] for p in filtered]
+                        y_pts = [p[1] for p in filtered]
+                        e_pts = [p[2] for p in filtered]
+
+                ax.errorbar(
+                    m_pts, y_pts, yerr=e_pts,
+                    fmt="o", color="black", markersize=2.0,
+                    capsize=0.8, elinewidth=0.6, zorder=3,
+                )
+
+            if draw_fits and f_mom_best:
+                mf = f_mom_best.get("mass", [])
+                yf = f_mom_best.get("val", [])
+                if len(mf) > 3:
+                    ms, ys = smooth_curve(mf, yf, num_points=200)
+                    ax.plot(ms, ys, "-", color="#D55E00", linewidth=1.3, zorder=4)
+
+            # Compute individual moment chi2
+            if d_val and f_mom_best:
+                chi2_info = compute_moment_chi2(
+                    d_val,
+                    f_mom_best,
+                    fit_mass_min=fit_mass_min,
+                    fit_mass_max=fit_mass_max,
+                    fit_mass_step=fit_mass_step,
+                )
+                if chi2_info is not None:
+                    c2_mom, _ = chi2_info
+                    ax.text(
+                        0.96, 0.90, f"$\\chi^2={c2_mom:.1f}$",
+                        transform=ax.transAxes, ha="right", va="top",
+                        fontsize=7.5,
+                        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.85, edgecolor="none"),
+                        zorder=5,
+                    )
+
+            ax.axhline(0, color="gray", linestyle="--", linewidth=0.6, alpha=0.5, zorder=1)
+            if fit_mass_min is not None and fit_mass_max is not None:
+                ax.set_xlim(fit_mass_min - pad, fit_mass_max + pad)
+
+            ax.grid(True, linestyle=":", alpha=0.35)
+            ax.tick_params(axis="both", which="major", labelsize=7.5)
+            ax.ticklabel_format(axis="y", style="sci", scilimits=(-3, 4), useMathText=True)
+
+            if r_idx == 0:
+                ax.set_title(t_info["label"], fontsize=9.5, pad=4)
+            if c_idx == 0:
+                ax.set_ylabel(f"${latex_mom}$", fontsize=10.5)
+            if r_idx == n_r - 1:
+                ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=8.5)
+
+
 def plot_moments_across_tbins(
     config: FitConfig,
     tbins: Optional[List[str]] = None,
@@ -2656,6 +2810,7 @@ def plot_moments_across_tbins(
                     zorder=3,
                 )
 
+            f_mom_best = None
             if draw_fits:
                 fits_list = t_info.get("fits", [])
                 if not fits_list and t_info.get("best_fit"):
@@ -2663,6 +2818,8 @@ def plot_moments_across_tbins(
                 for f_idx, fit_obj in enumerate(fits_list):
                     f_mom = fit_obj.get("moments", {}).get(mom_name)
                     if f_mom:
+                        if f_idx == 0:
+                            f_mom_best = f_mom
                         mf = f_mom.get("mass", [])
                         yf = f_mom.get("val", [])
                         if len(mf) > 3:
@@ -2684,11 +2841,19 @@ def plot_moments_across_tbins(
                 pad = fit_mass_step * 0.6
                 ax.set_xlim(fit_mass_min - pad, fit_mass_max + pad)
 
+            # Compute individual moment chi2
             chi2_str = ""
-            if t_info.get("best_fit"):
-                c2 = t_info["best_fit"].get("chi2", None)
-                if c2 is not None:
-                    chi2_str = f"\n($\\chi^2 = {c2:.1f}$)"
+            if d_val and f_mom_best:
+                chi2_info = compute_moment_chi2(
+                    d_val,
+                    f_mom_best,
+                    fit_mass_min=fit_mass_min,
+                    fit_mass_max=fit_mass_max,
+                    fit_mass_step=fit_mass_step,
+                )
+                if chi2_info is not None:
+                    c2_mom, _ = chi2_info
+                    chi2_str = f"\n($\\chi^2 = {c2_mom:.1f}$)"
 
             ax.set_title(f"{t_lbl}{chi2_str}", fontsize=10, pad=5)
             ax.grid(True, linestyle=":", alpha=0.45)
@@ -2715,114 +2880,79 @@ def plot_moments_across_tbins(
             generated.append(p_top)
         plt.close(fig)
 
-    # 2. Multi-panel Overview Grid
+    # 2. Multi-panel Overview Grid (Matrix: Rows = Moments, Columns = -t Bins)
     overview_moments = [m for m in selected_moments if is_moment_fitted(m, config)]
     if not overview_moments:
         overview_moments = selected_moments
 
     K = len(overview_moments)
-    if K >= 1:
-        ncols = min(4, K)
-        nrows = math.ceil(K / ncols)
-        fig, axes = plt.subplots(nrows, ncols, figsize=(3.8 * ncols, 3.0 * nrows), dpi=250)
-        axes_flat = np.array(axes).reshape(-1)
+    n_c = len(sorted_tbins)
 
-        for idx, mom_name in enumerate(overview_moments):
-            ax = axes_flat[idx]
-            parts = mom_name.split("_")
-            if len(parts) >= 4:
-                alpha, l_val, m_val = parts[1], parts[2], parts[3]
-                latex_title = f"H_{{{alpha}}}({l_val},{m_val})"
-            else:
-                latex_title = mom_name
-
-            for t_idx, t_name in enumerate(sorted_tbins):
-                t_info = t_data[t_name]
-                c = palette[t_idx % len(palette)]
-                m_sym = markers[t_idx % len(markers)]
-                lbl = t_info["label"]
-
-                d_val = t_info["data"].get(mom_name)
-                if d_val:
-                    m_pts = d_val.get("mass", [])
-                    y_pts = d_val.get("val", [])
-                    e_pts = d_val.get("err", [])
-
-                    if fit_mass_min is not None and fit_mass_max is not None:
-                        tol = fit_mass_step * 0.5
-                        filtered = [
-                            (m, y, e) for m, y, e in zip(m_pts, y_pts, e_pts)
-                            if (fit_mass_min - tol) <= m <= (fit_mass_max + tol)
-                        ]
-                        if filtered:
-                            m_pts = [p[0] for p in filtered]
-                            y_pts = [p[1] for p in filtered]
-                            e_pts = [p[2] for p in filtered]
-
-                    ax.errorbar(
-                        m_pts, y_pts, yerr=e_pts,
-                        fmt=m_sym, color=c, markersize=2.2,
-                        capsize=1.0, elinewidth=0.7,
-                        label=lbl if idx == 0 else None,
-                        alpha=0.9, zorder=4 + t_idx
+    if K >= 1 and n_c >= 1:
+        # Multi-page PDF for clear, readable letter/slide viewing
+        if "pdf" in formats:
+            from matplotlib.backends.backend_pdf import PdfPages
+            p_pdf = out_dir / "moments_overview_all_tbins.pdf"
+            moms_per_page = 5
+            total_pages = math.ceil(K / moms_per_page)
+            with PdfPages(p_pdf) as pdf:
+                for page_idx in range(0, K, moms_per_page):
+                    page_moms = overview_moments[page_idx : page_idx + moms_per_page]
+                    curr_nr = len(page_moms)
+                    fig_p, axes_p = plt.subplots(
+                        curr_nr, n_c,
+                        figsize=(3.2 * n_c, 2.2 * curr_nr + 0.6),
+                        sharex=True, dpi=150,
                     )
+                    axes_p = np.atleast_2d(axes_p)
+                    fig_p.subplots_adjust(hspace=0.28, wspace=0.32, left=0.08, right=0.98, top=0.92, bottom=0.08)
 
-                if draw_fits and t_info["best_fit"]:
-                    f_mom = t_info["best_fit"].get("moments", {}).get(mom_name)
-                    if f_mom:
-                        mf = f_mom.get("mass", [])
-                        yf = f_mom.get("val", [])
-                        if len(mf) > 3:
-                            ms, ys = smooth_curve(mf, yf, num_points=200)
-                            ax.plot(ms, ys, "-", color=c, linewidth=1.4, alpha=0.85, zorder=3 + t_idx)
+                    _draw_overview_grid_cells(
+                        axes_p, page_moms, sorted_tbins, t_data,
+                        fit_mass_min, fit_mass_max, fit_mass_step, draw_fits
+                    )
+                    page_num = (page_idx // moms_per_page) + 1
+                    fig_p.suptitle(
+                        f"{config.project.name} - Moments vs Mass Across $-t$ Bins (Page {page_num}/{total_pages})",
+                        fontsize=12, y=0.98
+                    )
+                    pdf.savefig(fig_p)
+                    plt.close(fig_p)
+            generated.append(p_pdf)
 
-            ax.axhline(0, color="gray", linestyle="--", linewidth=0.7, alpha=0.5)
-            if fit_mass_min is not None and fit_mass_max is not None:
-                pad = fit_mass_step * 0.6
-                ax.set_xlim(fit_mass_min - pad, fit_mass_max + pad)
-
-            ax.set_title(f"${latex_title}$", fontsize=10.5, pad=4)
-            ax.grid(True, linestyle=":", alpha=0.4)
-            ax.tick_params(axis="both", which="major", labelsize=8)
-            if (idx + ncols >= K) or (idx >= (nrows - 1) * ncols):
-                ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=9)
-
-        for idx in range(K, len(axes_flat)):
-            axes_flat[idx].set_visible(False)
-
-        # Unified figure legend across the top
-        handles, labels = axes_flat[0].get_legend_handles_labels()
-        if handles:
-            fig.legend(
-                handles, labels,
-                loc="upper center",
-                bbox_to_anchor=(0.5, 0.995),
-                ncol=min(5, len(sorted_tbins)),
-                frameon=True,
-                fontsize=9
+        # Full PNG matrix grid
+        if "png" in formats:
+            p_png = out_dir / "moments_overview_all_tbins.png"
+            fig_full, axes_full = plt.subplots(
+                K, n_c,
+                figsize=(3.2 * n_c, max(2.1 * K + 0.8, 6.0)),
+                sharex=True, dpi=130,
             )
+            axes_full = np.atleast_2d(axes_full)
+            fig_full.subplots_adjust(hspace=0.28, wspace=0.32, left=0.08, right=0.98, top=0.985, bottom=0.02)
 
-        fig.suptitle(
-            f"{config.project.name} - Moments vs Mass Across All $-t$ Bins",
-            fontsize=12.5,
-            y=0.965 if handles else 0.985,
-        )
-        plt.tight_layout(rect=[0, 0.02, 1, 0.93 if handles else 0.96])
+            _draw_overview_grid_cells(
+                axes_full, overview_moments, sorted_tbins, t_data,
+                fit_mass_min, fit_mass_max, fit_mass_step, draw_fits
+            )
+            fig_full.suptitle(
+                f"{config.project.name} - Moments vs Mass Across All $-t$ Bins",
+                fontsize=13, y=0.998
+            )
+            fig_full.savefig(p_png, bbox_inches="tight")
+            plt.close(fig_full)
+            generated.append(p_png)
 
+        # Copy overview files to each individual t-bin's plots directory
         for fmt in formats:
-            p_overview = out_dir / f"moments_overview_all_tbins.{fmt}"
-            fig.savefig(p_overview, bbox_inches="tight")
-            generated.append(p_overview)
-
-            # Also copy overview plot to each individual t-bin's plots directory
-            for t_name in sorted_tbins:
-                t_pdir = t_data[t_name]["rundir"].plots_dir
-                if t_pdir.is_dir():
-                    dst_p = t_pdir / f"moments_overview_all_tbins.{fmt}"
-                    shutil.copyfile(p_overview, dst_p)
-                    generated.append(dst_p)
-
-        plt.close(fig)
+            src_f = out_dir / f"moments_overview_all_tbins.{fmt}"
+            if src_f.is_file():
+                for t_name in sorted_tbins:
+                    t_pdir = t_data[t_name]["rundir"].plots_dir
+                    if t_pdir.is_dir():
+                        dst_p = t_pdir / f"moments_overview_all_tbins.{fmt}"
+                        shutil.copyfile(src_f, dst_p)
+                        generated.append(dst_p)
 
     print(f"[OK] Generated {len(generated)} multi-t-bin moment comparison plot files in {out_dir}")
     return generated
