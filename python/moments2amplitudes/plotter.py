@@ -2256,6 +2256,18 @@ def plot_moments_comparison(
         y_data = d_val.get("val", [])
         e_data = d_val.get("err", [])
 
+        # Restrict data points strictly to the fitted mass range
+        if fit_mass_min is not None and fit_mass_max is not None:
+            tol = fit_mass_step * 0.5
+            filtered_pts = [
+                (m, y, e) for m, y, e in zip(m_data, y_data, e_data)
+                if (fit_mass_min - tol) <= m <= (fit_mass_max + tol)
+            ]
+            if filtered_pts:
+                m_data = [p[0] for p in filtered_pts]
+                y_data = [p[1] for p in filtered_pts]
+                e_data = [p[2] for p in filtered_pts]
+
         parts = mom_name.split("_")
         if len(parts) >= 4:
             alpha, l_val, m_val = parts[1], parts[2], parts[3]
@@ -2292,6 +2304,11 @@ def plot_moments_comparison(
                             m_smooth, y_smooth, "-", color="#D55E00", linewidth=0.9, alpha=0.30,
                             label=lbl, zorder=4
                         )
+
+        ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
+        if fit_mass_min is not None and fit_mass_max is not None:
+            pad = fit_mass_step * 0.6
+            ax.set_xlim(fit_mass_min - pad, fit_mass_max + pad)
 
         ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11.5)
         ax.set_ylabel("Unnormalized Moment", fontsize=11.5)
@@ -2566,6 +2583,21 @@ def plot_moments_across_tbins(
         fit_mass_min = getattr(mb, "min", None)
         fit_mass_max = getattr(mb, "max", None)
         fit_mass_step = getattr(mb, "step", 0.04) or 0.04
+
+    if fit_mass_min is None or fit_mass_max is None:
+        all_fit_masses = []
+        for t_info in t_data.values():
+            if t_info.get("best_fit"):
+                for m_obj in t_info["best_fit"].get("moments", {}).values():
+                    all_fit_masses.extend(m_obj.get("mass", []))
+        if all_fit_masses:
+            unique_m = sorted(list(set(all_fit_masses)))
+            if fit_mass_min is None:
+                fit_mass_min = unique_m[0]
+            if fit_mass_max is None:
+                fit_mass_max = unique_m[-1]
+            if len(unique_m) > 1:
+                fit_mass_step = float(np.median(np.diff(unique_m)))
 
     palette = PHYSICS_PALETTE
     markers = ["o", "s", "^", "D", "v", "<", ">", "p", "*", "X"]
