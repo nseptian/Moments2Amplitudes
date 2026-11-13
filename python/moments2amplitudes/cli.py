@@ -549,8 +549,8 @@ def main():
     p_plot.add_argument("--only-propagated", "--propagated-only", dest="only_propagated", action="store_true", help="Only draw plots derived from propagated MCMC results (credible bands, individual amplitudes, and posterior distributions)")
     p_plot.add_argument("--only-distributions", "--distributions-only", "--only-distribution", "--distribution-only", dest="only_distributions", action="store_true", help="Only draw 1D posterior distributions of propagated MCMC parameters and yields")
     p_plot.add_argument("--only-amplitudes", "--amplitudes-only", dest="only_amplitudes", action="store_true", help="Only draw amplitude curves and credible bands (individual amplitudes and wave overviews)")
-    p_plot.add_argument("--moments-vs-t", dest="moments_vs_t", action="store_true", help="Plot each moment vs mass across all t-bins as a 5x1 side-by-side plot to inspect evolution with -t")
-    p_plot.add_argument("--moments-vs-t-sharey", dest="moments_vs_t_sharey", action="store_true", help="Share y-axis scale across all t-bins in 5x1 moments-vs-t plots")
+    p_plot.add_argument("--moments-vs-t", dest="moments_vs_t", action="store_true", help="Plot each moment vs mass across all t-bins as a side-by-side plot (N_tbins x 1) to inspect evolution with -t")
+    p_plot.add_argument("--moments-vs-t-sharey", dest="moments_vs_t_sharey", action="store_true", help="Share y-axis scale across all t-bins in moments-vs-t plots")
 
     # Summary
     p_sum = subparsers.add_parser("summary", help="Display fit parameter summary and save report tables")

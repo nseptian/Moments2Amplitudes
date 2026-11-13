@@ -2426,13 +2426,13 @@ def plot_moments_across_tbins(
     sharey: bool = False,
 ) -> List[Path]:
     """
-    Plot each moment as a function of mass across all t-bins side-by-side (5x1 subplots).
+    Plot each moment as a function of mass across all t-bins side-by-side (N_tbins x 1 subplots).
     Enables inspecting how angular moments evolve across Mandelstam -t transfers.
     Draws subplots from lowest t-bin (left) to highest t-bin (right) with data points
     and nominal model fit curves for each t-bin.
 
     Generates:
-      - Individual moment 5x1 plots: <out_dir>/moments_vs_t/<moment_name>.<fmt>
+      - Individual moment N_tbins x 1 plots: <out_dir>/moments_vs_t/<moment_name>.<fmt>
       - Multi-panel overview grid of key moments: <out_dir>/moments_vs_t/moments_overview_all_tbins.<fmt>
     """
     generated: List[Path] = []
