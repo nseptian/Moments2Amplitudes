@@ -2533,7 +2533,7 @@ def _draw_overview_grid_cells(
                     ms, ys = smooth_curve(mf, yf, num_points=200)
                     ax.plot(ms, ys, "-", color="#D55E00", linewidth=1.3, zorder=4)
 
-            # Compute individual moment chi2
+            # Compute moment chi2 (and show global chi2 explicitly for H_0_0_0)
             if d_val and f_mom_best:
                 chi2_info = compute_moment_chi2(
                     d_val,
@@ -2542,7 +2542,20 @@ def _draw_overview_grid_cells(
                     fit_mass_max=fit_mass_max,
                     fit_mass_step=fit_mass_step,
                 )
-                if chi2_info is not None:
+                c2_glob = t_info["best_fit"].get("chi2", None) if t_info.get("best_fit") else None
+                if mom_name == "H_0_0_0" and c2_glob is not None:
+                    txt = f"Global $\\chi^2={c2_glob:.1f}$"
+                    if chi2_info is not None:
+                        c2_mom, _ = chi2_info
+                        txt += f"\n$\\chi^2_{{\\mathrm{{mom}}}}={c2_mom:.1f}$"
+                    ax.text(
+                        0.96, 0.90, txt,
+                        transform=ax.transAxes, ha="right", va="top",
+                        fontsize=7.0,
+                        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.85, edgecolor="none"),
+                        zorder=5,
+                    )
+                elif chi2_info is not None:
                     c2_mom, _ = chi2_info
                     ax.text(
                         0.96, 0.90, f"$\\chi^2={c2_mom:.1f}$",
@@ -2841,8 +2854,10 @@ def plot_moments_across_tbins(
                 pad = fit_mass_step * 0.6
                 ax.set_xlim(fit_mass_min - pad, fit_mass_max + pad)
 
-            # Compute individual moment chi2
+            # Compute chi2 for this individual moment (and show global chi2 explicitly for H_0_0_0)
             chi2_str = ""
+            c2_glob = t_info["best_fit"].get("chi2", None) if t_info.get("best_fit") else None
+            chi2_info = None
             if d_val and f_mom_best:
                 chi2_info = compute_moment_chi2(
                     d_val,
@@ -2851,11 +2866,18 @@ def plot_moments_across_tbins(
                     fit_mass_max=fit_mass_max,
                     fit_mass_step=fit_mass_step,
                 )
+
+            if mom_name == "H_0_0_0" and c2_glob is not None:
                 if chi2_info is not None:
                     c2_mom, _ = chi2_info
-                    chi2_str = f"\n($\\chi^2 = {c2_mom:.1f}$)"
+                    chi2_str = f"\n(Global $\\chi^2 = {c2_glob:.1f}$, $\\chi^2_{{\\mathrm{{mom}}}} = {c2_mom:.1f}$)"
+                else:
+                    chi2_str = f"\n(Global $\\chi^2 = {c2_glob:.1f}$)"
+            elif chi2_info is not None:
+                c2_mom, _ = chi2_info
+                chi2_str = f"\n($\\chi^2 = {c2_mom:.1f}$)"
 
-            ax.set_title(f"{t_lbl}{chi2_str}", fontsize=10, pad=5)
+            ax.set_title(f"{t_lbl}{chi2_str}", fontsize=9.8, pad=5)
             ax.grid(True, linestyle=":", alpha=0.45)
             ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=10)
             ax.tick_params(axis="both", which="major", labelsize=9)
