@@ -515,7 +515,12 @@ def extract_credible_bounds(
     p_lo, p_hi = percentiles
     for idx, m in enumerate(masses):
         m_round = round(m, 4)
-        samps = mcmc_dict.get(m_round, [])
+        samps = mcmc_dict.get(m_round)
+        if samps is None:
+            for mk, mv in mcmc_dict.items():
+                if abs(mk - m_round) < 0.005:
+                    samps = mv
+                    break
         if samps:
             vals = [v**2 for v in samps] if squared else samps
             lo.append(float(np.percentile(vals, p_lo)))
@@ -580,7 +585,13 @@ def plot_posterior_density_band(
         hi_list: List[float] = []
 
         for m in masses:
-            samps = mcmc_dict.get(round(m, 4), [])
+            m_round = round(m, 4)
+            samps = mcmc_dict.get(m_round)
+            if samps is None:
+                for mk, mv in mcmc_dict.items():
+                    if abs(mk - m_round) < 0.005:
+                        samps = mv
+                        break
             if samps:
                 arr = np.array(samps, dtype=float)
                 if squared:
@@ -944,32 +955,47 @@ def plot_amplitudes_and_bands(
             cache_dir.mkdir(parents=True, exist_ok=True)
             json_path = cache_dir / "amplitudes_data.json"
 
-            # Check if cached amplitudes JSON already exists and is non-empty
+            # Check if cached amplitudes JSON already exists and is fresh
             if json_path.is_file() and json_path.stat().st_size > 10:
-                try:
-                    with open(json_path, "r") as jf:
-                        jdata = json.load(jf)
-                        raw_masses = jdata.get("masses", [])
-                        raw_nominal = jdata.get("nominal", {})
-                        if raw_masses and raw_nominal:
-                            masses = [float(m) for m in raw_masses]
-                            nominal_amps = {k: [float(v) for v in vals] for k, vals in raw_nominal.items()}
+                is_stale = False
+                json_mtime = json_path.stat().st_mtime
+                if Path(nominal_root).is_file() and json_mtime < Path(nominal_root).stat().st_mtime:
+                    is_stale = True
+                if mcmc_root and Path(mcmc_root).is_file():
+                    if json_mtime < Path(mcmc_root).stat().st_mtime:
+                        is_stale = True
+                if unnorm_path and Path(unnorm_path).is_file():
+                    if json_mtime < Path(unnorm_path).stat().st_mtime:
+                        is_stale = True
+
+                if not is_stale:
+                    try:
+                        with open(json_path, "r") as jf:
+                            jdata = json.load(jf)
+                            raw_masses = jdata.get("masses", [])
+                            raw_nominal = jdata.get("nominal", {})
                             raw_mcmc = jdata.get("mcmc", {})
-                            for k, m_dict in raw_mcmc.items():
-                                mcmc_samples[k] = {}
-                                for m_str, vals in m_dict.items():
-                                    try:
-                                        mcmc_samples[k][round(float(m_str), 4)] = [float(v) for v in vals]
-                                    except ValueError:
-                                        pass
                             raw_params = jdata.get("mcmc_params", {})
-                            for pk, pvals in raw_params.items():
-                                mcmc_params[pk] = [float(v) for v in pvals]
-                            if "h0_data" in jdata and jdata["h0_data"].get("mass") and jdata["h0_data"].get("val"):
-                                h0_data = jdata["h0_data"]
-                            loaded = True
-                except Exception:
-                    loaded = False
+                            # If MCMC root file was provided and non-empty, but cached JSON has no MCMC samples, cache is stale!
+                            if mcmc_root and Path(mcmc_root).is_file() and (not raw_mcmc or not raw_params):
+                                is_stale = True
+                            elif raw_masses and raw_nominal:
+                                masses = [float(m) for m in raw_masses]
+                                nominal_amps = {k: [float(v) for v in vals] for k, vals in raw_nominal.items()}
+                                for k, m_dict in raw_mcmc.items():
+                                    mcmc_samples[k] = {}
+                                    for m_str, vals in m_dict.items():
+                                        try:
+                                            mcmc_samples[k][round(float(m_str), 4)] = [float(v) for v in vals]
+                                        except ValueError:
+                                            pass
+                                for pk, pvals in raw_params.items():
+                                    mcmc_params[pk] = [float(v) for v in pvals]
+                                if "h0_data" in jdata and jdata["h0_data"].get("mass") and jdata["h0_data"].get("val"):
+                                    h0_data = jdata["h0_data"]
+                                loaded = True
+                    except Exception:
+                        loaded = False
 
             if not loaded and export_macro.is_file() and Path(nominal_root).is_file():
                 root_bin = get_root_binary(config)
@@ -983,7 +1009,7 @@ def plot_amplitudes_and_bands(
                     f'{export_macro.resolve()}("{Path(nominal_root).resolve()}", "{mcmc_arg}", "{json_path.resolve()}", "{unnorm_arg}")'
                 ]
                 env = get_root_subprocess_env(config)
-                run_res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+                run_res = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
                 if run_res.returncode == 0 and json_path.is_file():
                     with open(json_path, "r") as jf:
                         jdata = json.load(jf)
@@ -1812,7 +1838,11 @@ def plot_amplitudes_and_bands(
         draw_wave_grid(magnitudes, "All Fitted Waves Overview vs Mass", "overview_all_waves")
 
     # --- 6. 1D MCMC Posterior Distributions ---
-    if not only_amplitudes:
+    plot_dist_cfg = getattr(config.plotting, "distributions", None)
+    if plot_dist_cfg is None:
+        plot_dist_cfg = getattr(config.plotting, "plot_distributions", True)
+
+    if not only_amplitudes and plot_dist_cfg:
         # 6a. Fitted Parameter Posterior Distributions
         if mcmc_params:
             for pname, pvals in mcmc_params.items():

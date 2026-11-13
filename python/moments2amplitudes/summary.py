@@ -80,22 +80,80 @@ class FitSummary:
                     return False
         return True
 
-    def load_from_root(self, root_file: Path | str, mcmc_file: Optional[Path | str] = None) -> bool:
+    def load_from_root(
+        self,
+        root_file: Path | str,
+        mcmc_file: Optional[Path | str] = None,
+        cache_json: Optional[Path | str] = None,
+    ) -> bool:
         """Load nominal best-fit parameters and optional MCMC posterior intervals."""
         root_path = Path(root_file)
         if not root_path.is_file():
             return False
 
+        loaded = False
         # Attempt uproot
         try:
             import uproot
-            return self._load_with_uproot(root_path, mcmc_file)
-        except ImportError:
+            loaded = self._load_with_uproot(root_path, mcmc_file)
+        except (ImportError, Exception):
             pass
 
+        # If MCMC intervals not populated yet, check json cache
+        has_mcmc = any(p.get("mcmc_median") is not None for p in self.parameters)
+        if not has_mcmc and (mcmc_file or cache_json or self.rundir):
+            self.load_mcmc_from_cache(cache_json or mcmc_file or root_path)
+
+        return loaded
+
+    def load_mcmc_from_cache(self, cache_or_path: Optional[Path | str] = None) -> bool:
+        """Populate MCMC posterior intervals from cache JSON if available."""
+        import json
+        import numpy as np
+
+        cand_paths: List[Path] = []
+        if cache_or_path:
+            p = Path(cache_or_path)
+            if p.is_file() and p.suffix == ".json":
+                cand_paths.append(p)
+            elif p.is_dir():
+                cand_paths.append(p / ".cache" / "amplitudes_data.json")
+                cand_paths.append(p / "plots" / ".cache" / "amplitudes_data.json")
+            elif p.is_file():
+                cand_paths.append(p.parent.parent / "plots" / ".cache" / "amplitudes_data.json")
+                cand_paths.append(p.parent / ".cache" / "amplitudes_data.json")
+
+        if self.rundir and getattr(self.rundir, "plots_dir", None):
+            cand_paths.append(self.rundir.plots_dir / ".cache" / "amplitudes_data.json")
+
+        for cp in cand_paths:
+            if cp.is_file() and cp.stat().st_size > 10:
+                try:
+                    with open(cp, "r") as f:
+                        jdata = json.load(f)
+                    raw_params = jdata.get("mcmc_params", {})
+                    if raw_params:
+                        for p in self.parameters:
+                            k = p["name"]
+                            if k in raw_params:
+                                arr = np.array(raw_params[k], dtype=float)
+                                if len(arr) > 0 and np.std(arr) > 1e-12:
+                                    med = float(np.median(arr))
+                                    p16, p84 = float(np.percentile(arr, 16)), float(np.percentile(arr, 84))
+                                    p["mcmc_median"] = med
+                                    p["mcmc_err_lo"] = med - p16
+                                    p["mcmc_err_hi"] = p84 - med
+                        return True
+                except Exception:
+                    pass
         return False
 
-    def load_from_log(self, log_path: Path | str) -> bool:
+    def load_from_log(
+        self,
+        log_path: Path | str,
+        mcmc_file: Optional[Path | str] = None,
+        cache_json: Optional[Path | str] = None,
+    ) -> bool:
         """Parse fit parameters and errors directly from the driver log file."""
         log_file = Path(log_path)
         if not log_file.is_file():
@@ -160,6 +218,10 @@ class FitSummary:
                 "mcmc_err_hi": None,
                 "status": "Fixed" if err == 0.0 else "Free",
             })
+
+        if mcmc_file or cache_json or self.rundir:
+            self.load_mcmc_from_cache(cache_json or mcmc_file)
+
         return True
 
     def _load_with_uproot(self, root_path: Path, mcmc_file: Optional[Path | str]) -> bool:

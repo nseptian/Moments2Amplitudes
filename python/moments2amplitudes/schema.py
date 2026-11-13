@@ -204,6 +204,7 @@ class PlottingConfig:
     style: str = "default"
     show_phase_ambiguity: bool = True
     posterior_density_bands: bool = True
+    distributions: bool = True
 
 
 @dataclass

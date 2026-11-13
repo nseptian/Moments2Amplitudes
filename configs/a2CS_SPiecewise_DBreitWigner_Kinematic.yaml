@@ -101,6 +101,8 @@ plotting:
   style: "default"
   n_lowest_chi2: 10
   draw_best_fits: true
+  distributions: true
+  posterior_density_bands: true
   moments: ["all"]
   formats: ["png", "pdf"]
 
