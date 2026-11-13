@@ -2423,15 +2423,16 @@ def plot_moments_across_tbins(
     formats: Tuple[str, ...] = ("png", "pdf"),
     style: Optional[str] = None,
     draw_best_fits: Optional[bool] = None,
+    sharey: bool = False,
 ) -> List[Path]:
     """
-    Plot each moment as a function of mass for all t-bins in one plot.
+    Plot each moment as a function of mass across all t-bins side-by-side (5x1 subplots).
     Enables inspecting how angular moments evolve across Mandelstam -t transfers.
-    Overlays data points with error bars and nominal model fit curves for each t-bin
-    with distinct colors and markers.
+    Draws subplots from lowest t-bin (left) to highest t-bin (right) with data points
+    and nominal model fit curves for each t-bin.
 
     Generates:
-      - Individual moment plots across all t-bins: <out_dir>/moments_vs_t/<moment_name>.<fmt>
+      - Individual moment 5x1 plots: <out_dir>/moments_vs_t/<moment_name>.<fmt>
       - Multi-panel overview grid of key moments: <out_dir>/moments_vs_t/moments_overview_all_tbins.<fmt>
     """
     generated: List[Path] = []
@@ -2486,7 +2487,8 @@ def plot_moments_across_tbins(
         cfg_t = copy.deepcopy(config)
         cfg_t.dataset.t_bin = t_name
         t_rundir = get_run_directory(cfg_t, run_dir)
-        comp = load_or_export_moment_comparison_data(cfg_t, t_rundir, n_lowest_chi2=1)
+        n_chi2 = getattr(config.plotting, "n_lowest_chi2", 1) if getattr(config, "plotting", None) else 1
+        comp = load_or_export_moment_comparison_data(cfg_t, t_rundir, n_lowest_chi2=n_chi2)
         if not comp:
             continue
 
@@ -2512,6 +2514,7 @@ def plot_moments_across_tbins(
             "label": t_lbl,
             "data": comp.get("data", {}),
             "best_fit": best_fit,
+            "fits": valid_fits,
             "rundir": t_rundir,
         }
 
@@ -2602,7 +2605,11 @@ def plot_moments_across_tbins(
     palette = PHYSICS_PALETTE
     markers = ["o", "s", "^", "D", "v", "<", ">", "p", "*", "X"]
 
-    # 1. Individual Moment Plots across all t-bins
+    # 1. Individual Moment Plots across all t-bins (side-by-side from lowest to highest -t)
+    n_cols = len(sorted_tbins)
+    fig_width = max(3.8 * n_cols, 8.0)
+    fig_height = 4.2
+
     for mom_name in selected_moments:
         parts = mom_name.split("_")
         if len(parts) >= 4:
@@ -2611,16 +2618,18 @@ def plot_moments_across_tbins(
         else:
             latex_title = mom_name
 
-        fig, ax = plt.subplots(
-            figsize=(7.5, 5.2), dpi=300,
-            gridspec_kw={"top": 0.91, "bottom": 0.12, "left": 0.13, "right": 0.95}
+        fig, axes = plt.subplots(
+            1, n_cols,
+            figsize=(fig_width, fig_height),
+            sharey=sharey,
+            dpi=300,
         )
+        axes_list = np.atleast_1d(axes)
 
         for idx, t_name in enumerate(sorted_tbins):
+            ax = axes_list[idx]
             t_info = t_data[t_name]
-            c = palette[idx % len(palette)]
-            m_sym = markers[idx % len(markers)]
-            lbl = t_info["label"]
+            t_lbl = t_info["label"]
 
             d_val = t_info["data"].get(mom_name)
             if d_val:
@@ -2641,30 +2650,61 @@ def plot_moments_across_tbins(
 
                 ax.errorbar(
                     m_pts, y_pts, yerr=e_pts,
-                    fmt=m_sym, color=c, markersize=3.8,
-                    capsize=1.5, elinewidth=0.9,
-                    label=lbl, alpha=0.9, zorder=4 + idx
+                    fmt="o", color="black", markersize=3.2,
+                    capsize=1.2, elinewidth=0.85,
+                    label="Data" if idx == 0 else None,
+                    zorder=3,
                 )
 
-            if draw_fits and t_info["best_fit"]:
-                f_mom = t_info["best_fit"].get("moments", {}).get(mom_name)
-                if f_mom:
-                    mf = f_mom.get("mass", [])
-                    yf = f_mom.get("val", [])
-                    if len(mf) > 3:
-                        ms, ys = smooth_curve(mf, yf, num_points=200)
-                        ax.plot(ms, ys, "-", color=c, linewidth=1.8, alpha=0.85, zorder=3 + idx)
+            if draw_fits:
+                fits_list = t_info.get("fits", [])
+                if not fits_list and t_info.get("best_fit"):
+                    fits_list = [t_info["best_fit"]]
+                for f_idx, fit_obj in enumerate(fits_list):
+                    f_mom = fit_obj.get("moments", {}).get(mom_name)
+                    if f_mom:
+                        mf = f_mom.get("mass", [])
+                        yf = f_mom.get("val", [])
+                        if len(mf) > 3:
+                            ms, ys = smooth_curve(mf, yf, num_points=200)
+                            if f_idx == 0:
+                                ax.plot(
+                                    ms, ys, "-", color="#D55E00", linewidth=1.8, alpha=0.95,
+                                    label="Rank 1 Fit" if idx == 0 else None, zorder=5
+                                )
+                            else:
+                                lbl = f"Top {len(fits_list)} Fits" if (idx == 0 and f_idx == 1) else None
+                                ax.plot(
+                                    ms, ys, "-", color="#D55E00", linewidth=0.9, alpha=0.25,
+                                    label=lbl, zorder=4
+                                )
 
-        ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
-        if fit_mass_min is not None and fit_mass_max is not None:
-            pad = fit_mass_step * 0.6
-            ax.set_xlim(fit_mass_min - pad, fit_mass_max + pad)
+            ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6, zorder=1)
+            if fit_mass_min is not None and fit_mass_max is not None:
+                pad = fit_mass_step * 0.6
+                ax.set_xlim(fit_mass_min - pad, fit_mass_max + pad)
 
-        ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11.5)
-        ax.set_ylabel(f"${latex_title}$", fontsize=12)
-        ax.set_title(f"{config.project.name} - ${latex_title}$ vs Mass Across $-t$ Bins", fontsize=12.5, pad=8)
-        ax.legend(frameon=True, fontsize=9.5, loc="best")
-        ax.grid(True, linestyle=":", alpha=0.45)
+            chi2_str = ""
+            if t_info.get("best_fit"):
+                c2 = t_info["best_fit"].get("chi2", None)
+                if c2 is not None:
+                    chi2_str = f"\n($\\chi^2 = {c2:.1f}$)"
+
+            ax.set_title(f"{t_lbl}{chi2_str}", fontsize=10, pad=5)
+            ax.grid(True, linestyle=":", alpha=0.45)
+            ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=10)
+            ax.tick_params(axis="both", which="major", labelsize=9)
+
+            if idx == 0:
+                ax.set_ylabel(f"${latex_title}$", fontsize=11.5)
+                ax.legend(frameon=True, fontsize=8.5, loc="best")
+            elif not sharey:
+                ax.set_ylabel(f"${latex_title}$", fontsize=10, alpha=0.85)
+
+            ax.ticklabel_format(axis="y", style="sci", scilimits=(-3, 4), useMathText=True)
+
+        fig.suptitle(f"{config.project.name} - ${latex_title}$ Across $-t$ Bins", fontsize=13, y=0.98)
+        fig.tight_layout(rect=[0, 0.02, 1, 0.93])
 
         for fmt in formats:
             p_indiv = indiv_dir / f"{mom_name}_vs_t.{fmt}"
@@ -3071,6 +3111,7 @@ def plot_tbins_parallel(
                 run_dir=run_dir,
                 formats=formats,
                 style=effective_style,
+                sharey=getattr(config.plotting, "moments_vs_t_sharey", False) if getattr(config, "plotting", None) else False,
             )
             total_plots += len(t_mom_plots)
         except Exception as e:

@@ -206,6 +206,7 @@ class PlottingConfig:
     posterior_density_bands: bool = True
     distributions: bool = True
     moments_vs_t: bool = True
+    moments_vs_t_sharey: bool = False
 
 
 @dataclass
