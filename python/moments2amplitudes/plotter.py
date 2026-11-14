@@ -19,6 +19,7 @@ import shutil
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import numpy as np
 
 # Ensure matplotlib has a writable config directory
 os.environ.setdefault("MPLCONFIGDIR", "/tmp")
@@ -503,12 +504,30 @@ def compute_bin_edges(masses: List[float] | Any, default_step: float = 0.04) -> 
     return np.concatenate([[first_edge], inner_edges, [last_edge]])
 
 
+def compute_weighted_percentile(arr: np.ndarray, q: float, weights: Optional[np.ndarray] = None) -> float:
+    """Compute percentile q in [0, 100] taking into account sample weights if provided."""
+    if len(arr) == 0:
+        return 0.0
+    if weights is None or len(weights) != len(arr) or np.sum(weights) <= 0:
+        return float(np.percentile(arr, q))
+    sorter = np.argsort(arr)
+    s_arr = arr[sorter]
+    s_w = weights[sorter]
+    cum_w = np.cumsum(s_w)
+    tot_w = cum_w[-1]
+    if tot_w <= 0:
+        return float(np.percentile(arr, q))
+    target = (q / 100.0) * tot_w
+    return float(np.interp(target, cum_w, s_arr))
+
+
 def extract_credible_bounds(
     masses: List[float],
     mcmc_dict: Dict[float, List[float]],
     nom_vals: List[float],
     percentiles: Tuple[float, float] = (16.0, 84.0),
     squared: bool = False,
+    mcmc_weights: Optional[Dict[float, List[float]]] = None,
 ) -> Tuple[List[float], List[float]]:
     """Extract lower and upper percentiles for credible interval band across mass bins."""
     import numpy as np
@@ -517,15 +536,19 @@ def extract_credible_bounds(
     for idx, m in enumerate(masses):
         m_round = round(m, 4)
         samps = mcmc_dict.get(m_round)
+        wts = mcmc_weights.get(m_round) if mcmc_weights else None
         if samps is None:
             for mk, mv in mcmc_dict.items():
                 if abs(mk - m_round) < 0.005:
                     samps = mv
+                    if mcmc_weights:
+                        wts = mcmc_weights.get(mk)
                     break
         if samps:
-            vals = [v**2 for v in samps] if squared else samps
-            lo.append(float(np.percentile(vals, p_lo)))
-            hi.append(float(np.percentile(vals, p_hi)))
+            vals = np.array([v**2 for v in samps] if squared else samps, dtype=float)
+            w_arr = np.array(wts, dtype=float) if wts is not None else None
+            lo.append(compute_weighted_percentile(vals, p_lo, w_arr))
+            hi.append(compute_weighted_percentile(vals, p_hi, w_arr))
         else:
             ref = nom_vals[idx]**2 if squared else nom_vals[idx]
             lo.append(ref)
@@ -546,6 +569,7 @@ def plot_posterior_density_band(
     fit_step: float = 0.04,
     zorder: int = 3,
     mirrored: bool = False,
+    mcmc_weights: Optional[Dict[float, List[float]]] = None,
 ) -> None:
     """
     Draw a continuous credible uncertainty band directly from the empirical
@@ -588,10 +612,13 @@ def plot_posterior_density_band(
         for m in masses:
             m_round = round(m, 4)
             samps = mcmc_dict.get(m_round)
+            wts = mcmc_weights.get(m_round) if mcmc_weights else None
             if samps is None:
                 for mk, mv in mcmc_dict.items():
                     if abs(mk - m_round) < 0.005:
                         samps = mv
+                        if mcmc_weights:
+                            wts = mcmc_weights.get(mk)
                         break
             if samps:
                 arr = np.array(samps, dtype=float)
@@ -601,8 +628,9 @@ def plot_posterior_density_band(
                     vals = -arr
                 else:
                     vals = arr
-                lo_list.append(float(np.percentile(vals, p_lo)))
-                hi_list.append(float(np.percentile(vals, p_hi)))
+                w_arr = np.array(wts, dtype=float) if wts is not None else None
+                lo_list.append(compute_weighted_percentile(vals, p_lo, w_arr))
+                hi_list.append(compute_weighted_percentile(vals, p_hi, w_arr))
             else:
                 lo_list.append(0.0)
                 hi_list.append(0.0)
@@ -643,6 +671,7 @@ def plot_phase_with_ambiguity(
     linestyle_pos: str = "-",
     linestyle_neg: str = "--",
     density_band: bool = True,
+    mcmc_weights: Optional[Dict[float, List[float]]] = None,
 ) -> None:
     """
     Plot fitted phase vs mass including both positive and negative branches
@@ -675,10 +704,11 @@ def plot_phase_with_ambiguity(
                 plot_posterior_density_band(
                     ax=ax, masses=masses, mcmc_dict=mcmc_dict, is_mass_dep=True,
                     color=color, squared=False, n_levels=20, base_alpha=eff_base_alpha,
-                    max_alpha=eff_max_alpha, fit_step=fit_step, zorder=zorder - 1, mirrored=False
+                    max_alpha=eff_max_alpha, fit_step=fit_step, zorder=zorder - 1, mirrored=False,
+                    mcmc_weights=mcmc_weights
                 )
             else:
-                lo_68, hi_68 = extract_credible_bounds(masses, mcmc_dict, y_nom, (16.0, 84.0))
+                lo_68, hi_68 = extract_credible_bounds(masses, mcmc_dict, y_nom, (16.0, 84.0), mcmc_weights=mcmc_weights)
                 if len(masses) >= 4:
                     m_s68, lo_s = smooth_curve(masses, lo_68, num_points=200)
                     m_s68, hi_s = smooth_curve(masses, hi_68, num_points=200)
@@ -694,7 +724,8 @@ def plot_phase_with_ambiguity(
                     plot_posterior_density_band(
                         ax=ax, masses=masses, mcmc_dict=mcmc_dict, is_mass_dep=True,
                         color=color, squared=False, n_levels=20, base_alpha=eff_base_alpha,
-                        max_alpha=eff_max_alpha, fit_step=fit_step, zorder=zorder - 1, mirrored=True
+                        max_alpha=eff_max_alpha, fit_step=fit_step, zorder=zorder - 1, mirrored=True,
+                        mcmc_weights=mcmc_weights
                     )
                 else:
                     if len(masses) >= 4:
@@ -716,10 +747,11 @@ def plot_phase_with_ambiguity(
                 plot_posterior_density_band(
                     ax=ax, masses=masses, mcmc_dict=mcmc_dict, is_mass_dep=False,
                     color=color, squared=False, n_levels=20, base_alpha=eff_base_alpha,
-                    max_alpha=eff_max_alpha, fit_step=fit_step, zorder=zorder - 1, mirrored=False
+                    max_alpha=eff_max_alpha, fit_step=fit_step, zorder=zorder - 1, mirrored=False,
+                    mcmc_weights=mcmc_weights
                 )
             else:
-                lo_68, hi_68 = extract_credible_bounds(masses, mcmc_dict, y_nom, (16.0, 84.0))
+                lo_68, hi_68 = extract_credible_bounds(masses, mcmc_dict, y_nom, (16.0, 84.0), mcmc_weights=mcmc_weights)
                 x_step = np.repeat(edges, 2)[1:-1]
                 lo_step = np.repeat(lo_68, 2)
                 hi_step = np.repeat(hi_68, 2)
@@ -738,7 +770,8 @@ def plot_phase_with_ambiguity(
                     plot_posterior_density_band(
                         ax=ax, masses=masses, mcmc_dict=mcmc_dict, is_mass_dep=False,
                         color=color, squared=False, n_levels=20, base_alpha=eff_base_alpha,
-                        max_alpha=eff_max_alpha, fit_step=fit_step, zorder=zorder - 1, mirrored=True
+                        max_alpha=eff_max_alpha, fit_step=fit_step, zorder=zorder - 1, mirrored=True,
+                        mcmc_weights=mcmc_weights
                     )
                 else:
                     ax.fill_between(x_step, -hi_step, -lo_step, color=color, alpha=alpha_band, zorder=zorder - 1)
@@ -880,6 +913,7 @@ def plot_amplitudes_and_bands(
     masses: List[float] = []
     nominal_amps: Dict[str, List[float]] = {}
     mcmc_samples: Dict[str, Dict[float, List[float]]] = {}
+    mcmc_weights: Dict[str, Dict[float, List[float]]] = {}
     mcmc_params: Dict[str, List[float]] = {}
 
     # Read with uproot or PyROOT
@@ -923,17 +957,22 @@ def plot_amplitudes_and_bands(
                     mtree = mf[mtname]
                     mbins = list(mtree["mass_bin"].array())
                     m_result_entries = list(mtree["mcmc_entry"].array()) if "mcmc_entry" in mtree else None
+                    m_weights = list(mtree["weight"].array()) if "weight" in mtree else None
                     n_mass_bins = len(masses) if masses else 1
                     for k in nominal_amps.keys():
                         if k in mtree:
                             arr = list(mtree[k].array())
                             mcmc_samples[k] = {}
+                            mcmc_weights[k] = {}
                             for i, (m, v) in enumerate(zip(mbins, arr)):
                                 if has_conv_tree:
                                     entry_id = m_result_entries[i] if m_result_entries is not None else (i // n_mass_bins)
                                     if entry_id not in conv_entries:
                                         continue
-                                mcmc_samples[k].setdefault(round(float(m), 4), []).append(float(v))
+                                m_round = round(float(m), 4)
+                                mcmc_samples[k].setdefault(m_round, []).append(float(v))
+                                if m_weights is not None:
+                                    mcmc_weights[k].setdefault(m_round, []).append(float(m_weights[i]))
                 if "mcmc_params" in mf:
                     ptree = mf["mcmc_params"]
                     p_entries = list(ptree["mcmc_entry"].array()) if "mcmc_entry" in ptree else None
@@ -990,6 +1029,14 @@ def plot_amplitudes_and_bands(
                                             mcmc_samples[k][round(float(m_str), 4)] = [float(v) for v in vals]
                                         except ValueError:
                                             pass
+                                raw_weights = jdata.get("mcmc_weights", {})
+                                for k, w_dict in raw_weights.items():
+                                    mcmc_weights[k] = {}
+                                    for m_str, vals in w_dict.items():
+                                        try:
+                                            mcmc_weights[k][round(float(m_str), 4)] = [float(v) for v in vals]
+                                        except ValueError:
+                                            pass
                                 for pk, pvals in raw_params.items():
                                     mcmc_params[pk] = [float(v) for v in pvals]
                                 if "h0_data" in jdata and jdata["h0_data"].get("mass") and jdata["h0_data"].get("val"):
@@ -1025,6 +1072,14 @@ def plot_amplitudes_and_bands(
                                 for m_str, vals in m_dict.items():
                                     try:
                                         mcmc_samples[k][round(float(m_str), 4)] = [float(v) for v in vals]
+                                    except ValueError:
+                                        pass
+                            raw_weights = jdata.get("mcmc_weights", {})
+                            for k, w_dict in raw_weights.items():
+                                mcmc_weights[k] = {}
+                                for m_str, vals in w_dict.items():
+                                    try:
+                                        mcmc_weights[k][round(float(m_str), 4)] = [float(v) for v in vals]
                                     except ValueError:
                                         pass
                             raw_params = jdata.get("mcmc_params", {})
@@ -1153,10 +1208,11 @@ def plot_amplitudes_and_bands(
                         plot_posterior_density_band(
                             ax=ax, masses=masses, mcmc_dict=mcmc_samples[k],
                             is_mass_dep=True, color=c, squared=True, n_levels=20,
-                            base_alpha=0.18, max_alpha=0.55, fit_step=fit_step, zorder=3
+                            base_alpha=0.18, max_alpha=0.55, fit_step=fit_step, zorder=3,
+                            mcmc_weights=mcmc_weights.get(k)
                         )
                     else:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True, mcmc_weights=mcmc_weights.get(k))
                         if len(masses) >= 4:
                             m_s, lo_smooth = smooth_curve(masses, lo_68, num_points=200)
                             m_s, hi_smooth = smooth_curve(masses, hi_68, num_points=200)
@@ -1175,10 +1231,11 @@ def plot_amplitudes_and_bands(
                         plot_posterior_density_band(
                             ax=ax, masses=masses, mcmc_dict=mcmc_samples[k],
                             is_mass_dep=False, color=c, squared=True, n_levels=20,
-                            base_alpha=0.18, max_alpha=0.55, fit_step=fit_step, zorder=3
+                            base_alpha=0.18, max_alpha=0.55, fit_step=fit_step, zorder=3,
+                            mcmc_weights=mcmc_weights.get(k)
                         )
                     else:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True, mcmc_weights=mcmc_weights.get(k))
                         x_step = np.repeat(edges, 2)[1:-1]
                         lo_step = np.repeat(lo_68, 2)
                         hi_step = np.repeat(hi_68, 2)
@@ -1221,6 +1278,7 @@ def plot_amplitudes_and_bands(
                     linestyle_pos=ls,
                     linestyle_neg=neg_ls,
                     density_band=density_bands,
+                    mcmc_weights=mcmc_weights.get(k),
                 )
 
             configure_phase_axis(ax_phase)
@@ -1276,6 +1334,7 @@ def plot_amplitudes_and_bands(
                 linestyle_pos=ls,
                 linestyle_neg=neg_ls,
                 density_band=density_bands,
+                mcmc_weights=mcmc_weights.get(k),
             )
 
         configure_phase_axis(ax)
@@ -1334,11 +1393,12 @@ def plot_amplitudes_and_bands(
                         plot_posterior_density_band(
                             ax=ax, masses=masses, mcmc_dict=mcmc_samples[k],
                             is_mass_dep=True, color=c_wave, squared=False, n_levels=20,
-                            base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                            base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3,
+                            mcmc_weights=mcmc_weights.get(k)
                         )
                     else:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
-                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5))
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), mcmc_weights=mcmc_weights.get(k))
+                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), mcmc_weights=mcmc_weights.get(k))
                         m_s95, lo_95s = smooth_curve(masses, lo_95, num_points=200)
                         m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
                         m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
@@ -1356,11 +1416,12 @@ def plot_amplitudes_and_bands(
                         plot_posterior_density_band(
                             ax=ax, masses=masses, mcmc_dict=mcmc_samples[k],
                             is_mass_dep=False, color=c_wave, squared=False, n_levels=20,
-                            base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                            base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3,
+                            mcmc_weights=mcmc_weights.get(k)
                         )
                     else:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0))
-                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5))
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), mcmc_weights=mcmc_weights.get(k))
+                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), mcmc_weights=mcmc_weights.get(k))
                         x_step = np.repeat(edges, 2)[1:-1]
                         lo_95s = np.repeat(lo_95, 2)
                         hi_95s = np.repeat(hi_95, 2)
@@ -1413,11 +1474,12 @@ def plot_amplitudes_and_bands(
                         plot_posterior_density_band(
                             ax=ax, masses=masses, mcmc_dict=mcmc_samples[k],
                             is_mass_dep=True, color=c_wave, squared=True, n_levels=20,
-                            base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                            base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3,
+                            mcmc_weights=mcmc_weights.get(k)
                         )
                     else:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
-                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True, mcmc_weights=mcmc_weights.get(k))
+                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True, mcmc_weights=mcmc_weights.get(k))
                         m_s95, lo_95s = smooth_curve(masses, lo_95, num_points=200)
                         m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
                         m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
@@ -1435,11 +1497,12 @@ def plot_amplitudes_and_bands(
                         plot_posterior_density_band(
                             ax=ax, masses=masses, mcmc_dict=mcmc_samples[k],
                             is_mass_dep=False, color=c_wave, squared=True, n_levels=20,
-                            base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                            base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3,
+                            mcmc_weights=mcmc_weights.get(k)
                         )
                     else:
-                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
-                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
+                        lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True, mcmc_weights=mcmc_weights.get(k))
+                        lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True, mcmc_weights=mcmc_weights.get(k))
                         x_step = np.repeat(edges, 2)[1:-1]
                         lo_95s = np.repeat(lo_95, 2)
                         hi_95s = np.repeat(hi_95, 2)
@@ -1457,7 +1520,6 @@ def plot_amplitudes_and_bands(
                 handles, labels = ax.get_legend_handles_labels()
                 handles.append(Patch(color=c_wave, alpha=0.35))
                 labels.append("MCMC Posterior Density")
-                ax.legend(handles=handles, labels=labels, frameon=True, fontsize=9, loc="best")
                 ax.legend(handles=handles, labels=labels, frameon=True, fontsize=9, loc="best")
             else:
                 ax.legend(frameon=True, fontsize=9, loc="best")
@@ -1503,11 +1565,12 @@ def plot_amplitudes_and_bands(
                             plot_posterior_density_band(
                                 ax=ax_top, masses=masses, mcmc_dict=mcmc_samples[k],
                                 is_mass_dep=True, color=c_wave, squared=True, n_levels=20,
-                                base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                                base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3,
+                                mcmc_weights=mcmc_weights.get(k)
                             )
                         else:
-                            lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
-                            lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
+                            lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True, mcmc_weights=mcmc_weights.get(k))
+                            lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True, mcmc_weights=mcmc_weights.get(k))
                             m_s95, lo_95s = smooth_curve(masses, lo_95, num_points=200)
                             m_s95, hi_95s = smooth_curve(masses, hi_95, num_points=200)
                             m_s68, lo_68s = smooth_curve(masses, lo_68, num_points=200)
@@ -1525,11 +1588,12 @@ def plot_amplitudes_and_bands(
                             plot_posterior_density_band(
                                 ax=ax_top, masses=masses, mcmc_dict=mcmc_samples[k],
                                 is_mass_dep=False, color=c_wave, squared=True, n_levels=20,
-                                base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                                base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3,
+                                mcmc_weights=mcmc_weights.get(k)
                             )
                         else:
-                            lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True)
-                            lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True)
+                            lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (16.0, 84.0), squared=True, mcmc_weights=mcmc_weights.get(k))
+                            lo_95, hi_95 = extract_credible_bounds(masses, mcmc_samples[k], y_nom, (2.5, 97.5), squared=True, mcmc_weights=mcmc_weights.get(k))
                             x_step = np.repeat(edges, 2)[1:-1]
                             lo_95s = np.repeat(lo_95, 2)
                             hi_95s = np.repeat(hi_95, 2)
@@ -1572,6 +1636,7 @@ def plot_amplitudes_and_bands(
                     base_alpha=0.20,
                     max_alpha=0.60,
                     density_band=density_bands,
+                    mcmc_weights=mcmc_weights.get(phase_k),
                 )
 
                 configure_phase_axis(ax_bot)
@@ -1614,6 +1679,7 @@ def plot_amplitudes_and_bands(
                 base_alpha=0.20,
                 max_alpha=0.60,
                 density_band=density_bands,
+                mcmc_weights=mcmc_weights.get(k),
             )
 
             configure_phase_axis(ax)
@@ -1720,10 +1786,11 @@ def plot_amplitudes_and_bands(
                                     plot_posterior_density_band(
                                         ax=ax_int, masses=masses, mcmc_dict=mcmc_samples[k],
                                         is_mass_dep=True, color="black", squared=True, n_levels=20,
-                                        base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                                        base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3,
+                                        mcmc_weights=mcmc_weights.get(k)
                                     )
                                 else:
-                                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True)
+                                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True, mcmc_weights=mcmc_weights.get(k))
                                     m_s68, lo_s = smooth_curve(masses, lo_68, num_points=200)
                                     m_s68, hi_s = smooth_curve(masses, hi_68, num_points=200)
                                     ax_int.fill_between(m_s68, lo_s, hi_s, color="black", alpha=0.30, zorder=3)
@@ -1738,10 +1805,11 @@ def plot_amplitudes_and_bands(
                                     plot_posterior_density_band(
                                         ax=ax_int, masses=masses, mcmc_dict=mcmc_samples[k],
                                         is_mass_dep=False, color="black", squared=True, n_levels=20,
-                                        base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3
+                                        base_alpha=0.22, max_alpha=0.62, fit_step=fit_step, zorder=3,
+                                        mcmc_weights=mcmc_weights.get(k)
                                     )
                                 else:
-                                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True)
+                                    lo_68, hi_68 = extract_credible_bounds(masses, mcmc_samples[k], nominal_amps[k], (16.0, 84.0), squared=True, mcmc_weights=mcmc_weights.get(k))
                                     x_step = np.repeat(edges, 2)[1:-1]
                                     lo_s = np.repeat(lo_68, 2)
                                     hi_s = np.repeat(hi_68, 2)
@@ -1793,6 +1861,7 @@ def plot_amplitudes_and_bands(
                                     base_alpha=0.20,
                                     max_alpha=0.60,
                                     density_band=density_bands,
+                                    mcmc_weights=mcmc_weights.get(pk),
                                 )
                             else:
                                 ax_phi.plot([masses[0] - fit_step*0.6, masses[-1] + fit_step*0.6], [0, 0], "--", color="gray", linewidth=1.0, alpha=0.7)
@@ -2005,15 +2074,28 @@ def plot_amplitudes_and_bands(
 
             for k, y_vals in yield_samples.items():
                 vals = np.array(y_vals, dtype=float)
+                w_samps = mcmc_weights.get(k, {}).get(first_m, None)
+                if w_samps is None and "weight" in mcmc_params:
+                    w_samps = mcmc_params["weight"]
+                w_arr = np.array(w_samps, dtype=float) if (w_samps is not None and len(w_samps) == len(vals)) else None
+
                 fig, ax = plt.subplots(
                     figsize=(5.5, 4.2), dpi=300,
                     gridspec_kw={"top": 0.91, "bottom": 0.13, "left": 0.13, "right": 0.95}
                 )
-                q16, q50, q84 = np.percentile(vals, [16, 50, 84])
+                if w_arr is not None:
+                    q16 = compute_weighted_percentile(vals, 16.0, w_arr)
+                    q50 = compute_weighted_percentile(vals, 50.0, w_arr)
+                    q84 = compute_weighted_percentile(vals, 84.0, w_arr)
+                else:
+                    q16, q50, q84 = np.percentile(vals, [16, 50, 84])
                 nom_yield = sum((v**2) * fit_step for v in nominal_amps.get(k, []))
 
                 n_bins = min(50, max(15, int(np.sqrt(len(vals)))))
-                ax.hist(vals, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
+                if w_arr is not None:
+                    ax.hist(vals, weights=w_arr, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
+                else:
+                    ax.hist(vals, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
                 ax.axvline(q50, color="#1A2E40", linestyle="--", linewidth=1.5, label=f"Median: {q50:.2f}")
                 ax.axvline(q16, color="#2B4C7E", linestyle=":", linewidth=1.2, label=f"68% CI: [{q16:.2f}, {q84:.2f}]")
                 ax.axvline(q84, color="#2B4C7E", linestyle=":", linewidth=1.2)
@@ -2046,9 +2128,22 @@ def plot_amplitudes_and_bands(
                 for i, k in enumerate(y_keys):
                     ax = axes_flat[i]
                     vals = np.array(yield_samples[k], dtype=float)
-                    q16, q50, q84 = np.percentile(vals, [16, 50, 84])
+                    w_samps = mcmc_weights.get(k, {}).get(first_m, None)
+                    if w_samps is None and "weight" in mcmc_params:
+                        w_samps = mcmc_params["weight"]
+                    w_arr = np.array(w_samps, dtype=float) if (w_samps is not None and len(w_samps) == len(vals)) else None
+
+                    if w_arr is not None:
+                        q16 = compute_weighted_percentile(vals, 16.0, w_arr)
+                        q50 = compute_weighted_percentile(vals, 50.0, w_arr)
+                        q84 = compute_weighted_percentile(vals, 84.0, w_arr)
+                    else:
+                        q16, q50, q84 = np.percentile(vals, [16, 50, 84])
                     n_bins = min(40, max(12, int(np.sqrt(len(vals)))))
-                    ax.hist(vals, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
+                    if w_arr is not None:
+                        ax.hist(vals, weights=w_arr, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
+                    else:
+                        ax.hist(vals, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
                     ax.axvline(q50, color="#1A2E40", linestyle="--", linewidth=1.5)
                     ax.axvline(q16, color="#2B4C7E", linestyle=":", linewidth=1.2)
                     ax.axvline(q84, color="#2B4C7E", linestyle=":", linewidth=1.2)

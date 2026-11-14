@@ -173,6 +173,48 @@ class TestCrossSection(unittest.TestCase):
         # Only entry 0 and 2 have is_valid=1 and status=0 -> 2 valid samples
         self.assertEqual(updated.mcmc_samples_count, 2)
 
+    def test_propagate_mcmc_cross_section_with_weights(self):
+        res = CrossSectionResult(
+            resonance="a2_1320", mass=1.318, mass_error=0.0, width=0.107, width_error=0.0,
+            t_min=0.1, t_max=0.2, t_center=0.15, delta_t=0.1, luminosity=257.4,
+            branching_ratio=0.0565, den_factor=1e6, pos_refl_yield=1000.0, pos_refl_yield_err=10.0,
+            neg_refl_yield=0.0, neg_refl_yield_err=0.0, total_yield=1000.0, total_yield_err=10.0,
+            cs_pos=0.001, cs_pos_err=0.0001, cs_neg=0.0, cs_neg_err=0.0,
+            cs_total=0.001, cs_total_err=0.0001, pos_refl_fraction=1.0,
+            wave_yields={"a_2_1": WaveResonanceYield("a_2_1", 1, 10.0, 0.1, 1000.0, 10.0)}
+        )
+
+        mock_mcmc = {
+            "resonance": "a2_1320",
+            "entries_count": 2,
+            "waves": ["a_2_1"],
+            "reflectivities": [1],
+            "is_valid": [1, 1],
+            "status": [0, 0],
+            "mass": [1.318, 1.318],
+            "width": [0.107, 0.107],
+            "weights": [9.0, 1.0],
+            "couplings": {"a_2_1": [10.0, 20.0]}
+        }
+
+        # Weighted mean of coupling: (9*10 + 1*20)/10 = 11.0
+        # Weighted mean of coupling^2: (9*100 + 1*400)/10 = 130.0
+        # Unweighted mean of coupling^2: (100 + 400)/2 = 250.0
+        updated = propagate_mcmc_cross_section(res, mock_mcmc, mass_limits=(0.8, 2.0), bin_width=0.04)
+        self.assertTrue(updated.has_mcmc)
+        weighted_cs_mean = updated.cs_pos_mcmc_mean
+
+        # Yield is (k^2)*I0. The ratio of MCMC yield mean between weighted and unweighted would be 130/250 = 0.52
+        mock_unweighted = dict(mock_mcmc)
+        mock_unweighted["weights"] = [1.0, 1.0]
+        import copy
+        res_unweighted = copy.deepcopy(res)
+        updated_unweighted = propagate_mcmc_cross_section(res_unweighted, mock_unweighted, mass_limits=(0.8, 2.0), bin_width=0.04)
+        ratio = weighted_cs_mean / updated_unweighted.cs_pos_mcmc_mean
+        self.assertAlmostEqual(ratio, 130.0 / 250.0, places=4)
+        # Weighted std of couplings: sqrt( (9*(10-11)^2 + 1*(20-11)^2)/10 ) = sqrt( (9 + 81)/10 ) = sqrt(9) = 3.0
+        self.assertAlmostEqual(updated.wave_yields["a_2_1"].coupling_mcmc_err, 3.0, places=4)
+
 
 if __name__ == "__main__":
     unittest.main()

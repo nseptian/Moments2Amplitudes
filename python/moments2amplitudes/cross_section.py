@@ -384,6 +384,10 @@ def propagate_mcmc_cross_section(
     val_masses = masses[valid_indices]
     val_widths = widths[valid_indices]
 
+    weights = np.array(mcmc_data.get("weights", []), dtype=float)
+    has_weights = (len(weights) == n_entries and np.sum(weights) > 0)
+    w_valid = weights[valid_indices] if has_weights else None
+
     # Evaluate Breit-Wigner integral factor I0 per entry
     is_const_mw = np.allclose(val_masses, val_masses[0]) and np.allclose(val_widths, val_widths[0])
     if is_const_mw:
@@ -394,6 +398,34 @@ def propagate_mcmc_cross_section(
             compute_bw_integral(1.0, float(val_masses[i]), float(val_widths[i]), m_lims[0], m_lims[1], b_w)
             for i in range(n_valid)
         ])
+
+    def calc_std(arr: np.ndarray) -> float:
+        if w_valid is None:
+            return float(np.std(arr))
+        mean = np.average(arr, weights=w_valid)
+        return float(np.sqrt(np.average((arr - mean)**2, weights=w_valid)))
+
+    def calc_stats(arr: np.ndarray) -> Tuple[float, float, float, float]:
+        if w_valid is None:
+            med = float(np.median(arr))
+            mean = float(np.mean(arr))
+            p16 = float(np.percentile(arr, 16))
+            p84 = float(np.percentile(arr, 84))
+        else:
+            mean = float(np.average(arr, weights=w_valid))
+            sorter = np.argsort(arr)
+            s_arr = arr[sorter]
+            s_w = w_valid[sorter]
+            cum_w = np.cumsum(s_w)
+            tot_w = cum_w[-1]
+            if tot_w > 0:
+                p16, med, p84 = np.interp([0.16 * tot_w, 0.50 * tot_w, 0.84 * tot_w], cum_w, s_arr)
+                p16, med, p84 = float(p16), float(med), float(p84)
+            else:
+                med = float(np.median(arr))
+                p16 = float(np.percentile(arr, 16))
+                p84 = float(np.percentile(arr, 84))
+        return mean, med, max(0.0, med - p16), max(0.0, p84 - med)
 
     # Calculate wave yields for each MCMC sample
     y_pos_arr = np.zeros(n_valid)
@@ -406,17 +438,16 @@ def propagate_mcmc_cross_section(
         y_w_arr = (k_vals ** 2) * i0_arr
 
         # Wave statistics
-        k_mcmc_err = float(np.std(k_vals))
-        y_mcmc_err = float(np.std(y_w_arr))
-        y_med = float(np.median(y_w_arr))
-        y_p16, y_p84 = float(np.percentile(y_w_arr, 16)), float(np.percentile(y_w_arr, 84))
+        k_mcmc_err = calc_std(k_vals)
+        y_mcmc_err = calc_std(y_w_arr)
+        _, y_med, y_lo, y_hi = calc_stats(y_w_arr)
 
         if w_name in res.wave_yields:
             w_yield = res.wave_yields[w_name]
             w_yield.coupling_mcmc_err = k_mcmc_err
             w_yield.yield_mcmc_err = y_mcmc_err
-            w_yield.yield_mcmc_err_lo = max(0.0, y_med - y_p16)
-            w_yield.yield_mcmc_err_hi = max(0.0, y_p84 - y_med)
+            w_yield.yield_mcmc_err_lo = y_lo
+            w_yield.yield_mcmc_err_hi = y_hi
 
         if refl == 1:
             y_pos_arr += y_w_arr
@@ -435,13 +466,6 @@ def propagate_mcmc_cross_section(
     cs_tot_arr = y_tot_arr / denom
     pos_frac_arr = np.where(y_tot_arr > 0, y_pos_arr / y_tot_arr, 0.5)
 
-    def calc_stats(arr: np.ndarray) -> Tuple[float, float, float, float]:
-        med = float(np.median(arr))
-        mean = float(np.mean(arr))
-        p16 = float(np.percentile(arr, 16))
-        p84 = float(np.percentile(arr, 84))
-        return mean, med, max(0.0, med - p16), max(0.0, p84 - med)
-
     y_pos_mean, y_pos_med, y_pos_lo, y_pos_hi = calc_stats(y_pos_arr)
     y_neg_mean, y_neg_med, y_neg_lo, y_neg_hi = calc_stats(y_neg_arr)
     y_tot_mean, y_tot_med, y_tot_lo, y_tot_hi = calc_stats(y_tot_arr)
@@ -456,31 +480,31 @@ def propagate_mcmc_cross_section(
     res.mcmc_samples_count = n_valid
     res.mcmc_file = str(mcmc_file_path) if mcmc_file_path else None
 
-    res.pos_refl_yield_mcmc_err = float(np.std(y_pos_arr))
+    res.pos_refl_yield_mcmc_err = calc_std(y_pos_arr)
     res.pos_refl_yield_mcmc_err_lo = y_pos_lo
     res.pos_refl_yield_mcmc_err_hi = y_pos_hi
 
-    res.neg_refl_yield_mcmc_err = float(np.std(y_neg_arr))
+    res.neg_refl_yield_mcmc_err = calc_std(y_neg_arr)
     res.neg_refl_yield_mcmc_err_lo = y_neg_lo
     res.neg_refl_yield_mcmc_err_hi = y_neg_hi
 
-    res.total_yield_mcmc_err = float(np.std(y_tot_arr))
+    res.total_yield_mcmc_err = calc_std(y_tot_arr)
     res.total_yield_mcmc_err_lo = y_tot_lo
     res.total_yield_mcmc_err_hi = y_tot_hi
 
-    res.cs_pos_mcmc_err = float(np.std(cs_pos_arr))
+    res.cs_pos_mcmc_err = calc_std(cs_pos_arr)
     res.cs_pos_mcmc_err_lo = cs_pos_lo
     res.cs_pos_mcmc_err_hi = cs_pos_hi
 
-    res.cs_neg_mcmc_err = float(np.std(cs_neg_arr))
+    res.cs_neg_mcmc_err = calc_std(cs_neg_arr)
     res.cs_neg_mcmc_err_lo = cs_neg_lo
     res.cs_neg_mcmc_err_hi = cs_neg_hi
 
-    res.cs_total_mcmc_err = float(np.std(cs_tot_arr))
+    res.cs_total_mcmc_err = calc_std(cs_tot_arr)
     res.cs_total_mcmc_err_lo = cs_tot_lo
     res.cs_total_mcmc_err_hi = cs_tot_hi
 
-    res.pos_refl_fraction_mcmc_err = float(np.std(pos_frac_arr))
+    res.pos_refl_fraction_mcmc_err = calc_std(pos_frac_arr)
 
     res.cs_pos_mcmc_mean = cs_pos_mean
     res.cs_pos_mcmc_median = cs_pos_med

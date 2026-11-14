@@ -61,7 +61,6 @@ multi_start:
 
 mcmc_propagation:
   enabled: false
-  mcmc_tree_path: "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200_FixedCov_Lmax4_InitValueScale1.0_step0.8/{tbin}/Mpi0eta1.300000_/ResultsBruMcmcFixedCovariance.root"
   burn_in: 0
   max_entries: 1000
   stride: 1

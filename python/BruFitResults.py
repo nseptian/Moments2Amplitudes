@@ -13,7 +13,31 @@ import gc
 from datetime import datetime
 
 
+def _compute_autocorrelation_fft(data: np.ndarray, max_lag: int | None = 5000) -> np.ndarray:
+    """
+    Compute sample autocorrelation function acf(lag) = Cov(x_t, x_{t+lag}) / Var(x)
+    matching BruFit's AutocorrPlot.cpp (parN / parD) via Wiener-Khinchin theorem FFT.
+    """
+    n = len(data)
+    if n <= 1:
+        return np.array([1.0], dtype=np.float64)
+    xm = data - np.mean(data)
+    par_d = np.sum(xm * xm)
+    limit = min(n, (max_lag + 1) if max_lag is not None else n)
+    if par_d <= 0.0:
+        res = np.zeros(limit, dtype=np.float64)
+        res[0] = 1.0
+        return res
+    n_fft = 2 ** int(np.ceil(np.log2(2 * n - 1)))
+    fx = np.fft.fft(xm, n=n_fft)
+    rx = np.fft.ifft(fx * np.conj(fx)).real[:limit]
+    acf = np.asarray(rx / par_d, dtype=np.float64)
+    acf[0] = 1.0
+    return acf
+
+
 class MomentsMCMC:
+
     """
     Helper class for loading, analyzing, and plotting BruFit MCMC moment results across mass bins.
     """
@@ -1364,24 +1388,19 @@ class MomentsMCMC:
         """Get autocorrelation graph for a specific moment, using weights if present."""
         data, _, _ = self._get_moment_chain_data(fit_bin_index, var_name, burn_in=burn_in)
         n_samples = len(data)
-        mean = np.mean(data)
-        var = np.var(data)
         if max_lag is None:
-            max_lag = n_samples // 2
+            max_lag = min(5000, n_samples // 2)
 
-        graph = ROOT.TGraph(max_lag + 1)
+        acf = _compute_autocorrelation_fft(data, max_lag=max_lag)
+        n_pts = len(acf)
+        graph = ROOT.TGraph(n_pts)
         graph.SetTitle(f"MCMC Autocorrelation {var_name}")
         graph.GetXaxis().SetTitle("Lag")
         graph.GetXaxis().SetTitleSize(0.05)
         graph.GetYaxis().SetTitle("Normalized Autocorrelation")
         graph.GetYaxis().SetTitleSize(0.05)
-        for lag in range(max_lag + 1):
-            if lag == 0:
-                graph.SetPoint(lag, lag, 1.0)
-            else:
-                cov = np.sum((data[:n_samples - lag] - mean) * (data[lag:] - mean)) / (n_samples - lag)
-                acf = cov / var if var > 0 else 0.0
-                graph.SetPoint(lag, lag, acf)
+        for lag in range(n_pts):
+            graph.SetPoint(lag, float(lag), float(acf[lag]))
 
         return graph
 
@@ -1420,11 +1439,11 @@ class MomentsMCMC:
                 m_name = moment_name_lists[j]
                 data, _, _ = self._get_moment_chain_data(fit_bin_index, m_name)
                 n_samples = len(data)
-                max_lag = n_samples // 2
-                mean = np.mean(data)
-                var = np.var(data)
+                eff_max_lag = min(5000, n_samples // 2)
+                acf = _compute_autocorrelation_fft(data, max_lag=eff_max_lag)
+                n_pts = len(acf)
 
-                graph = ROOT.TGraph(max_lag + 1)
+                graph = ROOT.TGraph(n_pts)
                 var_parts = m_name.split("_")
                 if len(var_parts) >= 4:
                     alpha, L, M = var_parts[1:4]
@@ -1434,13 +1453,8 @@ class MomentsMCMC:
                 graph.GetXaxis().SetTitleSize(0.05)
                 graph.GetYaxis().SetTitleSize(0.05)
 
-                for lag in range(max_lag + 1):
-                    if lag == 0:
-                        graph.SetPoint(lag, lag, 1.0)
-                    else:
-                        cov = np.sum((data[:n_samples - lag] - mean) * (data[lag:] - mean)) / (n_samples - lag)
-                        acf = cov / var if var > 0 else 0.0
-                        graph.SetPoint(lag, lag, acf)
+                for lag in range(n_pts):
+                    graph.SetPoint(lag, float(lag), float(acf[lag]))
 
                 graph.SetMarkerStyle(20)
                 graph.SetMarkerSize(0.3)
@@ -1448,7 +1462,7 @@ class MomentsMCMC:
                 graph.SetLineWidth(1)
                 graph.DrawClone("AL")
 
-                line_zero = ROOT.TLine(0, 0, max_lag, 0)
+                line_zero = ROOT.TLine(0, 0, n_pts - 1, 0)
                 line_zero.SetLineColor(ROOT.kGray)
                 line_zero.SetLineStyle(2)
                 line_zero.DrawClone("same")
@@ -1469,27 +1483,21 @@ class MomentsMCMC:
     def get_mcmc_integrated_autocorrelation_time(self, fit_bin_index: int, var_name: str, max_lag: int = None, burn_in: int = None) -> float:
         """
         Compute integrated autocorrelation time: tau_int = 0.5 + sum_{k=1} acf(k)
-        Stops summation when acf(k) <= 0.
+        Stops summation when acf(k) <= 0 (matching BruFit's Geyer sequence estimator).
         Uses sample weights if present.
         """
         data, _, _ = self._get_moment_chain_data(fit_bin_index, var_name, burn_in=burn_in)
         n_samples = len(data)
-        if n_samples == 0:
-            return 0.0
-        mean = np.mean(data)
-        var = np.var(data)
-        if var == 0:
+        if n_samples <= 1:
             return 0.5
-        if max_lag is None:
-            max_lag = n_samples // 2
+        eff_max_lag = min(5000, n_samples // 2) if max_lag is None else min(max_lag, n_samples // 2)
+        acf = _compute_autocorrelation_fft(data, max_lag=eff_max_lag)
 
         tau_int = 0.5
-        for lag in range(1, max_lag + 1):
-            cov = np.sum((data[:n_samples - lag] - mean) * (data[lag:] - mean)) / (n_samples - lag)
-            acf = cov / var
-            if acf <= 0:
+        for lag in range(1, len(acf)):
+            if acf[lag] <= 0:
                 break
-            tau_int += acf
+            tau_int += acf[lag]
 
         return float(tau_int)
 
@@ -1568,7 +1576,7 @@ class MomentsMCMC:
         esses = []
         per_moment = {}
 
-        calc_max_lag = (n_eff // 2) if max_lag is None else min(max_lag, n_eff // 2)
+        calc_max_lag = min(5000, n_eff // 2) if max_lag is None else min(max_lag, n_eff // 2)
 
         for var_name in moment_name_lists:
             raw_v = all_data[var_name]
@@ -1577,21 +1585,16 @@ class MomentsMCMC:
                 data = data[eff_burn_in:]
 
             n_samples = len(data)
-            if n_samples == 0:
-                continue
-            mean = np.mean(data)
-            var_val = np.var(data)
-            if var_val == 0:
+            if n_samples <= 1:
                 tau = 0.5
                 ess = float(n_eff)
             else:
+                acf = _compute_autocorrelation_fft(data, max_lag=calc_max_lag)
                 tau = 0.5
-                for lag in range(1, calc_max_lag + 1):
-                    cov = np.sum((data[:n_samples - lag] - mean) * (data[lag:] - mean)) / (n_samples - lag)
-                    acf = cov / var_val
-                    if acf <= 0:
+                for lag in range(1, len(acf)):
+                    if acf[lag] <= 0:
                         break
-                    tau += acf
+                    tau += acf[lag]
                 ess = (n_eff / (2.0 * tau)) if tau > 0 else float(n_eff)
                 ess = min(float(n_eff), float(ess))
 
@@ -2049,6 +2052,7 @@ def compute_chain_diagnostics_from_root(root_fpath: str, burn_in: int = 2000, tr
 
         n_eff = n_raw - eff_burn_in
 
+        calc_max_lag = min(5000, n_eff // 2)
         taus = []
         esses = []
         per_moment = {}
@@ -2056,18 +2060,14 @@ def compute_chain_diagnostics_from_root(root_fpath: str, burn_in: int = 2000, tr
             raw_v = all_data[name]
             d = np.repeat(raw_v, int_w) if int_w is not None else raw_v
             d = d[eff_burn_in:]
-            mean = np.mean(d)
-            var_val = np.var(d)
-            if var_val == 0:
+            if len(d) <= 1:
                 continue
-            max_lag = len(d) // 2
+            acf = _compute_autocorrelation_fft(d, max_lag=calc_max_lag)
             tau = 0.5
-            for lag in range(1, max_lag):
-                cov = np.sum((d[:-lag] - mean) * (d[lag:] - mean)) / (len(d) - lag)
-                acf = cov / var_val
-                if acf <= 0:
+            for lag in range(1, len(acf)):
+                if acf[lag] <= 0:
                     break
-                tau += acf
+                tau += acf[lag]
             ess = (len(d) / (2.0 * tau)) if tau > 0 else float(len(d))
             ess = min(float(len(d)), ess)
             taus.append(tau)

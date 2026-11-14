@@ -70,6 +70,7 @@ void ExportMCMCResonanceCouplings(
     bool hasStatus = (t->GetLeaf("Status") != nullptr);
     bool hasChi2 = (t->GetLeaf("chi2") != nullptr);
     bool hasEntry = (t->GetLeaf("mcmc_entry") != nullptr);
+    bool hasWeight = (t->GetLeaf("weight") != nullptr);
 
     // Identify coupling branches: MD_{wave}_{res}_k
     TObjArray* branches = t->GetListOfBranches();
@@ -136,6 +137,7 @@ void ExportMCMCResonanceCouplings(
     std::vector<double> vecChi2;
     std::vector<double> vecMass;
     std::vector<double> vecWidth;
+    std::vector<double> vecWeights;
     std::map<std::string, std::vector<double>> mapCouplings;
     for (const auto& w : waveNames) {
         mapCouplings[w] = std::vector<double>();
@@ -150,6 +152,7 @@ void ExportMCMCResonanceCouplings(
         double chi2Val = hasChi2 ? t->GetLeaf("chi2")->GetValue() : 0.0;
         double massVal = hasMass ? t->GetLeaf(massBranch)->GetValue() : 0.0;
         double widthVal = hasWidth ? t->GetLeaf(widthBranch)->GetValue() : 0.0;
+        double weightVal = hasWeight ? t->GetLeaf("weight")->GetValue() : 1.0;
 
         vecEntries.push_back(entryIdx);
         vecValid.push_back(isValidVal);
@@ -157,6 +160,7 @@ void ExportMCMCResonanceCouplings(
         vecChi2.push_back(chi2Val);
         vecMass.push_back(massVal);
         vecWidth.push_back(widthVal);
+        vecWeights.push_back(weightVal);
 
         for (size_t w = 0; w < waveNames.size(); ++w) {
             double kVal = t->GetLeaf(couplingBranches[w])->GetValue();
@@ -177,6 +181,14 @@ void ExportMCMCResonanceCouplings(
     for (size_t i = 0; i < vecStatus.size(); ++i) {
         if (i > 0) out << ", ";
         out << vecStatus[i];
+    }
+    out << "],\n";
+
+    // Output weights
+    out << "  \"weights\": [";
+    for (size_t i = 0; i < vecWeights.size(); ++i) {
+        if (i > 0) out << ", ";
+        out << std::setprecision(6) << vecWeights[i];
     }
     out << "],\n";
 

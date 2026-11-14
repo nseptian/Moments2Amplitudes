@@ -466,8 +466,10 @@ def validate_config(config: FitConfig) -> List[str]:
 
     # MCMC validation
     if config.mcmc_propagation.enabled:
-        if not config.mcmc_propagation.mcmc_tree_path:
-            errors.append("mcmc_propagation is enabled but mcmc_tree_path is not specified.")
+        if config.mcmc_propagation.burn_in < 0:
+            errors.append("mcmc_propagation burn_in must be non-negative.")
+        if config.mcmc_propagation.stride < 1:
+            errors.append("mcmc_propagation stride must be at least 1.")
 
     return errors
 

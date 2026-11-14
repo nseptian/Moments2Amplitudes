@@ -156,6 +156,9 @@ void ExportAmplitudes(
                 Long64_t mcmc_entry = 0;
                 bool has_mcmc_entry = (t_mcmc->GetBranch("mcmc_entry") != nullptr);
                 if (has_mcmc_entry) t_mcmc->SetBranchAddress("mcmc_entry", &mcmc_entry);
+                double mcmc_weight = 1.0;
+                bool has_mcmc_weight = (t_mcmc->GetBranch("weight") != nullptr);
+                if (has_mcmc_weight) t_mcmc->SetBranchAddress("weight", &mcmc_weight);
 
                 std::map<std::string, double> mcmcBuffers;
                 std::vector<std::string> validMcmcAmps;
@@ -169,6 +172,7 @@ void ExportAmplitudes(
 
                 // Map: ampName -> mass_bin -> list of samples
                 std::map<std::string, std::map<double, std::vector<double>>> samps;
+                std::map<double, std::vector<double>> weightList;
                 const Long64_t nMcmc = t_mcmc->GetEntries();
                 const size_t nMassBins = (massBins.empty() ? 1 : massBins.size());
                 for (Long64_t e = 0; e < nMcmc; ++e) {
@@ -178,6 +182,9 @@ void ExportAmplitudes(
                         if (convergedEntries.find(cur_id) == convergedEntries.end()) {
                             continue; // Only include converged MCMC fits!
                         }
+                    }
+                    if (has_mcmc_weight) {
+                        weightList[mcmc_mass].push_back(mcmc_weight);
                     }
                     for (const auto& name : validMcmcAmps) {
                         samps[name][mcmc_mass].push_back(mcmcBuffers[name]);
@@ -200,9 +207,32 @@ void ExportAmplitudes(
                     }
                     out << "\n    }" << (i + 1 < validMcmcAmps.size() ? ",\n" : "\n");
                 }
-            }
 
-            out << "  }";
+                out << "  }";
+
+                if (has_mcmc_weight && !weightList.empty()) {
+                    out << ",\n  \"mcmc_weights\": {\n";
+                    for (size_t i = 0; i < validMcmcAmps.size(); ++i) {
+                        const std::string& name = validMcmcAmps[i];
+                        out << "    \"" << name << "\": {\n";
+                        size_t mCount = 0;
+                        for (const auto& [m, wList] : weightList) {
+                            if (mCount > 0) out << ",\n";
+                            out << "      \"" << std::fixed << std::setprecision(4) << m << "\": [";
+                            for (size_t sIdx = 0; sIdx < wList.size(); ++sIdx) {
+                                if (sIdx > 0) out << ", ";
+                                out << std::setprecision(6) << wList[sIdx];
+                            }
+                            out << "]";
+                            mCount++;
+                        }
+                        out << "\n    }" << (i + 1 < validMcmcAmps.size() ? ",\n" : "\n");
+                    }
+                    out << "  }";
+                }
+            } else {
+                out << "  }";
+            }
 
             // Also export mcmc_params tree if present (converged fits only)
             TTree* t_params = dynamic_cast<TTree*>(f_mcmc->Get("mcmc_params"));
