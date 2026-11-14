@@ -214,6 +214,16 @@ class MassDependentMoments {
             }
         }
 
+        /**
+         * @brief Get sample weight for a specific MCMC entry
+         * @param entryIndex MCMC tree entry index
+         * @return Weight value, or 1.0 if not available / out of range
+         */
+        Double_t GetMCMCWeight(Long64_t entryIndex) const {
+            if (_moments.empty()) return 1.0;
+            return _moments.begin()->second.GetMCMCWeight(entryIndex);
+        }
+
     private:
         std::map<Double_t, MomentHelper> _moments;
         Double_t _NMassBins;

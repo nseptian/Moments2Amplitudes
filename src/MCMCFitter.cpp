@@ -179,11 +179,13 @@ namespace m2pw {
         // MCMC Trees
         TTree* mcmcParamsTree = new TTree("mcmc_params", "MCMC Posterior Sample Fitted Parameters");
         Long64_t mcmc_entry = 0;
+        double m_weight = 1.0;
         double m_chi2 = 0.0;
         int m_status = -1;
         bool m_isValid = false;
         bool m_isValidError = false;
         mcmcParamsTree->Branch("mcmc_entry", &mcmc_entry);
+        mcmcParamsTree->Branch("weight", &m_weight);
         std::vector<double> mcmcParVals(registeredParNames.size(), 0.0);
         for (size_t i = 0; i < registeredParNames.size(); ++i) {
             mcmcParamsTree->Branch(registeredParNames[i], &mcmcParVals[i]);
@@ -195,6 +197,7 @@ namespace m2pw {
 
         TTree* mcmcChi2Tree = new TTree("mcmc_chi2", "MCMC Posterior Sample Chi2 and Status");
         mcmcChi2Tree->Branch("mcmc_entry", &mcmc_entry);
+        mcmcChi2Tree->Branch("weight", &m_weight);
         mcmcChi2Tree->Branch("chi2", &m_chi2);
         mcmcChi2Tree->Branch("Status", &m_status);
         mcmcChi2Tree->Branch("isValid", &m_isValid);
@@ -205,6 +208,7 @@ namespace m2pw {
         std::vector<double> m_ampVals(ampNames.size(), 0.0);
         std::vector<double> m_momVals(momentNamesList.size(), 0.0);
         mcmcResultTree->Branch("mcmc_entry", &mcmc_entry);
+        mcmcResultTree->Branch("weight", &m_weight);
         mcmcResultTree->Branch("mass_bin", &m_mass_bin);
         for (size_t a = 0; a < ampNames.size(); ++a) {
             mcmcResultTree->Branch(ampNames[a], &m_ampVals[a]);
@@ -251,6 +255,7 @@ namespace m2pw {
             finalEvalFunction(finalParVals.data());
 
             mcmc_entry = entry;
+            m_weight = moms.GetMCMCWeight(entry);
             m_chi2 = lastChi2_;
             m_status = minimizerStatus_;
             m_isValid = minimizerIsValid_;

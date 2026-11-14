@@ -1846,7 +1846,12 @@ def plot_amplitudes_and_bands(
     if not only_amplitudes and plot_dist_cfg:
         # 6a. Fitted Parameter Posterior Distributions
         if mcmc_params:
+            weights = mcmc_params.get("weight", None)
+            w_arr = np.array(weights, dtype=float) if weights is not None else None
+
             for pname, pvals in mcmc_params.items():
+                if pname == "weight":
+                    continue
                 vals = np.array(pvals, dtype=float)
                 if len(vals) < 2 or np.std(vals) < 1e-12:
                     continue
@@ -1854,12 +1859,28 @@ def plot_amplitudes_and_bands(
                     figsize=(5.5, 4.2), dpi=300,
                     gridspec_kw={"top": 0.91, "bottom": 0.13, "left": 0.13, "right": 0.95}
                 )
-                q16, q50, q84 = np.percentile(vals, [16, 50, 84])
-                mean_v = np.mean(vals)
-                std_v = np.std(vals)
+                if w_arr is not None and len(w_arr) == len(vals):
+                    sorter = np.argsort(vals)
+                    s_vals = vals[sorter]
+                    s_wts = w_arr[sorter]
+                    cum_w = np.cumsum(s_wts)
+                    tot_w = cum_w[-1]
+                    if tot_w > 0:
+                        q16, q50, q84 = np.interp([0.16 * tot_w, 0.50 * tot_w, 0.84 * tot_w], cum_w, s_vals)
+                    else:
+                        q16, q50, q84 = np.percentile(vals, [16, 50, 84])
+                    mean_v = np.average(vals, weights=w_arr)
+                    std_v = np.sqrt(np.average((vals - mean_v)**2, weights=w_arr))
+                else:
+                    q16, q50, q84 = np.percentile(vals, [16, 50, 84])
+                    mean_v = np.mean(vals)
+                    std_v = np.std(vals)
 
                 n_bins = min(50, max(15, int(np.sqrt(len(vals)))))
-                ax.hist(vals, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
+                if w_arr is not None and len(w_arr) == len(vals):
+                    ax.hist(vals, weights=w_arr, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
+                else:
+                    ax.hist(vals, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
                 ax.axvline(q50, color="#1A2E40", linestyle="--", linewidth=1.5, label=f"Median: {q50:.4f}")
                 ax.axvline(q16, color="#2B4C7E", linestyle=":", linewidth=1.2, label=f"68% CI: [{q16:.4f}, {q84:.4f}]")
                 ax.axvline(q84, color="#2B4C7E", linestyle=":", linewidth=1.2)
@@ -1910,9 +1931,23 @@ def plot_amplitudes_and_bands(
                 for i, pname in enumerate(key_params):
                     ax = axes_flat[i]
                     vals = np.array(mcmc_params[pname], dtype=float)
-                    q16, q50, q84 = np.percentile(vals, [16, 50, 84])
+                    if w_arr is not None and len(w_arr) == len(vals):
+                        sorter = np.argsort(vals)
+                        s_vals = vals[sorter]
+                        s_wts = w_arr[sorter]
+                        cum_w = np.cumsum(s_wts)
+                        tot_w = cum_w[-1]
+                        if tot_w > 0:
+                            q16, q50, q84 = np.interp([0.16 * tot_w, 0.50 * tot_w, 0.84 * tot_w], cum_w, s_vals)
+                        else:
+                            q16, q50, q84 = np.percentile(vals, [16, 50, 84])
+                    else:
+                        q16, q50, q84 = np.percentile(vals, [16, 50, 84])
                     n_bins = min(40, max(12, int(np.sqrt(len(vals)))))
-                    ax.hist(vals, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
+                    if w_arr is not None and len(w_arr) == len(vals):
+                        ax.hist(vals, weights=w_arr, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
+                    else:
+                        ax.hist(vals, bins=n_bins, color="#B0C4DE", edgecolor="#2B4C7E", alpha=0.7, density=True)
                     ax.axvline(q50, color="#1A2E40", linestyle="--", linewidth=1.5)
                     ax.axvline(q16, color="#2B4C7E", linestyle=":", linewidth=1.2)
                     ax.axvline(q84, color="#2B4C7E", linestyle=":", linewidth=1.2)

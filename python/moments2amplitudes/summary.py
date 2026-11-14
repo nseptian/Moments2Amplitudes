@@ -269,6 +269,12 @@ class FitSummary:
                     elif "isValid" in mtree:
                         mask = (np.array(mtree["isValid"].array()) == 1)
 
+                    w_arr = None
+                    if "weight" in mtree:
+                        w_arr = np.array(mtree["weight"].array(), dtype=float)
+                        if mask is not None and len(mask) == len(w_arr):
+                            w_arr = w_arr[mask]
+
                     for p in self.parameters:
                         k = p["name"]
                         if k in mtree:
@@ -276,8 +282,20 @@ class FitSummary:
                             if mask is not None and len(mask) == len(arr):
                                 arr = arr[mask]
                             if len(arr) > 0:
-                                med = float(np.median(arr))
-                                p16, p84 = float(np.percentile(arr, 16)), float(np.percentile(arr, 84))
+                                if w_arr is not None and len(w_arr) == len(arr):
+                                    sorter = np.argsort(arr)
+                                    s_arr = arr[sorter]
+                                    s_wts = w_arr[sorter]
+                                    cum_w = np.cumsum(s_wts)
+                                    tot_w = cum_w[-1]
+                                    if tot_w > 0:
+                                        p16, med, p84 = [float(v) for v in np.interp([0.16 * tot_w, 0.50 * tot_w, 0.84 * tot_w], cum_w, s_arr)]
+                                    else:
+                                        med = float(np.median(arr))
+                                        p16, p84 = float(np.percentile(arr, 16)), float(np.percentile(arr, 84))
+                                else:
+                                    med = float(np.median(arr))
+                                    p16, p84 = float(np.percentile(arr, 16)), float(np.percentile(arr, 84))
                                 p["mcmc_median"] = med
                                 p["mcmc_err_lo"] = med - p16
                                 p["mcmc_err_hi"] = p84 - med

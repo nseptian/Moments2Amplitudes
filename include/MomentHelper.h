@@ -40,6 +40,7 @@ public:
       _cov_name_to_index(other._cov_name_to_index),
       _has_cov(other._has_cov),
       _mcmc_unnormalized_samples(other._mcmc_unnormalized_samples),
+      _mcmc_weights(other._mcmc_weights),
       _nMCMCEntries(other._nMCMCEntries) {
     if (other._has_cov && other._unnormalized_cov.GetNrows() > 0) {
       _unnormalized_cov.ResizeTo(other._unnormalized_cov.GetNrows(), other._unnormalized_cov.GetNcols());
@@ -59,6 +60,7 @@ public:
       _cov_name_to_index = other._cov_name_to_index;
       _has_cov = other._has_cov;
       _mcmc_unnormalized_samples = other._mcmc_unnormalized_samples;
+      _mcmc_weights = other._mcmc_weights;
       _nMCMCEntries = other._nMCMCEntries;
       if (other._has_cov && other._unnormalized_cov.GetNrows() > 0) {
         _unnormalized_cov.ResizeTo(other._unnormalized_cov.GetNrows(), other._unnormalized_cov.GetNcols());
@@ -81,6 +83,7 @@ public:
       _cov_name_to_index(std::move(other._cov_name_to_index)),
       _has_cov(other._has_cov),
       _mcmc_unnormalized_samples(std::move(other._mcmc_unnormalized_samples)),
+      _mcmc_weights(std::move(other._mcmc_weights)),
       _nMCMCEntries(other._nMCMCEntries) {
     if (other._has_cov && other._unnormalized_cov.GetNrows() > 0) {
       _unnormalized_cov.ResizeTo(other._unnormalized_cov.GetNrows(), other._unnormalized_cov.GetNcols());
@@ -100,6 +103,7 @@ public:
       _cov_name_to_index = std::move(other._cov_name_to_index);
       _has_cov = other._has_cov;
       _mcmc_unnormalized_samples = std::move(other._mcmc_unnormalized_samples);
+      _mcmc_weights = std::move(other._mcmc_weights);
       _nMCMCEntries = other._nMCMCEntries;
       if (other._has_cov && other._unnormalized_cov.GetNrows() > 0) {
         _unnormalized_cov.ResizeTo(other._unnormalized_cov.GetNrows(), other._unnormalized_cov.GetNcols());
@@ -300,6 +304,25 @@ public:
    */
   const std::map<TString, std::vector<Double_t>>& GetMCMCSamples() const {
     return _mcmc_unnormalized_samples;
+  }
+
+  /**
+   * @brief Get sample weight for a specific MCMC entry
+   * @param entry MCMC tree entry index
+   * @return Weight value, or 1.0 if not available / out of range
+   */
+  Double_t GetMCMCWeight(Long64_t entry) const {
+    if (entry >= 0 && entry < static_cast<Long64_t>(_mcmc_weights.size())) {
+      return _mcmc_weights[entry];
+    }
+    return 1.0;
+  }
+
+  /**
+   * @brief Get vector of all sample weights from MCMC
+   */
+  const std::vector<Double_t>& GetMCMCWeights() const {
+    return _mcmc_weights;
   }
 
   /**
@@ -652,6 +675,12 @@ private:
     Double_t Yld_Moments = 0.0;
     MCMC_tree->SetBranchAddress("Yld_Moments", &Yld_Moments);
 
+    Double_t weight = 1.0;
+    bool hasWeight = (MCMC_tree->GetBranch("weight") != nullptr);
+    if (hasWeight) {
+      MCMC_tree->SetBranchAddress("weight", &weight);
+    }
+
     const Int_t nBranches = MCMC_tree->GetListOfBranches()->GetEntries();
     std::vector<TString> hBranches;
 
@@ -660,10 +689,10 @@ private:
       TString var_name = var->GetName();
       
       if (var_name.BeginsWith("H_") && var_name != "H_0_0_0") {
-        ProcessMomentBranch(MCMC_tree, var_name, Yld_Moments);
+        ProcessMomentBranch(MCMC_tree, var_name, Yld_Moments, hasWeight, &weight);
         hBranches.push_back(var_name);
       } else if (var_name.BeginsWith("Yld_")) {
-        ProcessYieldBranch(MCMC_tree, var_name);
+        ProcessYieldBranch(MCMC_tree, var_name, hasWeight, &weight);
       }
     }
 
@@ -685,6 +714,12 @@ private:
     if (tree->GetBranch("Yld_Moments") == nullptr) return;
     tree->SetBranchAddress("Yld_Moments", &yld);
 
+    Double_t weight = 1.0;
+    bool hasWeight = (tree->GetBranch("weight") != nullptr);
+    if (hasWeight) {
+      tree->SetBranchAddress("weight", &weight);
+    }
+
     Double_t acceptance = GetAcceptance();
     if (acceptance <= 0.0) acceptance = 1.0;
 
@@ -698,22 +733,31 @@ private:
     }
 
     std::vector<std::vector<Double_t>> samples(K, std::vector<Double_t>(nEntries, 0.0));
+    std::vector<Double_t> weights(nEntries, 1.0);
     std::vector<Double_t> means(K, 0.0);
+    Double_t sum_w = 0.0;
+    Double_t sum_w2 = 0.0;
 
     for (Long64_t j = 0; j < nEntries; ++j) {
       tree->GetEntry(j);
+      Double_t w = hasWeight ? weight : 1.0;
+      weights[j] = w;
+      sum_w += w;
+      sum_w2 += w * w;
+
       for (size_t i = 0; i < hBranches.size(); ++i) {
         Double_t unnorm = (yld * branchVals[i]) / acceptance;
         samples[i][j] = unnorm;
-        means[i] += unnorm;
+        means[i] += w * unnorm;
       }
       Double_t unnorm0 = (2.0 * yld) / acceptance;
       samples[K - 1][j] = unnorm0;
-      means[K - 1] += unnorm0;
+      means[K - 1] += w * unnorm0;
     }
 
+    if (sum_w <= 0.0) sum_w = static_cast<Double_t>(nEntries);
     for (int i = 0; i < K; ++i) {
-      means[i] /= nEntries;
+      means[i] /= sum_w;
     }
 
     _cov_moment_names = momNames;
@@ -723,25 +767,29 @@ private:
     }
 
     _unnormalized_cov.ResizeTo(K, K);
+    Double_t denom = sum_w - (sum_w2 / sum_w);
+    if (denom <= 0.0) denom = (sum_w > 1.0) ? (sum_w - 1.0) : 1.0;
+
     for (int i = 0; i < K; ++i) {
       for (int k = i; k < K; ++k) {
         Double_t sum_cov = 0.0;
         for (Long64_t j = 0; j < nEntries; ++j) {
-          sum_cov += (samples[i][j] - means[i]) * (samples[k][j] - means[k]);
+          sum_cov += weights[j] * (samples[i][j] - means[i]) * (samples[k][j] - means[k]);
         }
-        Double_t c = sum_cov / (nEntries - 1);
+        Double_t c = sum_cov / denom;
         _unnormalized_cov(i, k) = c;
         _unnormalized_cov(k, i) = c;
       }
     }
     _has_cov = true;
 
-    // Cache unnormalized samples for each moment
+    // Cache unnormalized samples and weights for each moment
     _mcmc_unnormalized_samples.clear();
     for (size_t i = 0; i < hBranches.size(); ++i) {
       _mcmc_unnormalized_samples[hBranches[i]] = std::move(samples[i]);
     }
     _mcmc_unnormalized_samples["H_0_0_0"] = std::move(samples[K - 1]);
+    _mcmc_weights = std::move(weights);
     _nMCMCEntries = nEntries;
 
     tree->ResetBranchAddresses();
@@ -752,11 +800,14 @@ private:
    * @param tree Pointer to the MCMC tree
    * @param var_name Name of the variable
    * @param Yld_Moments Yield moments value
+   * @param hasWeight Flag if weight branch is available
+   * @param weightPtr Pointer to current entry weight
    */
-  void ProcessMomentBranch(TTree* tree, const TString& var_name, Double_t& Yld_Moments) {
+  void ProcessMomentBranch(TTree* tree, const TString& var_name, Double_t& Yld_Moments, bool hasWeight = false, Double_t* weightPtr = nullptr) {
     Double_t val;
     tree->SetBranchAddress(var_name, &val);
     
+    Double_t sumW = 0.0;
     Double_t mean = 0.0;
     Double_t sigma = 0.0;
     Double_t unnormalized_mean = 0.0;
@@ -765,64 +816,67 @@ private:
     const Long64_t nEntries = tree->GetEntries();
     for (Long64_t j = 0; j < nEntries; ++j) {
       tree->GetEntry(j);
-      mean += val;
-      sigma += val * val;
-      unnormalized_mean += Yld_Moments * val;
-      unnormalized_sigma += (Yld_Moments * val) * (Yld_Moments * val);
+      Double_t w = (hasWeight && weightPtr) ? *weightPtr : 1.0;
+      sumW += w;
+      mean += w * val;
+      sigma += w * val * val;
+      Double_t unnorm = Yld_Moments * val;
+      unnormalized_mean += w * unnorm;
+      unnormalized_sigma += w * unnorm * unnorm;
     }
     
-    // Calculate normalized moments
-    mean /= nEntries;
-    sigma = TMath::Sqrt(sigma / nEntries - mean * mean);
+    if (sumW <= 0.0) sumW = static_cast<Double_t>(nEntries);
+    mean /= sumW;
+    sigma = TMath::Sqrt(TMath::Max(0.0, sigma / sumW - mean * mean));
     _moments[var_name] = mean;
     _moments_err[var_name] = sigma;
     
     // Calculate unnormalized moments
-    unnormalized_mean /= nEntries;
+    unnormalized_mean /= sumW;
     Double_t acceptance = GetAcceptance();
-    // cout << "Acceptance: " << acceptance << endl;
     if (acceptance <= 0.0) {
       std::cerr << "Warning: Acceptance is zero or negative, setting to 1.0" << std::endl;
       acceptance = 1.0; // Default to 1.0 if acceptance is invalid
     }
-    // unnormalized_mean /= acceptance;
-    // cout << "Unnormalized mean for " << var_name << ": " << unnormalized_mean << endl;
-    unnormalized_sigma = TMath::Sqrt(unnormalized_sigma / nEntries - unnormalized_mean * unnormalized_mean);
-    // cout << "Acceptance: " << acceptance << ", Unnormalized sigma for " << var_name << ": " << unnormalized_sigma << endl;
-    _unnormalized_moments[var_name] = unnormalized_mean/acceptance;
-    _unnormalized_moments_err[var_name] = unnormalized_sigma/acceptance;
-    
-    // TODO: include efficiency correction to the unnormalized moments
+    unnormalized_sigma = TMath::Sqrt(TMath::Max(0.0, unnormalized_sigma / sumW - unnormalized_mean * unnormalized_mean));
+    _unnormalized_moments[var_name] = unnormalized_mean / acceptance;
+    _unnormalized_moments_err[var_name] = unnormalized_sigma / acceptance;
   }
 
   /**
    * @brief Process a yield branch from MCMC tree
    * @param tree Pointer to the MCMC tree
    * @param var_name Name of the variable
+   * @param hasWeight Flag if weight branch is available
+   * @param weightPtr Pointer to current entry weight
    */
-  void ProcessYieldBranch(TTree* tree, const TString& var_name) {
+  void ProcessYieldBranch(TTree* tree, const TString& var_name, bool hasWeight = false, Double_t* weightPtr = nullptr) {
     Double_t val;
     tree->SetBranchAddress(var_name, &val);
     
+    Double_t sumW = 0.0;
     Double_t mean = 0.0;
     Double_t sigma = 0.0;
     
     const Long64_t nEntries = tree->GetEntries();
     for (Long64_t j = 0; j < nEntries; ++j) {
       tree->GetEntry(j);
-      mean += 2 * val;
-      sigma += 4 * val * val;
+      Double_t w = (hasWeight && weightPtr) ? *weightPtr : 1.0;
+      sumW += w;
+      mean += w * (2.0 * val);
+      sigma += w * (4.0 * val * val);
     }
     
-    mean /= nEntries;
-    sigma = TMath::Sqrt(sigma / nEntries - mean * mean);
+    if (sumW <= 0.0) sumW = static_cast<Double_t>(nEntries);
+    mean /= sumW;
+    sigma = TMath::Sqrt(TMath::Max(0.0, sigma / sumW - mean * mean));
     Double_t acceptance = GetAcceptance();
     if (acceptance <= 0.0) {
       std::cerr << "Warning: Acceptance is zero or negative, setting to 1.0" << std::endl;
       acceptance = 1.0; // Default to 1.0 if acceptance is invalid
     }
-    _unnormalized_moments["H_0_0_0"] = mean/acceptance;
-    _unnormalized_moments_err["H_0_0_0"] = sigma/acceptance;
+    _unnormalized_moments["H_0_0_0"] = mean / acceptance;
+    _unnormalized_moments_err["H_0_0_0"] = sigma / acceptance;
   }
   
   // Member variables
@@ -836,5 +890,6 @@ private:
   std::map<TString, int> _cov_name_to_index;               ///< Index lookup in covariance matrix
   bool _has_cov = false;                                   ///< Flag indicating if covariance matrix is available
   std::map<TString, std::vector<Double_t>> _mcmc_unnormalized_samples; ///< Per-entry unnormalized moments from MCMCTree
+  std::vector<Double_t> _mcmc_weights;                     ///< Per-entry weights from MCMCTree
   Long64_t _nMCMCEntries = 0;                              ///< Number of MCMC entries
 };
