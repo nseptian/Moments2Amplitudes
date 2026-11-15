@@ -119,6 +119,7 @@ class CrossSectionResult:
     cs_total_mcmc_median: float = 0.0
     pos_refl_fraction_mcmc_mean: float = 0.0
     pos_refl_fraction_mcmc_median: float = 0.0
+    has_kinematic: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -172,18 +173,33 @@ def compute_bw_integral(
     m_min: float = 0.8,
     m_max: float = 2.0,
     bin_width: float = 0.04,
+    has_kinematic: bool = False,
+    m_d1: float = 0.547853,
+    m_d2: float = 0.13957,
 ) -> float:
     """
     Evaluate Breit-Wigner line-shape integral normalized by mass bin width:
-    Y = (1 / bin_width) * int_{m_min}^{m_max} [ k^2 / ((m^2 - M^2)^2 + (M*Gamma)^2) ] dm
+    Y = (1 / bin_width) * int_{m_min}^{m_max} [ rho(m) * k^2 / ((m^2 - M^2)^2 + (M*Gamma)^2) ] dm
     """
     if mass <= 0 or width <= 0 or coupling == 0:
         return 0.0
 
+    m_th = m_d1 + m_d2
+    m_diff = abs(m_d1 - m_d2)
+
+    def phase_space(m: float) -> float:
+        if m <= m_th:
+            return 0.0
+        q_sq = max(0.0, (m * m - m_th * m_th) * (m * m - m_diff * m_diff))
+        q = math.sqrt(q_sq) / (2.0 * m)
+        return 2.0 * q / m
+
     try:
         from scipy.integrate import quad
         def bw(m: float) -> float:
-            return (coupling * coupling) / (((m * m - mass * mass) ** 2) + ((mass * width) ** 2))
+            factor = phase_space(m) if has_kinematic else 1.0
+            den = ((m * m - mass * mass) ** 2) + ((mass * width) ** 2)
+            return factor * (coupling * coupling) / den
         val, _ = quad(bw, m_min, m_max, limit=100)
         return val / bin_width
     except Exception:
@@ -191,7 +207,8 @@ def compute_bw_integral(
         import numpy as np
         m_pts = np.linspace(m_min, m_max, 5001)
         den = ((m_pts * m_pts - mass * mass) ** 2) + ((mass * width) ** 2)
-        y_pts = (coupling * coupling) / den
+        factors = np.array([phase_space(float(m)) for m in m_pts]) if has_kinematic else 1.0
+        y_pts = factors * (coupling * coupling) / den
         integral = np.trapz(y_pts, m_pts)
         return float(integral / bin_width)
 
@@ -336,6 +353,7 @@ def propagate_mcmc_cross_section(
     bin_width: Optional[float] = None,
     filter_valid: bool = True,
     mcmc_file_path: Optional[str] = None,
+    has_kinematic: bool = False,
 ) -> CrossSectionResult:
     """
     Propagate MCMC sample couplings into reflectivity-separated yields and cross section.
@@ -390,11 +408,11 @@ def propagate_mcmc_cross_section(
     # Evaluate Breit-Wigner integral factor I0 per entry
     is_const_mw = np.allclose(val_masses, val_masses[0]) and np.allclose(val_widths, val_widths[0])
     if is_const_mw:
-        i0 = compute_bw_integral(1.0, float(val_masses[0]), float(val_widths[0]), m_lims[0], m_lims[1], b_w)
+        i0 = compute_bw_integral(1.0, float(val_masses[0]), float(val_widths[0]), m_lims[0], m_lims[1], b_w, has_kinematic=has_kinematic)
         i0_arr = np.full(n_valid, i0)
     else:
         i0_arr = np.array([
-            compute_bw_integral(1.0, float(val_masses[i]), float(val_widths[i]), m_lims[0], m_lims[1], b_w)
+            compute_bw_integral(1.0, float(val_masses[i]), float(val_widths[i]), m_lims[0], m_lims[1], b_w, has_kinematic=has_kinematic)
             for i in range(n_valid)
         ])
 
@@ -611,6 +629,24 @@ def calculate_resonance_cross_section(
     if not couplings_dict:
         raise ValueError(f"No couplings found for resonance '{target_res}' in {root_target}")
 
+    # Detect whether kinematic factor sqrt(rho_etapi) is used in the model
+    has_kinematic = False
+    if getattr(cs_cfg, "has_kinematic", None) is not None:
+        has_kinematic = bool(cs_cfg.has_kinematic)
+    elif config and getattr(config, "waves", None):
+        for w in config.waves:
+            matches_res = False
+            if getattr(w, "resonances", None):
+                for r in w.resonances:
+                    if r.name == target_res:
+                        matches_res = True
+            elif target_res in getattr(w, "name", ""):
+                matches_res = True
+
+            if matches_res and getattr(w, "formula", None) and ("rho_etapi" in w.formula or "rho" in w.formula):
+                has_kinematic = True
+                break
+
     # Compute yields per wave
     wave_yields: Dict[str, WaveResonanceYield] = {}
     pos_yield = 0.0
@@ -624,7 +660,7 @@ def calculate_resonance_cross_section(
         refl = int(c_info.get("reflectivity", 1 if w_name.startswith("a_") else -1))
 
         # Y_w = Integral(BW) / bin_width
-        y_val = compute_bw_integral(k, mass, width, m_lims[0], m_lims[1], bin_width)
+        y_val = compute_bw_integral(k, mass, width, m_lims[0], m_lims[1], bin_width, has_kinematic=has_kinematic)
         # dY / dk = 2 * Y / k  ==>  sigma(Y) = 2 * (Y / |k|) * sigma(k)
         if abs(k) > 1e-9:
             y_err = abs(2.0 * (y_val / k) * k_err)
@@ -695,6 +731,7 @@ def calculate_resonance_cross_section(
         pos_refl_fraction=pos_frac,
         wave_yields=wave_yields,
         run_dir=str(rundir.root),
+        has_kinematic=has_kinematic,
     )
 
     # Propagate MCMC uncertainties if requested
@@ -710,6 +747,7 @@ def calculate_resonance_cross_section(
                     mass_limits=m_lims,
                     bin_width=bin_width,
                     mcmc_file_path=str(mcmc_target),
+                    has_kinematic=has_kinematic,
                 )
                 print(f"[OK] Propagated MCMC statistical uncertainty from: {mcmc_target} ({res.mcmc_samples_count} converged samples)")
             except Exception as e:
@@ -726,6 +764,7 @@ def format_cross_section_table(res: CrossSectionResult) -> str:
         "========================================================================================================================",
         f" Resonance Mass:       {res.mass:.4f} ± {res.mass_error:.4f} GeV",
         f" Resonance Width:      {res.width:.4f} ± {res.width_error:.4f} GeV",
+        f" Kinematic Factor:     {'sqrt(rho_etapi) enabled' if res.has_kinematic else 'None (Standard Breit-Wigner)'}",
         f" -t Binning:           {res.t_min:.3f} < -t < {res.t_max:.3f} GeV^2  (Delta t = {res.delta_t:.3f}, Center = {res.t_center:.4f})",
         f" Integrated Lumi:      {res.luminosity:.2f} pb^-1  (factor: {res.den_factor:.0e} to mub^-1)",
         f" Branching Fraction:   {res.branching_ratio:.4e}",
@@ -914,45 +953,48 @@ def plot_cross_section_vs_t(
     cs_neg_err = [(r.cs_neg_mcmc_err if r.has_mcmc else r.cs_neg_err) for r in sorted_res]
     cs_tot_err = [(r.cs_total_mcmc_err if r.has_mcmc else r.cs_total_err) for r in sorted_res]
 
-    fig, ax = plt.subplots(figsize=(10, 6), dpi=300)
+    fig, ax = plt.subplots(figsize=(12, 6.5), dpi=300)
 
-    # 1. Overlay theoretical prediction band if available
-    th_file = theory_band_file or "/d/home/septian/EtaPi0Analysis/run_legacy/theory_pred/Bands_TMD_A2_cs.txt"
+    # 1. Theoretical prediction band
+    th_file = theory_band_file
+    if not th_file or not Path(th_file).is_file():
+        candidates = [
+            Path(__file__).resolve().parent / "data" / "theory_pred" / "Bands_TMD_A2_cs.txt",
+            Path(__file__).resolve().parent.parent.parent / "data" / "theory_pred" / "Bands_TMD_A2_cs.txt",
+            Path("/d/home/septian/EtaPi0Analysis/run_legacy/theory_pred/Bands_TMD_A2_cs.txt"),
+        ]
+        for cand in candidates:
+            if cand.is_file():
+                th_file = str(cand)
+                break
+
+    th_data = None
     if th_file and Path(th_file).is_file():
         try:
             th_data = np.loadtxt(th_file, skiprows=1)
-            t_th = th_data[:, 0]
-            cs_min = th_data[:, 1]
-            cs_max = th_data[:, 2]
-            ax.fill_between(
-                t_th, cs_min, cs_max,
-                color="gray", alpha=0.25,
-                label="Theory Model [Phys. Rev. D 102, 014003]",
-                zorder=1
-            )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARNING] Could not load theory band from {th_file}: {e}")
 
     # 2. Overlay published Phase-1 benchmark values if requested and resonance is a2(1320)
     has_phase1 = phase1_comparison and any("a2" in r.resonance.lower() for r in sorted_res)
     if has_phase1:
-        x_offset = 0.008
+        x_offset = 0.01
         p1_x = [x - x_offset for x in PHASE1_A2_TBIN_CENTERS]
-        box_half_w = 0.006
+        box_half_w = 0.007
 
-        # Statistical uncertainties as shaded boxes
+        # Statistical uncertainties as shaded transparent boxes
         for i, x in enumerate(p1_x):
             rect_pos = Rectangle(
                 (x - box_half_w, PHASE1_A2_POS_REFL_VALS[i] - PHASE1_A2_POS_REFL_STAT[i]),
                 2 * box_half_w, 2 * PHASE1_A2_POS_REFL_STAT[i],
-                facecolor="red", edgecolor="red", alpha=0.18, linewidth=1, zorder=2
+                facecolor="red", edgecolor="red", alpha=0.20, linewidth=1, zorder=2
             )
             ax.add_patch(rect_pos)
 
             rect_neg = Rectangle(
                 (x - box_half_w, PHASE1_A2_NEG_REFL_VALS[i] - PHASE1_A2_NEG_REFL_STAT[i]),
                 2 * box_half_w, 2 * PHASE1_A2_NEG_REFL_STAT[i],
-                facecolor="blue", edgecolor="blue", alpha=0.18, linewidth=1, zorder=2
+                facecolor="blue", edgecolor="blue", alpha=0.20, linewidth=1, zorder=2
             )
             ax.add_patch(rect_neg)
 
@@ -963,50 +1005,63 @@ def plot_cross_section_vs_t(
             )
             ax.add_patch(rect_tot)
 
-        # Systematic uncertainties as open circles
+        # Published PWA central values (all circles)
+        ax.scatter(p1_x, PHASE1_A2_TOTAL_VALS, marker="o", color="black", label="Total (Published PWA)", zorder=3)
+        ax.scatter(p1_x, PHASE1_A2_POS_REFL_VALS, marker="o", color="red", label="Positive Reflectivity (Published PWA)", zorder=3)
+        ax.scatter(p1_x, PHASE1_A2_NEG_REFL_VALS, marker="o", color="blue", label="Negative Reflectivity (Published PWA)", zorder=3)
+
+        # Published PWA systematic uncertainties (open circles)
         ax.errorbar(
             p1_x, PHASE1_A2_TOTAL_VALS, yerr=PHASE1_A2_TOTAL_SYST,
-            fmt="o", mfc="black", mec="black", ecolor="black", capsize=3,
-            label="Total (Published PWA)", zorder=3, alpha=0.85
+            fmt="o", mfc="none", mec="black", ecolor="black", capsize=3, linestyle="none", alpha=0.8, zorder=3
         )
         ax.errorbar(
             p1_x, PHASE1_A2_POS_REFL_VALS, yerr=PHASE1_A2_POS_REFL_SYST,
-            fmt="o", mfc="red", mec="red", ecolor="red", capsize=3,
-            label="Positive Refl (+) (Published PWA)", zorder=3, alpha=0.85
+            fmt="o", mfc="none", mec="red", ecolor="red", capsize=3, linestyle="none", alpha=0.8, zorder=3
         )
         ax.errorbar(
             p1_x, PHASE1_A2_NEG_REFL_VALS, yerr=PHASE1_A2_NEG_REFL_SYST,
-            fmt="o", mfc="blue", mec="blue", ecolor="blue", capsize=3,
-            label="Negative Refl (-) (Published PWA)", zorder=3, alpha=0.85
+            fmt="o", mfc="none", mec="blue", ecolor="blue", capsize=3, linestyle="none", alpha=0.8, zorder=3
         )
 
     # 3. Current Extraction Points (inverted triangles with error bars)
-    curr_x = [x + (0.008 if has_phase1 else 0.0) for x in t_centers]
-    err_note = " (MCMC stat)" if has_mcmc_any else ""
+    curr_x = [x + (0.01 if has_phase1 else 0.0) for x in t_centers]
 
     ax.errorbar(
         curr_x, cs_tot, yerr=cs_tot_err,
-        fmt="v", markersize=7, color="black", ecolor="black", capsize=4, elinewidth=1.6,
-        label=f"Total ({sorted_res[0].resonance}){err_note}", zorder=5
+        fmt="v", markersize=7, color="black", ecolor="black", capsize=3, elinewidth=1.6, alpha=0.85,
+        label="Total (Moment Analysis)", zorder=5
     )
     ax.errorbar(
         curr_x, cs_pos, yerr=cs_pos_err,
-        fmt="v", markersize=7, color="red", ecolor="red", capsize=4, elinewidth=1.6,
-        label=f"Positive Refl (+){err_note}", zorder=5
+        fmt="v", markersize=7, color="red", ecolor="red", capsize=3, elinewidth=1.6, alpha=0.85,
+        label="Positive Reflectivity (Moment Analysis)", zorder=5
     )
     ax.errorbar(
         curr_x, cs_neg, yerr=cs_neg_err,
-        fmt="v", markersize=7, color="blue", ecolor="blue", capsize=4, elinewidth=1.6,
-        label=f"Negative Refl (-){err_note}", zorder=5
+        fmt="v", markersize=7, color="blue", ecolor="blue", capsize=3, elinewidth=1.6, alpha=0.85,
+        label="Negative Reflectivity (Moment Analysis)", zorder=5
     )
 
-    ax.set_xlabel(r"$-t\ [\mathrm{GeV}^2]$", fontsize=13)
-    ax.set_ylabel(r"$\frac{d\sigma}{dt}\ [\mu\mathrm{b} / \mathrm{GeV}^2]$", fontsize=13)
-    res_label = sorted_res[0].resonance.replace("_", " ").upper()
-    ax.set_title(f"Differential Cross Section vs $-t$ for {res_label}", fontsize=14, fontweight="bold")
-    ax.set_xlim(0.08, max(t_centers) + 0.15)
-    ax.set_ylim(0, max(cs_tot + ([0.3] if not cs_tot else [])) * 1.35)
-    ax.legend(frameon=True, fontsize=10, loc="upper right")
+    # 4. Theoretical Model Band (drawn with label matching notebook)
+    if th_data is not None:
+        t_th = th_data[:, 0]
+        cs_min = th_data[:, 1]
+        cs_max = th_data[:, 2] if th_data.shape[1] >= 3 else th_data[:, 1]
+        ax.fill_between(
+            t_th, cs_min, cs_max,
+            color="black", alpha=0.3,
+            label="Theoretical Model [Phys. Rev. D 102, 014003]",
+            zorder=1
+        )
+
+    ax.set_xlabel(r"$-t$ ($\mathrm{GeV}^2$)", fontsize=16)
+    ax.set_ylabel(r"$\frac{d\sigma}{dt}\ (\frac{\mu\mathrm{b}}{\mathrm{GeV}^2})$", fontsize=16)
+    max_t_extent = max(t_centers + (PHASE1_A2_TBIN_CENTERS if has_phase1 else []))
+    ax.set_xlim(0.08, max_t_extent + 0.12)
+    y_max = max(cs_tot + (PHASE1_A2_TOTAL_VALS if has_phase1 else [0.3])) * 1.35
+    ax.set_ylim(0, y_max)
+    ax.legend(frameon=True, fontsize=11, loc="upper right")
     ax.grid(True, linestyle=":", alpha=0.5)
 
     base_name = f"{sorted_res[0].resonance}_CrossSection_vs_t"
@@ -1018,26 +1073,6 @@ def plot_cross_section_vs_t(
 
     print(f"[OK] Saved cross-section vs -t plot to: {out_dir / base_name}.png")
     return generated
-
-    ax.errorbar(
-        curr_x, cs_tot, yerr=cs_tot_err,
-        fmt="v", markersize=7, color="black", ecolor="black", capsize=4, elinewidth=1.5,
-        label=f"Total ({sorted_res[0].resonance})", zorder=5
-    )
-    ax.errorbar(
-        curr_x, cs_pos, yerr=cs_pos_err,
-        fmt="v", markersize=7, color="red", ecolor="red", capsize=4, elinewidth=1.5,
-        label="Positive Refl (+) (Moments2Amplitudes)", zorder=5
-    )
-    ax.errorbar(
-        curr_x, cs_neg, yerr=cs_neg_err,
-        fmt="v", markersize=7, color="blue", ecolor="blue", capsize=4, elinewidth=1.5,
-        label="Negative Refl (-) (Moments2Amplitudes)", zorder=5
-    )
-
-    ax.set_xlabel(r"$-t\ [\mathrm{GeV}^2]$", fontsize=13)
-    ax.set_ylabel(r"$\frac{d\sigma}{dt}\ [\mu\mathrm{b} / \mathrm{GeV}^2]$", fontsize=13)
-    res_label = sorted_res[0].resonance.replace("_", " ").upper()
     ax.set_title(f"Differential Cross Section vs $-t$ for {res_label}", fontsize=14, fontweight="bold")
     ax.set_xlim(0.08, max(t_centers) + 0.15)
     ax.set_ylim(0, max(cs_tot + ([0.3] if not cs_tot else [])) * 1.35)

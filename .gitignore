@@ -6,7 +6,11 @@ test_*.root
 test_output/
 macros/**/test_output/
 plots*
-data*
+/data/*
+!/data/theory_pred/
+!/data/theory_pred/**
+!python/moments2amplitudes/data/
+!python/moments2amplitudes/data/**
 brufit*
 *.root
 

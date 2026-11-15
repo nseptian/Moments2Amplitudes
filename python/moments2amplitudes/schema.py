@@ -225,6 +225,7 @@ class CrossSectionConfig:
     phase1_comparison: bool = True
     mcmc_file: Optional[str] = None
     propagate_mcmc: bool = True
+    has_kinematic: Optional[bool] = None
 
 
 @dataclass
