@@ -1102,22 +1102,6 @@ def plot_cross_section_vs_t(
     y_max = max(cs_tot + (PHASE1_A2_TOTAL_VALS if has_phase1 else [0.3])) * 1.35
     ax.set_ylim(0, y_max)
     ax.legend(frameon=True, fontsize=11, loc="upper right")
-    ax.grid(True, linestyle=":", alpha=0.5)
-
-    base_name = f"{sorted_res[0].resonance}_CrossSection_vs_t"
-    for fmt in formats:
-        p = out_dir / f"{base_name}.{fmt}"
-        fig.savefig(p, bbox_inches="tight")
-        generated.append(p)
-    plt.close(fig)
-
-    print(f"[OK] Saved cross-section vs -t plot to: {out_dir / base_name}.png")
-    return generated
-    ax.set_title(f"Differential Cross Section vs $-t$ for {res_label}", fontsize=14, fontweight="bold")
-    ax.set_xlim(0.08, max(t_centers) + 0.15)
-    ax.set_ylim(0, max(cs_tot + ([0.3] if not cs_tot else [])) * 1.35)
-    ax.legend(frameon=True, fontsize=10, loc="upper right")
-    ax.grid(True, linestyle=":", alpha=0.5)
 
     base_name = f"{sorted_res[0].resonance}_CrossSection_vs_t"
     for fmt in formats:

@@ -117,6 +117,7 @@ PHYSICS_RCPARAMS: Dict[str, Any] = {
     "font.family": "sans-serif",
     "mathtext.fontset": "dejavusans",
     # Grid
+    "axes.grid": False,
     "grid.linestyle": ":",
     "grid.alpha": 0.45,
     "grid.color": "#B0B0B0",
@@ -174,6 +175,17 @@ def apply_plot_style(style: Optional[str] = "default") -> None:
         except Exception:
             plt.style.use("default")
             matplotlib.rcParams.update(PHYSICS_RCPARAMS)
+
+    # Ensure background grid is suppressed by default
+    matplotlib.rcParams["axes.grid"] = False
+    plt.rcParams["axes.grid"] = False
+
+
+def should_show_grid(config: Optional[Any] = None) -> bool:
+    """Return True only if show_grid is explicitly enabled in plotting configuration."""
+    if config and getattr(config, "plotting", None):
+        return bool(getattr(config.plotting, "show_grid", False))
+    return False
 
 
 def discover_lowest_chi2_fits(rundir: RunDirectory, n_lowest: int = 10) -> List[Tuple[float, Path]]:
@@ -280,7 +292,6 @@ def plot_multistart_landscape(
     ax.set_ylabel("Number of Starts", fontsize=11.5)
     ax.set_title(f"{project_name} - Multi-Start $\\chi^2$ Landscape (Converged Fits)", fontsize=12.5, pad=8)
     ax.legend(frameon=True, fontsize=9.5)
-    ax.grid(True, linestyle=":", alpha=0.45)
 
     for fmt in formats:
         p = out_dir / f"multistart_chi2_landscape.{fmt}"
@@ -1250,7 +1261,8 @@ def plot_amplitudes_and_bands(
             ax.set_ylabel(ylabel_str, fontsize=11.5)
             ax.set_title(f"{config.project.name} - Fitted Amplitude Intensities", fontsize=12.5, pad=8)
         ax.legend(frameon=True, fontsize=8.5, ncol=2, loc="best")
-        ax.grid(True, linestyle=":", alpha=0.45)
+        if should_show_grid(config):
+            ax.grid(True, linestyle=":", alpha=0.45)
 
         # 1d. Bottom panel: Phase as function of mass
         if ax_phase is not None:
@@ -1286,7 +1298,8 @@ def plot_amplitudes_and_bands(
             ax_phase.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11.5)
             ax_phase.set_ylabel("Phase [rad]", fontsize=11.5)
             ax_phase.legend(frameon=True, fontsize=8, ncol=min(3, max(1, len(phases))), loc="best")
-            ax_phase.grid(True, linestyle=":", alpha=0.45)
+            if should_show_grid(config):
+                ax_phase.grid(True, linestyle=":", alpha=0.45)
 
             # Suppress x-tick labels and x-axis label on top panel
             ax.tick_params(labelbottom=False)
@@ -1344,7 +1357,8 @@ def plot_amplitudes_and_bands(
         ax.set_title(f"{config.project.name} - Fitted Wave Phases ($\\pm$ Sign Ambiguity)", fontsize=12.5, pad=8)
         ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
         ax.legend(frameon=True, fontsize=9.5, ncol=2)
-        ax.grid(True, linestyle=":", alpha=0.45)
+        if should_show_grid(config):
+            ax.grid(True, linestyle=":", alpha=0.45)
 
         for fmt in formats:
             p = out_dir / f"amplitudes_phase_vs_mass.{fmt}"
@@ -1442,7 +1456,8 @@ def plot_amplitudes_and_bands(
                 ax.legend(handles=handles, labels=labels, frameon=True, fontsize=9, loc="best")
             else:
                 ax.legend(frameon=True, fontsize=9, loc="best")
-            ax.grid(True, linestyle=":", alpha=0.45)
+            if should_show_grid(config):
+                ax.grid(True, linestyle=":", alpha=0.45)
             for fmt in formats:
                 p_indiv = indiv_dir / f"{k}_magnitude.{fmt}"
                 fig.savefig(p_indiv, bbox_inches="tight")
@@ -1523,7 +1538,8 @@ def plot_amplitudes_and_bands(
                 ax.legend(handles=handles, labels=labels, frameon=True, fontsize=9, loc="best")
             else:
                 ax.legend(frameon=True, fontsize=9, loc="best")
-            ax.grid(True, linestyle=":", alpha=0.45)
+            if should_show_grid(config):
+                ax.grid(True, linestyle=":", alpha=0.45)
             for fmt in formats:
                 p_indiv_sqr = indiv_dir / f"{k}_squared.{fmt}"
                 fig.savefig(p_indiv_sqr, bbox_inches="tight")
@@ -1613,7 +1629,8 @@ def plot_amplitudes_and_bands(
                     ax_top.legend(handles=handles, labels=labels, frameon=True, fontsize=8, loc="best")
                 else:
                     ax_top.legend(frameon=True, fontsize=8, loc="best")
-                ax_top.grid(True, linestyle=":", alpha=0.45)
+                if should_show_grid(config):
+                    ax_top.grid(True, linestyle=":", alpha=0.45)
                 ax_top.tick_params(labelbottom=False)
 
                 y_nom_phi = nominal_amps[phase_k]
@@ -1644,7 +1661,8 @@ def plot_amplitudes_and_bands(
                 ax_bot.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=11)
                 ax_bot.set_ylabel(f"Phase {phi_label} [rad]", fontsize=10.5)
                 ax_bot.legend(frameon=True, fontsize=8, loc="best")
-                ax_bot.grid(True, linestyle=":", alpha=0.45)
+                if should_show_grid(config):
+                    ax_bot.grid(True, linestyle=":", alpha=0.45)
 
                 for fmt in formats:
                     p_indiv_combo = indiv_dir / f"{k}_intensity_and_phase.{fmt}"
@@ -1689,7 +1707,8 @@ def plot_amplitudes_and_bands(
             ax.set_title(f"{config.project.name} - Phase {label} ($\\pm$ Sign Ambiguity)", fontsize=12, pad=8)
             ax.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
             ax.legend(frameon=True, fontsize=9)
-            ax.grid(True, linestyle=":", alpha=0.45)
+            if should_show_grid(config):
+                ax.grid(True, linestyle=":", alpha=0.45)
             for fmt in formats:
                 p_indiv_phi = indiv_dir / f"{k}_phase.{fmt}"
                 fig.savefig(p_indiv_phi, bbox_inches="tight")
@@ -1817,7 +1836,8 @@ def plot_amplitudes_and_bands(
 
                         ax_int.set_title(sqr_label, fontsize=10.5, pad=4)
                         ax_int.set_xlim(masses[0] - fit_step * 0.6, masses[-1] + fit_step * 0.6)
-                        ax_int.grid(True, linestyle=":", alpha=0.45)
+                        if should_show_grid(config):
+                            ax_int.grid(True, linestyle=":", alpha=0.45)
 
                         # Y-axis labelling: only leftmost column shows y-axis ticks and title
                         if c == 0:
@@ -1873,7 +1893,8 @@ def plot_amplitudes_and_bands(
                                 )
 
                             ax_phi.axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
-                            ax_phi.grid(True, linestyle=":", alpha=0.45)
+                            if should_show_grid(config):
+                                ax_phi.grid(True, linestyle=":", alpha=0.45)
                         else:
                             ax_int.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=9.5)
                             ax_int.tick_params(labelbottom=True)
@@ -1984,7 +2005,8 @@ def plot_amplitudes_and_bands(
                 ax.set_xlabel(f"{clean_name}", fontsize=10)
                 ax.set_ylabel("Probability Density", fontsize=10)
                 ax.legend(frameon=True, fontsize=8, loc="upper right")
-                ax.grid(True, linestyle=":", alpha=0.4)
+                if should_show_grid(config):
+                    ax.grid(True, linestyle=":", alpha=0.4)
 
                 safe_name = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", pname)
                 for fmt in formats:
@@ -2042,7 +2064,8 @@ def plot_amplitudes_and_bands(
                         short_name = raw_short.replace("_", "\\_")
 
                     ax.set_title(f"{short_name} [{q50:.3f}]", fontsize=10, pad=4)
-                    ax.grid(True, linestyle=":", alpha=0.4)
+                    if should_show_grid(config):
+                        ax.grid(True, linestyle=":", alpha=0.4)
                     ax.tick_params(axis="both", which="major", labelsize=8)
 
                 for i in range(len(key_params), len(axes_flat)):
@@ -2113,7 +2136,8 @@ def plot_amplitudes_and_bands(
                 ax.set_xlabel(f"Integrated Intensity $\\int {sqr_sym}\\ dM$", fontsize=10)
                 ax.set_ylabel("Probability Density", fontsize=10)
                 ax.legend(frameon=True, fontsize=8, loc="upper right")
-                ax.grid(True, linestyle=":", alpha=0.4)
+                if should_show_grid(config):
+                    ax.grid(True, linestyle=":", alpha=0.4)
 
                 for fmt in formats:
                     p_ydist = dist_dir / f"{k}_yield_dist.{fmt}"
@@ -2155,7 +2179,8 @@ def plot_amplitudes_and_bands(
 
                     sqr_label = format_amplitude_squared_label(k)
                     ax.set_title(f"{sqr_label} [{q50:.1f}]", fontsize=10, pad=4)
-                    ax.grid(True, linestyle=":", alpha=0.4)
+                    if should_show_grid(config):
+                        ax.grid(True, linestyle=":", alpha=0.4)
                     ax.tick_params(axis="both", which="major", labelsize=8)
 
                 for i in range(len(y_keys), len(axes_flat)):
@@ -2448,7 +2473,8 @@ def plot_moments_comparison(
         ax.set_ylabel("Unnormalized Moment", fontsize=11.5)
         ax.set_title(f"{config.project.name} - ${latex_title}$", fontsize=12.5, pad=8)
         ax.legend(frameon=True, fontsize=9.5, loc="best")
-        ax.grid(True, linestyle=":", alpha=0.45)
+        if should_show_grid(config):
+            ax.grid(True, linestyle=":", alpha=0.45)
 
         for fmt in formats:
             p = moments_out_dir / f"{mom_name}.{fmt}"
@@ -2523,7 +2549,8 @@ def plot_moments_comparison(
                 ax.set_xlim(fit_mass_min - pad, fit_mass_max + pad)
 
             ax.set_title(f"${latex_title}$", fontsize=10.5, pad=4)
-            ax.grid(True, linestyle=":", alpha=0.4)
+            if should_show_grid(config):
+                ax.grid(True, linestyle=":", alpha=0.4)
             ax.tick_params(axis="both", which="major", labelsize=8)
             if (idx + ncols >= K) or (idx >= (nrows - 1) * ncols):
                 ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=9)
@@ -2615,6 +2642,7 @@ def _draw_overview_grid_cells(
     fit_mass_max: Optional[float],
     fit_mass_step: float,
     draw_fits: bool,
+    show_grid: bool = False,
 ) -> None:
     """Populate grid cells for multi-t-bin moments overview matrix."""
     import numpy as np
@@ -2703,7 +2731,8 @@ def _draw_overview_grid_cells(
             if fit_mass_min is not None and fit_mass_max is not None:
                 ax.set_xlim(fit_mass_min - pad, fit_mass_max + pad)
 
-            ax.grid(True, linestyle=":", alpha=0.35)
+            if show_grid:
+                ax.grid(True, linestyle=":", alpha=0.35)
             ax.tick_params(axis="both", which="major", labelsize=7.5)
             ax.ticklabel_format(axis="y", style="sci", scilimits=(-3, 4), useMathText=True)
 
@@ -3012,7 +3041,8 @@ def plot_moments_across_tbins(
                 chi2_str = f"\n($\\chi^2 = {c2_mom:.1f}$)"
 
             ax.set_title(f"{t_lbl}{chi2_str}", fontsize=9.8, pad=5)
-            ax.grid(True, linestyle=":", alpha=0.45)
+            if should_show_grid(config):
+                ax.grid(True, linestyle=":", alpha=0.45)
             ax.set_xlabel(r"$M(\eta\pi^0)\ [\mathrm{GeV}/c^2]$", fontsize=10)
             ax.tick_params(axis="both", which="major", labelsize=9)
 
@@ -3065,7 +3095,8 @@ def plot_moments_across_tbins(
 
                     _draw_overview_grid_cells(
                         axes_p, page_moms, sorted_tbins, t_data,
-                        fit_mass_min, fit_mass_max, fit_mass_step, draw_fits
+                        fit_mass_min, fit_mass_max, fit_mass_step, draw_fits,
+                        show_grid=should_show_grid(config)
                     )
                     page_num = (page_idx // moms_per_page) + 1
                     fig_p.suptitle(
@@ -3089,7 +3120,8 @@ def plot_moments_across_tbins(
 
             _draw_overview_grid_cells(
                 axes_full, overview_moments, sorted_tbins, t_data,
-                fit_mass_min, fit_mass_max, fit_mass_step, draw_fits
+                fit_mass_min, fit_mass_max, fit_mass_step, draw_fits,
+                show_grid=should_show_grid(config)
             )
             fig_full.suptitle(
                 f"{config.project.name} - Moments vs Mass Across All $-t$ Bins",

@@ -207,6 +207,7 @@ class PlottingConfig:
     distributions: bool = True
     moments_vs_t: bool = True
     moments_vs_t_sharey: bool = False
+    show_grid: bool = False
 
 
 @dataclass
