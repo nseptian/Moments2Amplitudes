@@ -164,6 +164,21 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
     # Resonances
     resonances: List[ResonanceConfig] = []
     for res_dict in wave_dict.get("resonances", []):
+        res_phase_ref = bool(
+            res_dict.get("phase_reference", False)
+            or res_dict.get("is_phase_reference", False)
+        )
+        res_phase_fixed = bool(
+            res_dict.get("phase_fixed", False)
+            or res_dict.get("fix_phase", False)
+            or res_phase_ref
+        )
+        res_fixed_val = None
+        if "fixed_phase" in res_dict and res_dict["fixed_phase"] is not None:
+            res_fixed_val = float(res_dict["fixed_phase"])
+        elif res_phase_ref or res_phase_fixed:
+            res_fixed_val = 0.0
+
         resonances.append(
             ResonanceConfig(
                 name=res_dict.get("name", "resonance"),
@@ -174,11 +189,59 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
                 mass_limits=res_dict.get("mass_limits"),
                 width_limits=res_dict.get("width_limits"),
                 gaussian_constraints=res_dict.get("gaussian_constraints", {}),
+                phase_reference=res_phase_ref,
+                phase_fixed=res_phase_fixed,
+                fixed_phase=res_fixed_val,
+                phase_limits=res_dict.get("phase_limits"),
             )
         )
 
+    # Wave-level phase reference
+    wave_phase_ref = wave_dict.get("phase_reference", wave_dict.get("is_phase_reference", False))
+    if isinstance(wave_phase_ref, str):
+        # Specific resonance name marked as phase reference
+        for r in resonances:
+            if r.name == wave_phase_ref:
+                r.phase_reference = True
+                r.phase_fixed = True
+                r.fixed_phase = 0.0
+    elif isinstance(wave_phase_ref, bool) and wave_phase_ref:
+        for r in resonances:
+            r.phase_reference = True
+            r.phase_fixed = True
+            r.fixed_phase = 0.0
+
     # Init config
     init_dict = wave_dict.get("init", {})
+
+    # Shared phase options (by reflectivity or by L)
+    shared_phase_raw = None
+    for key in ("shared_phase", "shared_phase_by_reflectivity", "shared_phase_per_reflectivity", "shared_phases_by_reflectivity"):
+        if key in wave_dict:
+            shared_phase_raw = wave_dict[key]
+            break
+        if key in init_dict:
+            shared_phase_raw = init_dict[key]
+            break
+
+    option = int(init_dict.get("option", 0))
+    if shared_phase_raw is not None:
+        if isinstance(shared_phase_raw, bool):
+            option = 2 if shared_phase_raw else 0
+        elif isinstance(shared_phase_raw, str):
+            s = shared_phase_raw.strip().lower()
+            if s in ("true", "1", "yes", "reflectivity", "by_reflectivity", "per_reflectivity", "shared_reflectivity"):
+                option = 2
+            elif s in ("l", "by_l", "same_l", "same-l"):
+                option = 1
+            elif s in ("false", "0", "no", "none", "disabled"):
+                option = 0
+        elif isinstance(shared_phase_raw, (int, float)):
+            option = int(shared_phase_raw)
+    elif (any(r.phase_reference for r in resonances) or bool(wave_phase_ref)) and "option" not in init_dict:
+        # Default to shared phase per reflectivity when designated as phase reference
+        option = 2
+
     strat_str = init_dict.get("strategy", "default").lower()
     fixed_zero = bool(init_dict.get("fixed_zero", False))
     if fixed_zero:
@@ -217,7 +280,8 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
         strategy=init_strat,
         fixed_zero=fixed_zero,
         file_path=init_dict.get("file_path"),
-        option=int(init_dict.get("option", 0)),
+        option=option,
+        shared_phase=shared_phase_raw if shared_phase_raw is not None else False,
         magnitude=mag_rule,
         phase=phase_rule,
     )
@@ -232,6 +296,8 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
         poly_order=poly_order,
         resonances=resonances,
         init=init_cfg,
+        phase_reference=wave_phase_ref,
+        shared_phase=shared_phase_raw,
     )
 
 
@@ -406,6 +472,29 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         propagate_mcmc=bool(cs_dict.get("propagate_mcmc", True)),
     )
 
+    # Top-level phase reference and shared phase options
+    phase_ref = data.get("phase_reference", data.get("phase_ref"))
+    shared_phases_by_refl = bool(
+        data.get("shared_phases_by_reflectivity", data.get("shared_phase_per_reflectivity", False))
+    )
+
+    if phase_ref is not None:
+        ref_names = [phase_ref] if isinstance(phase_ref, str) else list(phase_ref)
+        for w in waves:
+            for r in w.resonances:
+                if r.name in ref_names:
+                    r.phase_reference = True
+                    r.phase_fixed = True
+                    r.fixed_phase = 0.0
+                    if w.init.option == 0 and w.init.shared_phase is False:
+                        w.init.option = 2
+
+    if shared_phases_by_refl:
+        for w in waves:
+            if w.type == WaveType.MASS_DEPENDENT and w.init.option == 0:
+                w.init.option = 2
+                w.init.shared_phase = True
+
     return FitConfig(
         project=project,
         environment=environment,
@@ -417,6 +506,8 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         mcmc_propagation=mcmc_propagation,
         plotting=plotting,
         cross_section=cross_section,
+        phase_reference=phase_ref,
+        shared_phases_by_reflectivity=shared_phases_by_refl,
     )
 
 

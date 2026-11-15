@@ -62,10 +62,11 @@ waves:
         width_fixed: true
         mass_limits: [1.20, 1.45]
         width_limits: [0.05, 0.25]
+        phase_reference: true  # a2(1320) phase reference (phases fixed to zero)
     init:
       strategy: "from_file"
       file_path: "logs_a2CS_dbw/{tbin}/fit/nominal_best.root"
-      option: 0
+      shared_phase: true       # Shared phases among waves in the same reflectivity
 
 minimizer:
   algorithm: "Minuit2"
@@ -109,6 +110,3 @@ cross_section:
   luminosity_unit: "pb^-1"
   mass_limits: [0.8, 2.0]
   phase1_comparison: true
-
-
-

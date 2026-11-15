@@ -337,6 +337,26 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         rand_l_str = ", ".join(str(w.l) for w in mi_random)
         lines.append(f"    paramManager.AddMassIndependentParameter({{{rand_l_str}}}, seed);")
 
+    # Fix phase for piecewise waves if marked as phase reference or phase is fixed
+    for w in mi_waves:
+        if w.init.phase.is_fixed or w.phase_reference:
+            val = w.init.phase.value
+            lines.extend([
+                f"    // Phase reference / fixed phase for piecewise wave L={w.l}",
+                "    for (const double mb : massBins) {",
+                f'        TString aPhaseName = Form("MI_%1.6f_aphi_{w.l}_0", mb);',
+                f'        TString bPhaseName = Form("MI_%1.6f_bphi_{w.l}_0", mb);',
+                "        if (paramManager.HasParameter(aPhaseName)) {",
+                f"            paramManager.SetParameterInitialValue(aPhaseName, {val});",
+                "            paramManager.FixParameter(aPhaseName);",
+                "        }",
+                "        if (paramManager.HasParameter(bPhaseName)) {",
+                f"            paramManager.SetParameterInitialValue(bPhaseName, {val});",
+                "            paramManager.FixParameter(bPhaseName);",
+                "        }",
+                "    }",
+            ])
+
     # Add mass-dependent parameters
     for w in md_waves:
         if w.init.strategy == InitStrategy.FROM_FILE and w.init.file_path:
@@ -364,6 +384,48 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
             for par_key, constr in res.gaussian_constraints.items():
                 if len(constr) == 2:
                     lines.append(f'    paramManager.SetGaussianConstraint("{par_key}", {constr[0]}, {constr[1]});')
+
+            # Phase reference / shared phase handling for resonance
+            is_phase_ref = (
+                res.phase_reference
+                or res.phase_fixed
+                or (w.phase_reference is True)
+                or (w.phase_reference == res.name)
+                or (config.phase_reference == res.name)
+                or (isinstance(config.phase_reference, (list, tuple)) and res.name in config.phase_reference)
+            )
+            if is_phase_ref:
+                fix_val = res.fixed_phase if res.fixed_phase is not None else 0.0
+                lines.extend([
+                    f'    // Phase reference for resonance {res.name} (phases fixed to {fix_val})',
+                    f'    for (const char* pName : {{',
+                    f'        "MD_shareda_{res.name}_globalphase",',
+                    f'        "MD_sharedb_{res.name}_globalphase",',
+                    f'        "MD_{res.name}_globalphase",',
+                    f'        "MD_shareda_{res.name}_globalphase_flatte",',
+                    f'        "MD_shareda_{res.name}_globalphase_bw",',
+                    f'        "MD_sharedb_{res.name}_globalphase_flatte",',
+                    f'        "MD_sharedb_{res.name}_globalphase_bw"',
+                    f'    }}) {{',
+                    f'        if (paramManager.HasParameter(pName)) {{',
+                    f'            paramManager.SetParameterInitialValue(pName, {fix_val});',
+                    f'            paramManager.FixParameter(pName);',
+                    f'        }}',
+                    f'    }}',
+                ])
+            elif res.phase_limits and len(res.phase_limits) == 2:
+                lines.extend([
+                    f'    // Set phase limits for resonance {res.name}',
+                    f'    for (const char* pName : {{',
+                    f'        "MD_shareda_{res.name}_globalphase",',
+                    f'        "MD_sharedb_{res.name}_globalphase",',
+                    f'        "MD_{res.name}_globalphase"',
+                    f'    }}) {{',
+                    f'        if (paramManager.HasParameter(pName)) {{',
+                    f'            paramManager.SetParameterLimits(pName, {res.phase_limits[0]}, {res.phase_limits[1]});',
+                    f'        }}',
+                    f'    }}',
+                ])
 
     # If bestParamsFile is provided in MCMC mode, load best parameters into paramManager
     lines.extend([

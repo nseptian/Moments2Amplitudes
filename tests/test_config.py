@@ -90,6 +90,53 @@ class TestConfig(unittest.TestCase):
         self.assertIsNotNone(cfg.environment.brufit_dir)
         self.assertGreater(len(cfg.environment.brufit_dir), 0)
 
+    def test_phase_reference_and_shared_phase_options(self):
+        # 1. Test from updated SPiecewise_DBreitWigner configs
+        cfg = load_config(Path("configs/a2CS_SPiecewise_DBreitWigner.yaml"))
+        d_wave = next(w for w in cfg.waves if w.l == 2)
+        res = d_wave.resonances[0]
+        self.assertEqual(res.name, "a2_1320")
+        self.assertTrue(res.phase_reference)
+        self.assertTrue(res.phase_fixed)
+        self.assertEqual(res.fixed_phase, 0.0)
+        self.assertEqual(d_wave.init.option, 2)
+        self.assertTrue(bool(d_wave.init.shared_phase))
+
+        # 2. Test shared_phase variations and string keywords
+        from moments2amplitudes.config import parse_wave_config
+
+        # reflectivity keyword
+        w1 = parse_wave_config({
+            "l": 2, "name": "D-wave", "type": "mass_dependent", "shared_phase": "reflectivity",
+            "resonances": [{"name": "a2_1320"}]
+        })
+        self.assertEqual(w1.init.option, 2)
+
+        # L keyword
+        w2 = parse_wave_config({
+            "l": 2, "name": "D-wave", "type": "mass_dependent", "shared_phase": "l",
+            "resonances": [{"name": "a2_1320"}]
+        })
+        self.assertEqual(w2.init.option, 1)
+
+        # Resonance marked as phase_reference automatically defaults to option 2 if unspecified
+        w3 = parse_wave_config({
+            "l": 2, "name": "D-wave", "type": "mass_dependent",
+            "resonances": [{"name": "a2_1320", "phase_reference": True}]
+        })
+        self.assertEqual(w3.init.option, 2)
+        self.assertTrue(w3.resonances[0].phase_reference)
+        self.assertEqual(w3.resonances[0].fixed_phase, 0.0)
+
+        # Wave-level phase_reference
+        w4 = parse_wave_config({
+            "l": 2, "name": "D-wave", "type": "mass_dependent", "phase_reference": "a2_1320",
+            "resonances": [{"name": "a2_1320"}, {"name": "a2_1700"}]
+        })
+        self.assertTrue(w4.resonances[0].phase_reference)
+        self.assertFalse(w4.resonances[1].phase_reference)
+        self.assertEqual(w4.init.option, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

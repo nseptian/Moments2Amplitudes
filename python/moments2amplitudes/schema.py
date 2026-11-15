@@ -126,6 +126,10 @@ class ResonanceConfig:
     mass_limits: Optional[List[float]] = None
     width_limits: Optional[List[float]] = None
     gaussian_constraints: Dict[str, List[float]] = field(default_factory=dict)  # param -> [mean, sigma]
+    phase_reference: bool = False  # Fixed to zero as phase reference
+    phase_fixed: bool = False
+    fixed_phase: Optional[float] = None
+    phase_limits: Optional[List[float]] = None
 
 
 @dataclass
@@ -143,6 +147,7 @@ class WaveInitConfig:
     fixed_zero: bool = False
     file_path: Optional[str] = None
     option: int = 0
+    shared_phase: Union[bool, str, int] = False
     magnitude: ParameterInitRule = field(default_factory=lambda: ParameterInitRule(strategy=InitStrategy.RANDOM, min_val=0.0, max_val=200.0))
     phase: ParameterInitRule = field(default_factory=lambda: ParameterInitRule(strategy=InitStrategy.FIXED_VALUE, value=0.0, is_fixed=False))
 
@@ -158,6 +163,8 @@ class WaveConfig:
     poly_order: int = -1
     resonances: List[ResonanceConfig] = field(default_factory=list)
     init: WaveInitConfig = field(default_factory=WaveInitConfig)
+    phase_reference: Union[bool, str] = False
+    shared_phase: Optional[Union[bool, str, int]] = None
 
     def __post_init__(self):
         if not self.name:
@@ -260,6 +267,8 @@ class FitConfig:
     mcmc_propagation: MCMCPropagationConfig = field(default_factory=MCMCPropagationConfig)
     plotting: PlottingConfig = field(default_factory=PlottingConfig)
     cross_section: CrossSectionConfig = field(default_factory=CrossSectionConfig)
+    phase_reference: Optional[Union[str, List[str]]] = None
+    shared_phases_by_reflectivity: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
