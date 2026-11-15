@@ -66,13 +66,48 @@ void ExportMCMCResonanceCouplings(
 
     bool hasMass = (t->GetLeaf(massBranch) != nullptr);
     bool hasWidth = (t->GetLeaf(widthBranch) != nullptr);
+
+    // Fallbacks for two-breit-wigner or alternate naming schemes
+    if (!hasMass) {
+        std::vector<TString> altMass = {
+            Form("MD_shared_%s_Mass1", res.Data()),
+            Form("MD_shared_%s_Mass2", res.Data()),
+            Form("MD_shared_%s_Mass", res.Data()),
+            "MD_shared_a2_1320_1700_Mass1",
+            "MD_shared_a2_1320_Mass1"
+        };
+        for (const auto& alt : altMass) {
+            if (t->GetLeaf(alt)) {
+                massBranch = alt;
+                hasMass = true;
+                break;
+            }
+        }
+    }
+    if (!hasWidth) {
+        std::vector<TString> altWidth = {
+            Form("MD_shared_%s_Width1", res.Data()),
+            Form("MD_shared_%s_Width2", res.Data()),
+            Form("MD_shared_%s_Width", res.Data()),
+            "MD_shared_a2_1320_1700_Width1",
+            "MD_shared_a2_1320_Width1"
+        };
+        for (const auto& alt : altWidth) {
+            if (t->GetLeaf(alt)) {
+                widthBranch = alt;
+                hasWidth = true;
+                break;
+            }
+        }
+    }
+
     bool hasValid = (t->GetLeaf("isValid") != nullptr);
     bool hasStatus = (t->GetLeaf("Status") != nullptr);
     bool hasChi2 = (t->GetLeaf("chi2") != nullptr);
     bool hasEntry = (t->GetLeaf("mcmc_entry") != nullptr);
     bool hasWeight = (t->GetLeaf("weight") != nullptr);
 
-    // Identify coupling branches: MD_{wave}_{res}_k
+    // Identify coupling branches: MD_{wave}_{res}_k or _k1/_k2
     TObjArray* branches = t->GetListOfBranches();
     std::vector<std::string> waveNames;
     std::vector<TString> couplingBranches;
@@ -80,23 +115,45 @@ void ExportMCMCResonanceCouplings(
 
     for (int i = 0; i < branches->GetEntries(); ++i) {
         TString bName = branches->At(i)->GetName();
-        if (bName.BeginsWith("MD_") && bName.EndsWith("_k") && !bName.EndsWith("_error")) {
-            TString sub = bName;
-            sub.ReplaceAll("MD_", "");
-            sub.ReplaceAll("_k", "");
-            // Now sub is {amp}_{res}
-            if (sub.EndsWith(Form("_%s", res.Data()))) {
-                TString waveName = sub;
-                waveName.ReplaceAll(Form("_%s", res.Data()), "");
+        if (bName.EndsWith("_error")) continue;
+        if (!bName.BeginsWith("MD_")) continue;
 
-                int refl = 0;
-                if (waveName.BeginsWith("a_")) refl = 1;
-                else if (waveName.BeginsWith("b_")) refl = -1;
+        TString kSuffix = "";
+        if (bName.EndsWith("_k")) {
+            kSuffix = "_k";
+        } else if (bName.EndsWith("_k1") && (res == "a2_1320" || res.EndsWith("1320") || res.BeginsWith("res1"))) {
+            kSuffix = "_k1";
+        } else if (bName.EndsWith("_k2") && (res == "a2_1700" || res.EndsWith("1700") || res.BeginsWith("res2"))) {
+            kSuffix = "_k2";
+        } else if (bName.EndsWith("_k1")) {
+            kSuffix = "_k1";
+        }
 
-                waveNames.push_back(waveName.Data());
-                couplingBranches.push_back(bName);
-                reflectivities.push_back(refl);
-            }
+        if (kSuffix.Length() == 0) continue;
+
+        TString sub = bName;
+        sub.ReplaceAll("MD_", "");
+        sub.ReplaceAll(kSuffix, "");
+        // Now sub is {amp}_{res}
+        TString waveName = "";
+        if (sub.EndsWith(Form("_%s", res.Data()))) {
+            waveName = sub;
+            waveName.ReplaceAll(Form("_%s", res.Data()), "");
+        } else if (sub.EndsWith("_a2_1320_1700")) {
+            waveName = sub;
+            waveName.ReplaceAll("_a2_1320_1700", "");
+        } else if (sub.BeginsWith("a_") || sub.BeginsWith("b_")) {
+            waveName = sub;
+        }
+
+        if (waveName.Length() > 0) {
+            int refl = 0;
+            if (waveName.BeginsWith("a_")) refl = 1;
+            else if (waveName.BeginsWith("b_")) refl = -1;
+
+            waveNames.push_back(waveName.Data());
+            couplingBranches.push_back(bName);
+            reflectivities.push_back(refl);
         }
     }
 

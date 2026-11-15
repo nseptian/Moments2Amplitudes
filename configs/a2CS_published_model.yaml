@@ -15,8 +15,8 @@ dataset:
   bin_prefix: "Mpi0eta"
   var_bin_prefix: ""
   mass_bins:
-    min: 1.04
-    max: 1.72
+    min: 1.06
+    max: 1.70
     step: 0.04
   use_covariance: true
 
@@ -48,13 +48,13 @@ waves:
     init:
       fixed_zero: true
 
-  # L = 2: D-wave two Breit-Wigners: a2(1320) + fixed a2(1700) without kinematics term
+  # L = 2: D-wave two Breit-Wigners: a2(1320) + fixed a2(1700) (d_two_breit_wigner formulation)
   - l: 2
     name: "D-wave"
     type: "mass_dependent"
-    model: "breit_wigner"
-    formula: "k / (M^2 - s - i * M * width)"
-    parameters: ["k", "M", "width"]
+    model: "two_breit_wigner"
+    formula: "k1 / (Mass1^2 - s - i * Mass1 * Width1) + (k2 / (Mass2^2 - s - i * Mass2 * Width2)) * exp(i * phase)"
+    parameters: ["k1", "Mass1", "Width1", "k2", "Mass2", "Width2", "phase"]
     poly_order: -1
     resonances:
       - name: "a2_1320"
@@ -74,6 +74,7 @@ waves:
         width_limits: [0.10, 0.40]
     init:
       strategy: "random"
+      option: 1                # Add shared relative phase
       shared_phase: true       # Shared phases among waves in the same reflectivity
 
 minimizer:
