@@ -253,6 +253,7 @@ class MCMCPropagationConfig:
 class ProjectConfig:
     name: str = "PartialWaveFit"
     description: str = ""
+    tag: str = ""
 
 
 @dataclass

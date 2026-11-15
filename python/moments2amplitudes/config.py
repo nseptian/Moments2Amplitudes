@@ -320,6 +320,7 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
     project = ProjectConfig(
         name=proj_dict.get("name", path.stem),
         description=proj_dict.get("description", ""),
+        tag=str(proj_dict.get("tag", data.get("tag", ""))),
     )
 
     # Environment (optional, defaults to environment variables or system paths)
