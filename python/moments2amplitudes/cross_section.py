@@ -267,15 +267,14 @@ def find_mcmc_root_file(
         candidates.append(rundir.root / "mcmc_propagation_spiecewise_results.root")
         candidates.append(rundir.root / "mcmc_propagation_results.root")
         candidates.append(rundir.root / "mcmc" / "mcmc_worker_0.root")
-
-    if config and config.mcmc_propagation and config.mcmc_propagation.output_file:
-        candidates.append(Path(config.mcmc_propagation.output_file).resolve())
-        if rundir:
+        if config and config.mcmc_propagation and config.mcmc_propagation.output_file:
             candidates.append(rundir.root / config.mcmc_propagation.output_file)
-
-    # Current working directory fallbacks
-    candidates.append(Path("mcmc_propagation_spiecewise_results.root").resolve())
-    candidates.append(Path("mcmc_propagation_results.root").resolve())
+    else:
+        if config and config.mcmc_propagation and config.mcmc_propagation.output_file:
+            candidates.append(Path(config.mcmc_propagation.output_file).resolve())
+        # Current working directory fallbacks only when no explicit rundir is specified
+        candidates.append(Path("mcmc_propagation_spiecewise_results.root").resolve())
+        candidates.append(Path("mcmc_propagation_results.root").resolve())
 
     for c in candidates:
         if c and c.is_file():
@@ -548,13 +547,16 @@ def calculate_resonance_cross_section(
     if bin_width is None or bin_width <= 0:
         bin_width = 0.04
 
-    # Resolve -t binning
-    t_lo = t_min if t_min is not None else cs_cfg.t_min
-    t_hi = t_max if t_max is not None else cs_cfg.t_max
+    # Resolve -t binning: prioritize explicit t_min/t_max, then auto-detection from rundir/dataset, then config fallback
+    t_lo = t_min
+    t_hi = t_max
 
     if t_lo is None or t_hi is None:
-        # Try auto-detecting from rundir, dataset.t_bin, or moments_dir
-        parsed = parse_t_bin_from_string(str(rundir.root))
+        parsed = parse_t_bin_from_string(str(rundir.root.name))
+        if not parsed and rundir.root.parent:
+            parsed = parse_t_bin_from_string(str(rundir.root.parent.name))
+        if not parsed:
+            parsed = parse_t_bin_from_string(str(rundir.root))
         if not parsed and getattr(config.dataset, "t_bin", None):
             parsed = parse_t_bin_from_string(config.dataset.t_bin)
         if not parsed:
@@ -566,7 +568,8 @@ def calculate_resonance_cross_section(
         if parsed:
             t_lo, t_hi = parsed
         else:
-            t_lo, t_hi = (0.1, 0.2)  # Default fallback
+            t_lo = cs_cfg.t_min if cs_cfg.t_min is not None else 0.1
+            t_hi = cs_cfg.t_max if cs_cfg.t_max is not None else 0.2
 
     delta_t = t_hi - t_lo
     t_center = (t_lo + t_hi) / 2.0

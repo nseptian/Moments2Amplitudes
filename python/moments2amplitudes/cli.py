@@ -385,6 +385,7 @@ def cmd_cross_section(args: argparse.Namespace) -> int:
         format_cross_section_table,
         save_cross_section_reports,
         plot_cross_section_vs_t,
+        parse_t_bin_from_string,
         CrossSectionResult,
     )
 
@@ -406,11 +407,20 @@ def cmd_cross_section(args: argparse.Namespace) -> int:
         print(f"\nCalculating cross-section across {len(target_runs)} run directories...")
         for r_dir in target_runs:
             rundir = RunDirectory(r_dir)
+            cfg_t = copy.deepcopy(cfg)
+            parsed_t = parse_t_bin_from_string(rundir.root.name)
+            if parsed_t:
+                cfg_t.dataset.t_bin = rundir.root.name
+                t_lo_val, t_hi_val = parsed_t
+            else:
+                t_lo_val, t_hi_val = None, None
             try:
                 res = calculate_resonance_cross_section(
-                    cfg,
+                    cfg_t,
                     rundir,
                     resonance_name=cfg.cross_section.resonance,
+                    t_min=t_lo_val,
+                    t_max=t_hi_val,
                     luminosity=cfg.cross_section.luminosity,
                     branching_ratio=cfg.cross_section.branching_ratio,
                     mcmc_root_file=mcmc_file,
@@ -426,10 +436,12 @@ def cmd_cross_section(args: argparse.Namespace) -> int:
             print("[ERROR] No cross-section results evaluated.")
             return 1
 
-        primary_rundir = RunDirectory(target_runs[0])
+        first_p = Path(target_runs[0])
+        project_plots_dir = first_p.parent / "plots" if (first_p.parent.is_dir() and first_p.name.startswith("t")) else RunDirectory(target_runs[0]).plots_dir
+        project_plots_dir.mkdir(parents=True, exist_ok=True)
         plot_cross_section_vs_t(
             results,
-            primary_rundir.plots_dir,
+            project_plots_dir,
             phase1_comparison=not getattr(args, "no_phase1", False),
             theory_band_file=getattr(args, "theory_band", None),
             style=getattr(args, "style", None) or getattr(cfg.plotting, "style", "default"),
