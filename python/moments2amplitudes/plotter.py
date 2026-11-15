@@ -1961,7 +1961,11 @@ def plot_amplitudes_and_bands(
                     if len(m_parts) >= 4:
                         mb = m_parts[1]
                         amp = "_".join(m_parts[2:])
-                        clean_name = f"{format_amplitude_label(amp)} @ {mb} GeV"
+                        try:
+                            mb_val = f"{float(mb):.2f}"
+                        except ValueError:
+                            mb_val = mb
+                        clean_name = f"${format_amplitude_symbol(amp)}$ ({mb_val} GeV)"
                     else:
                         clean_name = pname.replace("_", "\\_")
                 elif pname.startswith("MD_"):
@@ -3386,6 +3390,7 @@ def plot_tbins_parallel(
     # Generate multi-t-bin moment evolution plots across all t-bins
     plot_mom_t = getattr(config.plotting, "moments_vs_t", True) if getattr(config, "plotting", None) else True
     if plot_mom_t and len(tbins_list) > 1 and not (only_distributions or only_amplitudes):
+        print(f"\n[INFO] Generating cross-t-bin moment evolution plots across {len(tbins_list)} t-bins...")
         try:
             t_mom_plots = plot_moments_across_tbins(
                 config,

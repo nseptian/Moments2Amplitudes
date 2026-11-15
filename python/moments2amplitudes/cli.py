@@ -488,6 +488,12 @@ def cmd_compile(args: argparse.Namespace) -> int:
         return 0 if up_to_date else 1
 
     force = getattr(args, "force", False) or getattr(args, "clean", False)
+    up_to_date, reason = is_aclic_updated()
+    if up_to_date and not force:
+        print(f"[ACLiC] Status: UP-TO-DATE ({reason})")
+        print("[ACLiC] All shared libraries in src/ are already built. Use 'pixi run compile --force' (or -f) to recompile.")
+        return 0
+
     try:
         ensure_aclic_updated(force=force)
         return 0

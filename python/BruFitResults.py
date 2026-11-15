@@ -13,7 +13,7 @@ import gc
 from datetime import datetime
 
 
-def _compute_autocorrelation_fft(data: np.ndarray, max_lag: int | None = 5000) -> np.ndarray:
+def _compute_autocorrelation_fft(data: np.ndarray, max_lag: int | None = None) -> np.ndarray:
     """
     Compute sample autocorrelation function acf(lag) = Cov(x_t, x_{t+lag}) / Var(x)
     matching BruFit's AutocorrPlot.cpp (parN / parD) via Wiener-Khinchin theorem FFT.
@@ -23,7 +23,7 @@ def _compute_autocorrelation_fft(data: np.ndarray, max_lag: int | None = 5000) -
         return np.array([1.0], dtype=np.float64)
     xm = data - np.mean(data)
     par_d = np.sum(xm * xm)
-    limit = min(n, (max_lag + 1) if max_lag is not None else n)
+    limit = min(n, (max_lag + 1) if max_lag is not None else (n // 2 + 1))
     if par_d <= 0.0:
         res = np.zeros(limit, dtype=np.float64)
         res[0] = 1.0
@@ -1490,7 +1490,7 @@ class MomentsMCMC:
         n_samples = len(data)
         if n_samples <= 1:
             return 0.5
-        eff_max_lag = min(5000, n_samples // 2) if max_lag is None else min(max_lag, n_samples // 2)
+        eff_max_lag = (n_samples // 2) if max_lag is None else min(max_lag, n_samples // 2)
         acf = _compute_autocorrelation_fft(data, max_lag=eff_max_lag)
 
         tau_int = 0.5
@@ -1576,7 +1576,7 @@ class MomentsMCMC:
         esses = []
         per_moment = {}
 
-        calc_max_lag = min(5000, n_eff // 2) if max_lag is None else min(max_lag, n_eff // 2)
+        calc_max_lag = (n_eff // 2) if max_lag is None else min(max_lag, n_eff // 2)
 
         for var_name in moment_name_lists:
             raw_v = all_data[var_name]
@@ -2052,7 +2052,7 @@ def compute_chain_diagnostics_from_root(root_fpath: str, burn_in: int = 2000, tr
 
         n_eff = n_raw - eff_burn_in
 
-        calc_max_lag = min(5000, n_eff // 2)
+        calc_max_lag = n_eff // 2
         taus = []
         esses = []
         per_moment = {}

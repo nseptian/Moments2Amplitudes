@@ -10,6 +10,7 @@ import sys
 import copy
 import time
 import subprocess
+import threading
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Any
 import numpy as np
@@ -621,6 +622,18 @@ def run_multi_start(
 
     if not valid_results:
         print(f"[ERROR]{summary_tag} No fits converged cleanly. Check logs in:", rundir.fit_starts_dir)
+        for r in results:
+            if r.get("log_file") and Path(r["log_file"]).is_file():
+                try:
+                    with open(r["log_file"], "r") as lf:
+                        log_text = lf.read()
+                    for line in log_text.splitlines():
+                        if "*** Break ***" in line or "illegal instruction" in line or "segmentation violation" in line or "bus error" in line or "fatal error" in line:
+                            print(f"[ERROR]{summary_tag} Process crashed with fatal error: {line.strip()}")
+                            break
+                    break
+                except Exception:
+                    pass
         return {"converged": False, "results": results, "rundir": rundir}
 
     min_chi2 = valid_results[0]["chi2"]
@@ -830,6 +843,10 @@ def run_multi_start_tbins(
     }
 
 
+# Process-level lock to ensure thread-safe plotting when multiple t-bins complete propagation concurrently
+_mcmc_plot_lock = threading.Lock()
+
+
 def run_mcmc_propagation(
     config: FitConfig,
     best_params_file: Optional[str] = None,
@@ -939,8 +956,10 @@ def run_mcmc_propagation(
     print(f"{tag}[SUCCESS] Successfully created merged MCMC propagation results: {out_file}")
 
     # Generate full diagnostics and plots with MCMC error bands
+    print(f"{tag}[Plot] Generating amplitude diagnostic plots and MCMC posterior bands...")
     try:
-        diag_res = run_all_diagnostics_and_plots(config, rundir)
+        with _mcmc_plot_lock:
+            diag_res = run_all_diagnostics_and_plots(config, rundir)
         print(f"{tag}[OK] Generated amplitude plots and updated diagnostics in: {rundir.plots_dir}")
     except Exception as e:
         print(f"{tag}[WARNING] Diagnostic plot generation encountered: {e}")
