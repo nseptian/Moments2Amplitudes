@@ -1024,24 +1024,64 @@ def plot_cross_section_vs_t(
             fmt="o", mfc="none", mec="blue", ecolor="blue", capsize=3, linestyle="none", alpha=0.8, zorder=3
         )
 
-    # 3. Current Extraction Points (inverted triangles with error bars)
+    # 3. Current Extraction Points (inverted triangles with consistent uncertainty style)
     curr_x = [x + (0.01 if has_phase1 else 0.0) for x in t_centers]
 
-    ax.errorbar(
-        curr_x, cs_tot, yerr=cs_tot_err,
-        fmt="v", markersize=7, color="black", ecolor="black", capsize=3, elinewidth=1.6, alpha=0.85,
-        label="Total (Moment Analysis)", zorder=5
-    )
-    ax.errorbar(
-        curr_x, cs_pos, yerr=cs_pos_err,
-        fmt="v", markersize=7, color="red", ecolor="red", capsize=3, elinewidth=1.6, alpha=0.85,
-        label="Positive Reflectivity (Moment Analysis)", zorder=5
-    )
-    ax.errorbar(
-        curr_x, cs_neg, yerr=cs_neg_err,
-        fmt="v", markersize=7, color="blue", ecolor="blue", capsize=3, elinewidth=1.6, alpha=0.85,
-        label="Negative Reflectivity (Moment Analysis)", zorder=5
-    )
+    if has_phase1:
+        # Match Phase-1 convention: statistical uncertainties as transparent boxes
+        for i, x in enumerate(curr_x):
+            rect_pos = Rectangle(
+                (x - box_half_w, cs_pos[i] - cs_pos_err[i]),
+                2 * box_half_w, 2 * cs_pos_err[i],
+                facecolor="red", edgecolor="red", alpha=0.20, linewidth=1, zorder=2
+            )
+            ax.add_patch(rect_pos)
+
+            rect_neg = Rectangle(
+                (x - box_half_w, cs_neg[i] - cs_neg_err[i]),
+                2 * box_half_w, 2 * cs_neg_err[i],
+                facecolor="blue", edgecolor="blue", alpha=0.20, linewidth=1, zorder=2
+            )
+            ax.add_patch(rect_neg)
+
+            rect_tot = Rectangle(
+                (x - box_half_w, cs_tot[i] - cs_tot_err[i]),
+                2 * box_half_w, 2 * cs_tot_err[i],
+                facecolor="black", edgecolor="black", alpha=0.15, linewidth=1, zorder=2
+            )
+            ax.add_patch(rect_tot)
+
+        ax.scatter(
+            curr_x, cs_tot,
+            marker="v", color="black",
+            label="Total (Moment Analysis)", zorder=5, alpha=0.85
+        )
+        ax.scatter(
+            curr_x, cs_pos,
+            marker="v", color="red",
+            label="Positive Reflectivity (Moment Analysis)", zorder=5, alpha=0.85
+        )
+        ax.scatter(
+            curr_x, cs_neg,
+            marker="v", color="blue",
+            label="Negative Reflectivity (Moment Analysis)", zorder=5, alpha=0.85
+        )
+    else:
+        ax.errorbar(
+            curr_x, cs_tot, yerr=cs_tot_err,
+            fmt="v", markersize=7, color="black", ecolor="black", capsize=3, elinewidth=1.6, alpha=0.85,
+            label="Total (Moment Analysis)", zorder=5
+        )
+        ax.errorbar(
+            curr_x, cs_pos, yerr=cs_pos_err,
+            fmt="v", markersize=7, color="red", ecolor="red", capsize=3, elinewidth=1.6, alpha=0.85,
+            label="Positive Reflectivity (Moment Analysis)", zorder=5
+        )
+        ax.errorbar(
+            curr_x, cs_neg, yerr=cs_neg_err,
+            fmt="v", markersize=7, color="blue", ecolor="blue", capsize=3, elinewidth=1.6, alpha=0.85,
+            label="Negative Reflectivity (Moment Analysis)", zorder=5
+        )
 
     # 4. Theoretical Model Band (drawn with label matching notebook)
     if th_data is not None:
