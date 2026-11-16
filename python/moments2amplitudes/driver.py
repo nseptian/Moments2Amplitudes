@@ -1183,6 +1183,7 @@ def run_mcmc_propagation(
     config: FitConfig,
     best_params_file: Optional[str] = None,
     n_workers: Optional[int] = None,
+    target_entries: Optional[int] = None,
     max_entries: Optional[int] = None,
     stride: Optional[int] = None,
     auto_stride: Optional[bool] = None,
@@ -1205,7 +1206,9 @@ def run_mcmc_propagation(
         workers = min(workers, half_cpus)
 
     burn_in = config.mcmc_propagation.burn_in
-    raw_entries = max_entries if max_entries is not None else config.mcmc_propagation.max_entries
+    raw_entries = target_entries if target_entries is not None else (
+        max_entries if max_entries is not None else config.mcmc_propagation.target_entries
+    )
 
     # Account for differing MCMC entries across mass bins by finding the minimum available
     min_avail = get_min_available_mcmc_entries(config, config.dataset.t_bin)
@@ -1344,6 +1347,7 @@ def run_mcmc_propagation_tbins(
     tbins: Optional[List[str]] = None,
     best_params_file: Optional[str] = None,
     n_workers: Optional[int] = None,
+    target_entries: Optional[int] = None,
     max_entries: Optional[int] = None,
     stride: Optional[int] = None,
     auto_stride: Optional[bool] = None,
@@ -1356,6 +1360,7 @@ def run_mcmc_propagation_tbins(
     """
     import concurrent.futures
 
+    req_entries = target_entries if target_entries is not None else max_entries
     tbins_list = tbins if tbins is not None else config.dataset.get_t_bins()
     if len(tbins_list) <= 1:
         single_cfg = copy.deepcopy(config)
@@ -1365,7 +1370,7 @@ def run_mcmc_propagation_tbins(
             single_cfg,
             best_params_file=best_params_file,
             n_workers=n_workers,
-            max_entries=max_entries,
+            target_entries=req_entries,
             stride=stride,
             auto_stride=auto_stride,
             output_file=output_file,
@@ -1423,7 +1428,7 @@ def run_mcmc_propagation_tbins(
             cfg_t,
             best_params_file=t_best_params,
             n_workers=effective_workers,
-            max_entries=max_entries,
+            target_entries=req_entries,
             stride=stride,
             auto_stride=auto_stride,
             output_file=t_outfile,

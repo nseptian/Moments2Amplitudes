@@ -83,7 +83,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         res_names = [r.name for r in w.resonances] if w.resonances else "none"
         print(f"    * L={w.l} ({w.name}): type={w.type.value}, model={w.model.value}, resonances={res_names}")
     print(f"  Multi-start:    {cfg.multi_start.n_starts} trials on {cfg.multi_start.n_threads} threads")
-    print(f"  MCMC Prop:      enabled={cfg.mcmc_propagation.enabled} ({cfg.mcmc_propagation.max_entries} entries on {cfg.mcmc_propagation.n_workers} workers)")
+    print(f"  MCMC Prop:      enabled={cfg.mcmc_propagation.enabled} ({cfg.mcmc_propagation.target_entries} entries on {cfg.mcmc_propagation.n_workers} workers)")
     brufit_disp = (
         (cfg.environment.brufit_dir if cfg.environment and cfg.environment.brufit_dir else None)
         or os.environ.get("BRUFIT", "not set (using system default)")
@@ -145,13 +145,14 @@ def cmd_propagate(args: argparse.Namespace) -> int:
 
     tbins = cfg.dataset.get_t_bins()
     n_tbin_workers = getattr(args, "tbin_workers", None)
+    req_entries = getattr(args, "target_entries", None) if getattr(args, "target_entries", None) is not None else getattr(args, "max_entries", None)
     res = run_mcmc_propagation_tbins(
         cfg,
         tbins=tbins,
         best_params_file=args.best_params,
         n_workers=args.n_workers,
         n_tbin_workers=n_tbin_workers,
-        max_entries=args.max_entries,
+        target_entries=req_entries,
         stride=getattr(args, "stride", None),
         auto_stride=getattr(args, "auto_stride", None),
         output_file=args.output_file,
@@ -209,7 +210,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             best_params_file=args.best_params,
             n_workers=args.n_workers,
             n_tbin_workers=n_tbin_workers,
-            max_entries=args.max_entries,
+            target_entries=getattr(args, "target_entries", None) if getattr(args, "target_entries", None) is not None else getattr(args, "max_entries", None),
             stride=getattr(args, "stride", None),
             auto_stride=getattr(args, "auto_stride", None),
             output_file=args.output_file,
@@ -557,9 +558,9 @@ def main():
     p_prop.add_argument("--mcmc-tree", type=str, default=None, help="Path to MCMC tree file")
     p_prop.add_argument("--n-workers", type=int, default=None, help="Number of parallel workers per t-bin")
     p_prop.add_argument("--tbin-workers", type=int, default=None, help="Max concurrent t-bins running in parallel")
-    p_prop.add_argument("--max-entries", type=int, default=None, help="Max posterior entries to propagate")
+    p_prop.add_argument("--target-entries", "--max-entries", dest="target_entries", type=int, default=None, help="Target number of posterior entries to propagate")
     p_prop.add_argument("--stride", type=int, default=None, help="MCMC thinning stride (step between samples)")
-    p_prop.add_argument("--auto-stride", dest="auto_stride", action="store_true", default=None, help="Automatically calculate stride to draw exactly max_entries uniformly across the available chain")
+    p_prop.add_argument("--auto-stride", dest="auto_stride", action="store_true", default=None, help="Automatically calculate stride to draw exactly target_entries uniformly across the available chain")
     p_prop.add_argument("--no-auto-stride", dest="auto_stride", action="store_false", help="Disable automatic stride calculation (use fixed stride from config/CLI)")
     p_prop.add_argument("--output-file", type=str, default=None, help="Output merged ROOT file")
     p_prop.add_argument("--run-dir", type=str, default=None, help="Run directory")
@@ -621,9 +622,9 @@ def main():
     p_run.add_argument("--output-dir", "--run-dir", dest="output_dir", type=str, default=None, help="Run directory")
     p_run.add_argument("--propagate", action="store_true", help="Force MCMC propagation even if disabled in config")
     p_run.add_argument("--n-workers", type=int, default=None, help="Number of MCMC workers")
-    p_run.add_argument("--max-entries", type=int, default=None, help="Max posterior entries to propagate")
+    p_run.add_argument("--target-entries", "--max-entries", dest="target_entries", type=int, default=None, help="Target number of posterior entries to propagate")
     p_run.add_argument("--stride", type=int, default=None, help="MCMC thinning stride (step between samples)")
-    p_run.add_argument("--auto-stride", dest="auto_stride", action="store_true", default=None, help="Automatically calculate stride to draw exactly max_entries uniformly across the available chain")
+    p_run.add_argument("--auto-stride", dest="auto_stride", action="store_true", default=None, help="Automatically calculate stride to draw exactly target_entries uniformly across the available chain")
     p_run.add_argument("--no-auto-stride", dest="auto_stride", action="store_false", help="Disable automatic stride calculation (use fixed stride from config/CLI)")
     p_run.add_argument("--output-file", type=str, default=None, help="Output merged ROOT file")
     p_run.add_argument("--t-bin", "--tbin", dest="t_bin", type=str, default=None, help="Single t-bin directory override (e.g. t010020, t020032)")

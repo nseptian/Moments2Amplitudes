@@ -248,13 +248,21 @@ class MCMCPropagationConfig:
     enabled: bool = False
     mcmc_tree_path: str = ""
     burn_in: int = 0
-    max_entries: int = 200
+    target_entries: int = 200
     stride: int = 1
     auto_stride: bool = True
     n_workers: int = field(default_factory=get_default_max_workers)
     n_tbin_workers: Optional[int] = None
     output_file: str = "mcmc_propagation_results.root"
     log_dir: str = "logs_mcmc"
+
+    @property
+    def max_entries(self) -> int:
+        return self.target_entries
+
+    @max_entries.setter
+    def max_entries(self, val: int):
+        self.target_entries = val
 
 
 @dataclass

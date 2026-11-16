@@ -108,7 +108,7 @@ class TestDriverMacro(unittest.TestCase):
                 (rundir.mcmc_workers_dir / f"mcmc_worker_{w}.root").touch()
             (rundir.root / "central_best_params.root").touch()
             with patch("moments2amplitudes.driver.run_all_diagnostics_and_plots"):
-                run_mcmc_propagation(cfg, run_dir=td, n_workers=4, max_entries=200, auto_stride=True)
+                run_mcmc_propagation(cfg, run_dir=td, n_workers=4, target_entries=200, auto_stride=True)
             for call in mock_exec.call_args_list:
                 args_tuple = call[0][1]
                 self.assertEqual(args_tuple[6], 7)  # eff_stride = 7
@@ -123,7 +123,7 @@ class TestDriverMacro(unittest.TestCase):
                 (rundir.mcmc_workers_dir / f"mcmc_worker_{w}.root").touch()
             (rundir.root / "central_best_params.root").touch()
             with patch("moments2amplitudes.driver.run_all_diagnostics_and_plots"):
-                run_mcmc_propagation(cfg, run_dir=td, n_workers=4, max_entries=200, auto_stride=True)
+                run_mcmc_propagation(cfg, run_dir=td, n_workers=4, target_entries=200, auto_stride=True)
             for call in mock_exec.call_args_list:
                 args_tuple = call[0][1]
                 self.assertEqual(args_tuple[6], 12)  # eff_stride = 12
@@ -136,7 +136,7 @@ class TestDriverMacro(unittest.TestCase):
         cfg.dataset.t_bins = ["t010020", "t020032"]
         cfg.mcmc_propagation.mcmc_tree_path = "/path/{tbin}/tree.root"
         
-        results = run_mcmc_propagation_tbins(cfg, n_workers=2, n_tbin_workers=2, max_entries=100)
+        results = run_mcmc_propagation_tbins(cfg, n_workers=2, n_tbin_workers=2, target_entries=100)
         self.assertTrue(results["success"])
         self.assertEqual(len(results["tbins"]), 2)
         self.assertIn("t010020", results["tbins"])
@@ -154,7 +154,7 @@ class TestDriverMacro(unittest.TestCase):
             mcmc_tree=None,
             n_workers=4,
             tbin_workers=3,
-            max_entries=50,
+            target_entries=50,
             output_file=None,
             run_dir=None,
             t_bin=None,
@@ -166,7 +166,7 @@ class TestDriverMacro(unittest.TestCase):
         _, kwargs = mock_prop_tbins.call_args
         self.assertEqual(kwargs["n_workers"], 4)
         self.assertEqual(kwargs["n_tbin_workers"], 3)
-        self.assertEqual(kwargs["max_entries"], 50)
+        self.assertEqual(kwargs["target_entries"], 50)
         self.assertEqual(kwargs["tbins"], ["t010020", "t020032"])
 
     @patch("moments2amplitudes.cli.plot_tbins_parallel")

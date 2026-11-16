@@ -88,7 +88,7 @@ multi_start:
 mcmc_propagation:
   enabled: false
   burn_in: 0
-  max_entries: 200
+  target_entries: 200
   stride: 1
   n_workers: 8
   n_tbin_workers: 5

@@ -509,11 +509,12 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         if "n_tbin_workers" in mcmc_dict and mcmc_dict["n_tbin_workers"] is not None
         else None
     )
+    target_entries_val = mcmc_dict.get("target_entries", mcmc_dict.get("max_entries", 200))
     mcmc_propagation = MCMCPropagationConfig(
         enabled=bool(mcmc_dict.get("enabled", False)),
         mcmc_tree_path=mcmc_dict.get("mcmc_tree_path", ""),
         burn_in=int(mcmc_dict.get("burn_in", 0)),
-        max_entries=int(mcmc_dict.get("max_entries", 200)),
+        target_entries=int(target_entries_val),
         stride=int(mcmc_dict.get("stride", 1)),
         auto_stride=bool(mcmc_dict.get("auto_stride", True)),
         n_workers=int(mcmc_dict["n_workers"]) if "n_workers" in mcmc_dict and mcmc_dict["n_workers"] is not None else get_default_max_workers(),
