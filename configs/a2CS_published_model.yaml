@@ -53,8 +53,8 @@ waves:
     name: "D-wave"
     type: "mass_dependent"
     model: "two_breit_wigner"
-    formula: "k1 / (Mass1^2 - s - i * Mass1 * Width1) + (k2 / (Mass2^2 - s - i * Mass2 * Width2)) * exp(i * phase)"
-    parameters: ["k1", "Mass1", "Width1", "k2", "Mass2", "Width2", "phase"]
+    formula: "(k1 / (Mass1^2 - s - i * Mass1 * Width1)) * exp(i * phase1) + (k2 / (Mass2^2 - s - i * Mass2 * Width2)) * exp(i * phase2)"
+    parameters: ["k1", "Mass1", "Width1", "phase1", "k2", "Mass2", "Width2", "phase2"]
     poly_order: -1
     resonances:
       - name: "a2_1320"
@@ -73,6 +73,8 @@ waves:
         width_fixed: true
         mass_limits: [1.55, 1.85]
         width_limits: [0.10, 0.40]
+        phase: 0.0
+        phase_fixed: false     # Floating relative phase
     init:
       strategy: "random"
       option: 1                # Add shared relative phase

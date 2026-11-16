@@ -54,6 +54,23 @@ class TestFormula(unittest.TestCase):
         self.assertIn("std::complex<double>((M2 * M2) - s, -M2 * w2)", expr)
         self.assertIn("std::polar(1.0, phase)", expr)
 
+    def test_translate_two_breit_wigner_two_phases(self):
+        formula = "(k1 / (Mass1^2 - s - i * Mass1 * Width1)) * exp(i * phase1) + (k2 / (Mass2^2 - s - i * Mass2 * Width2)) * exp(i * phase2)"
+        params = ["k1", "Mass1", "Width1", "phase1", "k2", "Mass2", "Width2", "phase2"]
+        param_lines, expr = translate_formula_to_cpp(formula, params)
+        self.assertIn("std::complex<double>((Mass1 * Mass1) - s, -Mass1 * Width1)", expr)
+        self.assertIn("std::polar(1.0, phase1)", expr)
+        self.assertIn("std::complex<double>((Mass2 * Mass2) - s, -Mass2 * Width2)", expr)
+        self.assertIn("std::polar(1.0, phase2)", expr)
+
+    def test_translate_two_breit_wigner_two_phases_with_kinematic_factor(self):
+        formula = "sqrt(rho_etapi) * ((k1 / (Mass1^2 - s - i * Mass1 * Width1)) * exp(i * phase1) + (k2 / (Mass2^2 - s - i * Mass2 * Width2)) * exp(i * phase2))"
+        params = ["k1", "Mass1", "Width1", "phase1", "k2", "Mass2", "Width2", "phase2"]
+        param_lines, expr = translate_formula_to_cpp(formula, params)
+        self.assertIn("std::sqrt(m2pw::MassDependentFunction::PhaseSpaceFactor(mass, 0.547853, 0.13957))", expr)
+        self.assertIn("std::polar(1.0, phase1)", expr)
+        self.assertIn("std::polar(1.0, phase2)", expr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -80,9 +80,10 @@ def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[
     # Check if formula matches Two Breit-Wigner form (with optional prefix, e.g. sqrt(rho_etapi) * (...))
     two_bw_regex = re.compile(
         r'^\s*(?:(?P<prefix>.+?)\s*\*\s*)?(?:\(\s*)?'
-        r'(?:\(\s*)?(?P<k1>[A-Za-z0-9_]+)\s*/\s*\(\s*(?P<m1>[A-Za-z0-9_]+)(?:\^2|\s*\*\s*(?P=m1))\s*-\s*s\s*-\s*i\s*\*\s*(?:(?P=m1)\s*\*\s*(?P<w1>[A-Za-z0-9_]+)|(?P<w1_b>[A-Za-z0-9_]+)\s*\*\s*(?P=m1))\s*\)(?:\s*\))?\s*\+\s*'
+        r'(?:\(\s*)?(?P<k1>[A-Za-z0-9_]+)\s*/\s*\(\s*(?P<m1>[A-Za-z0-9_]+)(?:\^2|\s*\*\s*(?P=m1))\s*-\s*s\s*-\s*i\s*\*\s*(?:(?P=m1)\s*\*\s*(?P<w1>[A-Za-z0-9_]+)|(?P<w1_b>[A-Za-z0-9_]+)\s*\*\s*(?P=m1))\s*\)(?:\s*\))?'
+        r'(?:\s*\*\s*exp\(\s*i\s*\*\s*(?P<phase1>[A-Za-z0-9_]+)\s*\))?\s*\+\s*'
         r'(?:\(\s*)?(?P<k2>[A-Za-z0-9_]+)\s*/\s*\(\s*(?P<m2>[A-Za-z0-9_]+)(?:\^2|\s*\*\s*(?P=m2))\s*-\s*s\s*-\s*i\s*\*\s*(?:(?P=m2)\s*\*\s*(?P<w2>[A-Za-z0-9_]+)|(?P<w2_b>[A-Za-z0-9_]+)\s*\*\s*(?P=m2))\s*\)(?:\s*\))?'
-        r'(?:\s*\*\s*exp\(\s*i\s*\*\s*(?P<phase>[A-Za-z0-9_]+)\s*\))?'
+        r'(?:\s*\*\s*exp\(\s*i\s*\*\s*(?P<phase2>[A-Za-z0-9_]+)\s*\))?'
         r'(?:\s*\))?\s*$'
     )
     two_bw_m = two_bw_regex.match(formula)
@@ -94,10 +95,14 @@ def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[
         k2 = two_bw_m.group("k2")
         m2_var = two_bw_m.group("m2")
         w2 = two_bw_m.group("w2") or two_bw_m.group("w2_b")
-        phase_var = two_bw_m.group("phase")
-        bw1_str = f"{k1} / std::complex<double>(({m1} * {m1}) - s, -{m1} * {w1})"
-        if phase_var:
-            bw2_str = f"({k2} / std::complex<double>(({m2_var} * {m2_var}) - s, -{m2_var} * {w2})) * std::polar(1.0, {phase_var})"
+        phase1_var = two_bw_m.group("phase1")
+        phase2_var = two_bw_m.group("phase2")
+        if phase1_var:
+            bw1_str = f"({k1} / std::complex<double>(({m1} * {m1}) - s, -{m1} * {w1})) * std::polar(1.0, {phase1_var})"
+        else:
+            bw1_str = f"{k1} / std::complex<double>(({m1} * {m1}) - s, -{m1} * {w1})"
+        if phase2_var:
+            bw2_str = f"({k2} / std::complex<double>(({m2_var} * {m2_var}) - s, -{m2_var} * {w2})) * std::polar(1.0, {phase2_var})"
         else:
             bw2_str = f"{k2} / std::complex<double>(({m2_var} * {m2_var}) - s, -{m2_var} * {w2})"
         core_expr = f"{bw1_str} + {bw2_str}"
@@ -397,7 +402,16 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                     f'        "MD_shareda_{res.name}_globalphase_flatte",',
                     f'        "MD_shareda_{res.name}_globalphase_bw",',
                     f'        "MD_sharedb_{res.name}_globalphase_flatte",',
-                    f'        "MD_sharedb_{res.name}_globalphase_bw"',
+                    f'        "MD_sharedb_{res.name}_globalphase_bw",',
+                    f'        "MD_shareda_{res.name}_globalphase1",',
+                    f'        "MD_shareda_{res.name}_globalphase2",',
+                    f'        "MD_sharedb_{res.name}_globalphase1",',
+                    f'        "MD_sharedb_{res.name}_globalphase2",',
+                    f'        "MD_{res.name}_globalphase1",',
+                    f'        "MD_{res.name}_globalphase2",',
+                    f'        "MD_{res.name}_phase",',
+                    f'        "MD_{res.name}_phase1",',
+                    f'        "MD_{res.name}_phase2"',
                     f'    }}) {{',
                     f'        if (paramManager.HasParameter(pName)) {{',
                     f'            paramManager.SetParameterInitialValue(pName, {fix_val});',
@@ -412,7 +426,20 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                     f'    for (const char* pName : {{',
                     f'        "MD_shareda_{res.name}_globalphase",',
                     f'        "MD_sharedb_{res.name}_globalphase",',
-                    f'        "MD_{res.name}_globalphase"',
+                    f'        "MD_{res.name}_globalphase",',
+                    f'        "MD_shareda_{res.name}_globalphase_flatte",',
+                    f'        "MD_shareda_{res.name}_globalphase_bw",',
+                    f'        "MD_sharedb_{res.name}_globalphase_flatte",',
+                    f'        "MD_sharedb_{res.name}_globalphase_bw",',
+                    f'        "MD_shareda_{res.name}_globalphase1",',
+                    f'        "MD_shareda_{res.name}_globalphase2",',
+                    f'        "MD_sharedb_{res.name}_globalphase1",',
+                    f'        "MD_sharedb_{res.name}_globalphase2",',
+                    f'        "MD_{res.name}_globalphase1",',
+                    f'        "MD_{res.name}_globalphase2",',
+                    f'        "MD_{res.name}_phase",',
+                    f'        "MD_{res.name}_phase1",',
+                    f'        "MD_{res.name}_phase2"',
                     f'    }}) {{',
                     f'        if (paramManager.HasParameter(pName)) {{',
                     f'            paramManager.SetParameterInitialValue(pName, {init_val});',
@@ -426,7 +453,20 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                     f'    for (const char* pName : {{',
                     f'        "MD_shareda_{res.name}_globalphase",',
                     f'        "MD_sharedb_{res.name}_globalphase",',
-                    f'        "MD_{res.name}_globalphase"',
+                    f'        "MD_{res.name}_globalphase",',
+                    f'        "MD_shareda_{res.name}_globalphase_flatte",',
+                    f'        "MD_shareda_{res.name}_globalphase_bw",',
+                    f'        "MD_sharedb_{res.name}_globalphase_flatte",',
+                    f'        "MD_sharedb_{res.name}_globalphase_bw",',
+                    f'        "MD_shareda_{res.name}_globalphase1",',
+                    f'        "MD_shareda_{res.name}_globalphase2",',
+                    f'        "MD_sharedb_{res.name}_globalphase1",',
+                    f'        "MD_sharedb_{res.name}_globalphase2",',
+                    f'        "MD_{res.name}_globalphase1",',
+                    f'        "MD_{res.name}_globalphase2",',
+                    f'        "MD_{res.name}_phase",',
+                    f'        "MD_{res.name}_phase1",',
+                    f'        "MD_{res.name}_phase2"',
                     f'    }}) {{',
                     f'        if (paramManager.HasParameter(pName)) {{',
                     f'            paramManager.SetParameterLimits(pName, {res.phase_limits[0]}, {res.phase_limits[1]});',
