@@ -391,27 +391,58 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                     lines.append(f'    paramManager.SetGaussianConstraint("{par_key}", {constr[0]}, {constr[1]});')
 
             # Phase handling for resonance
+            res_shared_opt = 2
+            if res.shared_phase is not None:
+                if isinstance(res.shared_phase, bool):
+                    res_shared_opt = 2 if res.shared_phase else 0
+                elif isinstance(res.shared_phase, str):
+                    s = res.shared_phase.strip().lower()
+                    if s in ("true", "1", "yes", "reflectivity", "by_reflectivity", "per_reflectivity"):
+                        res_shared_opt = 2
+                    elif s in ("l", "by_l", "same_l", "same-l"):
+                        res_shared_opt = 1
+                    else:
+                        res_shared_opt = 0
+                elif isinstance(res.shared_phase, (int, float)):
+                    res_shared_opt = int(res.shared_phase)
+            elif w.init.option > 0:
+                res_shared_opt = w.init.option
+
+            pnames_list: List[str] = []
+            if res_shared_opt == 2:
+                pnames_list.extend([
+                    f'"MD_shareda_{res.name}_globalphase"',
+                    f'"MD_sharedb_{res.name}_globalphase"',
+                    f'"MD_shareda_{res.name}_globalphase_flatte"',
+                    f'"MD_shareda_{res.name}_globalphase_bw"',
+                    f'"MD_sharedb_{res.name}_globalphase_flatte"',
+                    f'"MD_sharedb_{res.name}_globalphase_bw"',
+                    f'"MD_shareda_{res.name}_globalphase1"',
+                    f'"MD_shareda_{res.name}_globalphase2"',
+                    f'"MD_sharedb_{res.name}_globalphase1"',
+                    f'"MD_sharedb_{res.name}_globalphase2"',
+                ])
+            elif res_shared_opt == 1:
+                pnames_list.extend([
+                    f'"MD_{res.name}_globalphase"',
+                    f'"MD_{res.name}_globalphase_flatte"',
+                    f'"MD_{res.name}_globalphase_bw"',
+                    f'"MD_{res.name}_globalphase1"',
+                    f'"MD_{res.name}_globalphase2"',
+                ])
+            pnames_list.extend([
+                f'"MD_{res.name}_phase"',
+                f'"MD_{res.name}_phase1"',
+                f'"MD_{res.name}_phase2"',
+            ])
+            cand_pnames_str = ",\n        ".join(pnames_list)
+
             if res.phase_fixed:
                 fix_val = res.fixed_phase if res.fixed_phase is not None else (res.phase if res.phase is not None else 0.0)
                 lines.extend([
                     f'    // Fixed phase for resonance {res.name} (phases fixed to {fix_val})',
                     f'    for (const char* pName : {{',
-                    f'        "MD_shareda_{res.name}_globalphase",',
-                    f'        "MD_sharedb_{res.name}_globalphase",',
-                    f'        "MD_{res.name}_globalphase",',
-                    f'        "MD_shareda_{res.name}_globalphase_flatte",',
-                    f'        "MD_shareda_{res.name}_globalphase_bw",',
-                    f'        "MD_sharedb_{res.name}_globalphase_flatte",',
-                    f'        "MD_sharedb_{res.name}_globalphase_bw",',
-                    f'        "MD_shareda_{res.name}_globalphase1",',
-                    f'        "MD_shareda_{res.name}_globalphase2",',
-                    f'        "MD_sharedb_{res.name}_globalphase1",',
-                    f'        "MD_sharedb_{res.name}_globalphase2",',
-                    f'        "MD_{res.name}_globalphase1",',
-                    f'        "MD_{res.name}_globalphase2",',
-                    f'        "MD_{res.name}_phase",',
-                    f'        "MD_{res.name}_phase1",',
-                    f'        "MD_{res.name}_phase2"',
+                    f'        {cand_pnames_str}',
                     f'    }}) {{',
                     f'        if (paramManager.HasParameter(pName)) {{',
                     f'            paramManager.SetParameterInitialValue(pName, {fix_val});',
@@ -424,22 +455,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                 lines.extend([
                     f'    // Initial phase for resonance {res.name}',
                     f'    for (const char* pName : {{',
-                    f'        "MD_shareda_{res.name}_globalphase",',
-                    f'        "MD_sharedb_{res.name}_globalphase",',
-                    f'        "MD_{res.name}_globalphase",',
-                    f'        "MD_shareda_{res.name}_globalphase_flatte",',
-                    f'        "MD_shareda_{res.name}_globalphase_bw",',
-                    f'        "MD_sharedb_{res.name}_globalphase_flatte",',
-                    f'        "MD_sharedb_{res.name}_globalphase_bw",',
-                    f'        "MD_shareda_{res.name}_globalphase1",',
-                    f'        "MD_shareda_{res.name}_globalphase2",',
-                    f'        "MD_sharedb_{res.name}_globalphase1",',
-                    f'        "MD_sharedb_{res.name}_globalphase2",',
-                    f'        "MD_{res.name}_globalphase1",',
-                    f'        "MD_{res.name}_globalphase2",',
-                    f'        "MD_{res.name}_phase",',
-                    f'        "MD_{res.name}_phase1",',
-                    f'        "MD_{res.name}_phase2"',
+                    f'        {cand_pnames_str}',
                     f'    }}) {{',
                     f'        if (paramManager.HasParameter(pName)) {{',
                     f'            paramManager.SetParameterInitialValue(pName, {init_val});',
@@ -451,22 +467,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                 lines.extend([
                     f'    // Set phase limits for resonance {res.name}',
                     f'    for (const char* pName : {{',
-                    f'        "MD_shareda_{res.name}_globalphase",',
-                    f'        "MD_sharedb_{res.name}_globalphase",',
-                    f'        "MD_{res.name}_globalphase",',
-                    f'        "MD_shareda_{res.name}_globalphase_flatte",',
-                    f'        "MD_shareda_{res.name}_globalphase_bw",',
-                    f'        "MD_sharedb_{res.name}_globalphase_flatte",',
-                    f'        "MD_sharedb_{res.name}_globalphase_bw",',
-                    f'        "MD_shareda_{res.name}_globalphase1",',
-                    f'        "MD_shareda_{res.name}_globalphase2",',
-                    f'        "MD_sharedb_{res.name}_globalphase1",',
-                    f'        "MD_sharedb_{res.name}_globalphase2",',
-                    f'        "MD_{res.name}_globalphase1",',
-                    f'        "MD_{res.name}_globalphase2",',
-                    f'        "MD_{res.name}_phase",',
-                    f'        "MD_{res.name}_phase1",',
-                    f'        "MD_{res.name}_phase2"',
+                    f'        {cand_pnames_str}',
                     f'    }}) {{',
                     f'        if (paramManager.HasParameter(pName)) {{',
                     f'            paramManager.SetParameterLimits(pName, {res.phase_limits[0]}, {res.phase_limits[1]});',

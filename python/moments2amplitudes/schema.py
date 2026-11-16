@@ -130,6 +130,7 @@ class ResonanceConfig:
     phase_fixed: bool = False
     fixed_phase: Optional[float] = None
     phase_limits: Optional[List[float]] = None
+    shared_phase: Optional[Union[bool, str, int]] = None
 
 
 @dataclass

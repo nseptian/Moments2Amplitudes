@@ -66,6 +66,7 @@ waves:
         width_limits: [0.05, 0.25]
         phase: 0.0
         phase_fixed: true      # General phase set to 0.0 to fix as reference
+        shared_phase: true     # Shared phases among waves in the same reflectivity
     init:
       strategy: "from_file"
       file_path: "logs_a2CS_dbw_kinematic/{tbin}/fit/nominal_best.root"

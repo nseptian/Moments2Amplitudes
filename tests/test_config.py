@@ -143,6 +143,27 @@ class TestConfig(unittest.TestCase):
             "resonances": [{"name": "a2_1320", "phase": 0.0}]
         })
         self.assertTrue(w6.resonances[0].phase_fixed)
+
+        # 3. Test resonance-level shared_phase options
+        w7 = parse_wave_config({
+            "l": 2, "name": "D-wave", "type": "mass_dependent",
+            "resonances": [
+                {"name": "a2_1320", "phase": 0.0, "phase_fixed": True, "shared_phase": True},
+                {"name": "a2_1700", "phase": 0.0, "phase_fixed": False, "shared_phase": False}
+            ]
+        })
+        self.assertTrue(w7.resonances[0].shared_phase)
+        self.assertFalse(w7.resonances[1].shared_phase)
+        self.assertEqual(w7.init.option, 2)
+
+        w8 = parse_wave_config({
+            "l": 2, "name": "D-wave", "type": "mass_dependent",
+            "resonances": [
+                {"name": "a2_1320", "shared_phase": "l"}
+            ]
+        })
+        self.assertEqual(w8.resonances[0].shared_phase, "l")
+        self.assertEqual(w8.init.option, 1)
         self.assertEqual(w6.resonances[0].fixed_phase, 0.0)
 
         # General floating phase

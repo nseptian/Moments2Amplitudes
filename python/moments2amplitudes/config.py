@@ -195,6 +195,12 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
 
         res_fixed_val = phase_val if phase_fixed else None
 
+        res_shared_phase_raw = None
+        for key in ("shared_phase", "shared_phase_by_reflectivity", "shared_phase_per_reflectivity", "shared_phases_by_reflectivity"):
+            if key in res_dict:
+                res_shared_phase_raw = res_dict[key]
+                break
+
         resonances.append(
             ResonanceConfig(
                 name=res_dict.get("name", "resonance"),
@@ -209,6 +215,7 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
                 phase_fixed=phase_fixed,
                 fixed_phase=res_fixed_val,
                 phase_limits=phase_limits,
+                shared_phase=res_shared_phase_raw,
             )
         )
 
@@ -247,23 +254,46 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
             shared_phase_raw = init_dict[key]
             break
 
-    option = int(init_dict.get("option", 0))
+    # If not set at wave/init level, inspect resonances
+    if shared_phase_raw is None:
+        for r in resonances:
+            if r.shared_phase is not None:
+                shared_phase_raw = r.shared_phase
+                break
+
+    # Propagate shared_phase to resonances that didn't specify it
     if shared_phase_raw is not None:
-        if isinstance(shared_phase_raw, bool):
-            option = 2 if shared_phase_raw else 0
-        elif isinstance(shared_phase_raw, str):
-            s = shared_phase_raw.strip().lower()
+        for r in resonances:
+            if r.shared_phase is None:
+                r.shared_phase = shared_phase_raw
+
+    def _parse_shared_phase_opt(val) -> int:
+        if isinstance(val, bool):
+            return 2 if val else 0
+        elif isinstance(val, str):
+            s = val.strip().lower()
             if s in ("true", "1", "yes", "reflectivity", "by_reflectivity", "per_reflectivity", "shared_reflectivity"):
-                option = 2
+                return 2
             elif s in ("l", "by_l", "same_l", "same-l"):
-                option = 1
+                return 1
             elif s in ("false", "0", "no", "none", "disabled"):
-                option = 0
-        elif isinstance(shared_phase_raw, (int, float)):
-            option = int(shared_phase_raw)
-    elif (any(r.phase_fixed for r in resonances) or (wave_phase_val is not None and wave_phase_fixed)) and "option" not in init_dict:
-        # Default to shared phase per reflectivity when a phase is fixed
-        option = 2
+                return 0
+        elif isinstance(val, (int, float)):
+            return int(val)
+        return 0
+
+    option = int(init_dict["option"]) if "option" in init_dict else None
+    if option is None:
+        res_opts = [_parse_shared_phase_opt(r.shared_phase) for r in resonances if r.shared_phase is not None]
+        if res_opts:
+            option = max(res_opts)
+        elif shared_phase_raw is not None:
+            option = _parse_shared_phase_opt(shared_phase_raw)
+        elif (any(r.phase_fixed for r in resonances) or (wave_phase_val is not None and wave_phase_fixed)):
+            # Default to shared phase per reflectivity when a phase is fixed
+            option = 2
+        else:
+            option = 0
 
     strat_str = init_dict.get("strategy", "default").lower()
     fixed_zero = bool(init_dict.get("fixed_zero", False))

@@ -66,6 +66,7 @@ waves:
         width_limits: [0.05, 0.25]
         phase: 0.0
         phase_fixed: true      # General phase set to 0.0 to fix as reference
+        shared_phase: true     # Shared phase among waves in the same reflectivity
       - name: "a2_1700"
         mass: 1.722
         width: 0.247
@@ -75,6 +76,7 @@ waves:
         width_limits: [0.10, 0.40]
         phase: 0.0
         phase_fixed: false     # Floating relative phase
+        shared_phase: true     # Shared phase among waves in the same reflectivity
     init:
       strategy: "random"
       option: 1                # Add shared relative phase
