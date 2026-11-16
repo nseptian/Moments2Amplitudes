@@ -701,7 +701,8 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         '    } else if (TString(mode) == "mcmc") {',
         "        std::cout << \"[Worker] Running MCMC propagation entries [\" << mcmcStart << \", \" << mcmcEnd << \")...\" << std::endl;",
         '        TString outFile = Form("%s/mcmc_worker_%d.root", outDir, seed);',
-        f"        fitter.FitMCMCTree(paramManager, moms, outFile, mcmcStart, mcmcEnd, {config.mcmc_propagation.stride}, outDir);",
+        '        Long64_t nEntriesToFit = (mcmcEnd > mcmcStart) ? (mcmcEnd - mcmcStart) : mcmcEnd;',
+        f"        fitter.FitMCMCTree(paramManager, moms, outFile, mcmcStart, nEntriesToFit, {config.mcmc_propagation.stride}, outDir);",
         '        std::cout << "[RESULT_MCMC] WORKER=" << seed',
         '                  << " ENTRIES=" << (mcmcEnd - mcmcStart)',
         '                  << " TIME=" << Form("%.2f", timer.RealTime())',
@@ -1143,6 +1144,41 @@ def run_multi_start_tbins(
 _mcmc_plot_lock = threading.Lock()
 
 
+def get_min_available_mcmc_entries(config: FitConfig, t_bin: Optional[str] = None) -> Optional[int]:
+    """Inspect the moment files across all mass bins for a t-bin and return the minimum number of available MCMC entries."""
+    try:
+        import ROOT
+        moments_dir = Path(config.dataset.get_moments_dir(t_bin))
+        if not moments_dir.is_dir():
+            return None
+        min_entries = None
+        bin_centers = config.dataset.mass_bins.get_bin_centers()
+        if not bin_centers:
+            return None
+        for mass in bin_centers:
+            if config.dataset.var_bin_prefix:
+                dir_name = f"{config.dataset.bin_prefix}{mass:.6f}_{config.dataset.var_bin_prefix}_"
+            else:
+                dir_name = f"{config.dataset.bin_prefix}{mass:.6f}_"
+            fpath = moments_dir / dir_name / config.dataset.results_filename
+            if not fpath.is_file():
+                continue
+            tf = ROOT.TFile.Open(str(fpath))
+            if not tf or tf.IsZombie():
+                if tf:
+                    tf.Close()
+                continue
+            tree = tf.Get("MCMCTree")
+            if tree and not tree.IsZombie():
+                n = tree.GetEntries()
+                if min_entries is None or n < min_entries:
+                    min_entries = n
+            tf.Close()
+        return min_entries
+    except Exception:
+        return None
+
+
 def run_mcmc_propagation(
     config: FitConfig,
     best_params_file: Optional[str] = None,
@@ -1165,8 +1201,31 @@ def run_mcmc_propagation(
     workers = n_workers if n_workers is not None else (config.mcmc_propagation.n_workers or half_cpus)
     if n_workers is None:
         workers = min(workers, half_cpus)
-    total_entries = max_entries if max_entries is not None else config.mcmc_propagation.max_entries
+
     burn_in = config.mcmc_propagation.burn_in
+    raw_entries = max_entries if max_entries is not None else config.mcmc_propagation.max_entries
+
+    # Account for differing MCMC entries across mass bins by finding the minimum available
+    min_avail = get_min_available_mcmc_entries(config, config.dataset.t_bin)
+    if raw_entries is not None and raw_entries > 0:
+        total_entries = raw_entries
+        if min_avail is not None and (burn_in + total_entries) > min_avail:
+            clamped = max(0, min_avail - burn_in)
+            tag_pfx = f"{tag} " if tag else ""
+            print(f"{tag_pfx}[INFO] Requested {total_entries} entries (+ burn-in {burn_in}) exceeds minimum available MCMC samples ({min_avail}) across mass bins. Clamping to {clamped}.")
+            total_entries = clamped
+    elif raw_entries == -1 or (max_entries is None and config.mcmc_propagation.max_entries == -1):
+        if min_avail is not None:
+            total_entries = max(0, min_avail - burn_in)
+        else:
+            total_entries = 200
+    else:
+        total_entries = 200
+
+    if total_entries <= 0:
+        raise ValueError(f"No available MCMC entries to propagate (burn_in={burn_in}, min_available={min_avail}).")
+
+    workers = max(1, min(workers, total_entries))
     out_file = Path(output_file or rundir.mcmc_propagated_root).resolve()
 
     # Determine best parameters file
