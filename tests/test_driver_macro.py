@@ -83,24 +83,24 @@ class TestDriverMacro(unittest.TestCase):
         self.assertIn('paramManager.SetParameterInitialValue("MD_shared_a2_1320_1700_Width2", 0.38);', content)
         self.assertIn('paramManager.FixParameter("MD_shared_a2_1320_1700_Width2");', content)
 
-        # Check RunWorker has mcmcStride parameter and FitMCMCTree uses it
+        # Check RunWorker has mcmcStride parameter and FitMCMCTree uses C++ adaptive stride
         self.assertIn("int mcmcStride = 1", content)
-        self.assertIn("fitter.FitMCMCTree(paramManager, moms, outFile, mcmcStart, nEntriesToFit, mcmcStride, outDir);", content)
+        self.assertIn("Long64_t totalAvailable = moms.GetMCMCEntries();", content)
+        self.assertIn("if (stride <= 0) {", content)
+        self.assertIn("fitter.FitMCMCTree(paramManager, moms, outFile, startEntry, nEntriesToFit, stride, outDir);", content)
 
-    @patch("moments2amplitudes.driver.get_min_available_mcmc_entries")
     @patch("moments2amplitudes.driver.ensure_aclic_updated")
     @patch("moments2amplitudes.driver.execute_root_command")
     @patch("subprocess.run")
-    def test_auto_stride_different_bin_totals(self, mock_subp, mock_exec, mock_aclic, mock_min_entries):
+    def test_auto_stride_different_bin_totals(self, mock_subp, mock_exec, mock_aclic):
         from moments2amplitudes.driver import run_mcmc_propagation
         mock_subp.return_value.returncode = 0
         mock_exec.return_value = (0, "")
         cfg = load_config(Path("configs/a2CS_published_model.yaml"))
         cfg.mcmc_propagation.burn_in = 0
 
-        # Scenario 1: Bin with 1582 entries, target 200 draws -> stride = 1582 // 200 = 7 (by default)
+        # Scenario 1: By default auto-stride passes eff_stride=0 to trigger C++ runtime adaptive thinning
         from moments2amplitudes.rundir import get_run_directory
-        mock_min_entries.return_value = 1582
         with tempfile.TemporaryDirectory() as td:
             rundir = get_run_directory(cfg, td)
             rundir.ensure_directories()
@@ -109,28 +109,20 @@ class TestDriverMacro(unittest.TestCase):
             (rundir.root / "central_best_params.root").touch()
             with patch("moments2amplitudes.driver.run_all_diagnostics_and_plots"):
                 run_mcmc_propagation(cfg, run_dir=td, n_workers=4, target_entries=200)
-            for call in mock_exec.call_args_list:
+            self.assertEqual(mock_exec.call_count, 4)
+            # Verify workers partitioned in draw space [0, 200) across 4 workers: [0, 50), [50, 100), [100, 150), [150, 200)
+            calls = mock_exec.call_args_list
+            expected_spans = [(0, 0, 50), (1, 50, 100), (2, 100, 150), (3, 150, 200)]
+            for (call, (exp_w, exp_start, exp_end)) in zip(calls, expected_spans):
                 args_tuple = call[0][1]
-                self.assertEqual(args_tuple[6], 7)  # eff_stride = 7
+                self.assertEqual(args_tuple[0], "mcmc")
+                self.assertEqual(args_tuple[1], exp_w)
+                self.assertEqual(args_tuple[2], exp_start)
+                self.assertEqual(args_tuple[3], exp_end)
+                self.assertEqual(args_tuple[6], 0)  # eff_stride = 0 (auto-stride)
 
-        # Scenario 2: Bin with 2500 entries, target 200 draws -> stride = 2500 // 200 = 12 (by default)
+        # Scenario 2: Explicit manual stride override takes precedence
         mock_exec.reset_mock()
-        mock_min_entries.return_value = 2500
-        with tempfile.TemporaryDirectory() as td:
-            rundir = get_run_directory(cfg, td)
-            rundir.ensure_directories()
-            for w in range(4):
-                (rundir.mcmc_workers_dir / f"mcmc_worker_{w}.root").touch()
-            (rundir.root / "central_best_params.root").touch()
-            with patch("moments2amplitudes.driver.run_all_diagnostics_and_plots"):
-                run_mcmc_propagation(cfg, run_dir=td, n_workers=4, target_entries=200)
-            for call in mock_exec.call_args_list:
-                args_tuple = call[0][1]
-                self.assertEqual(args_tuple[6], 12)  # eff_stride = 12
-
-        # Scenario 3: Explicit manual stride override takes precedence
-        mock_exec.reset_mock()
-        mock_min_entries.return_value = 2500
         with tempfile.TemporaryDirectory() as td:
             rundir = get_run_directory(cfg, td)
             rundir.ensure_directories()
@@ -139,6 +131,7 @@ class TestDriverMacro(unittest.TestCase):
             (rundir.root / "central_best_params.root").touch()
             with patch("moments2amplitudes.driver.run_all_diagnostics_and_plots"):
                 run_mcmc_propagation(cfg, run_dir=td, n_workers=4, target_entries=200, stride=3)
+            self.assertEqual(mock_exec.call_count, 4)
             for call in mock_exec.call_args_list:
                 args_tuple = call[0][1]
                 self.assertEqual(args_tuple[6], 3)  # eff_stride = 3

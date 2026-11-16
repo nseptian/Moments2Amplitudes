@@ -11,6 +11,7 @@ import copy
 import time
 import subprocess
 import threading
+import shlex
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Any
 import numpy as np
@@ -661,6 +662,17 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                         f'    }}',
                     ])
 
+    # Determine burn-in and target draws for MCMC propagation in C++
+    mcmc_burn_in = getattr(config.mcmc_propagation, "burn_in", 0) if config.mcmc_propagation else 0
+    raw_target = (
+        getattr(config.mcmc_propagation, "target_entries", None)
+        if config.mcmc_propagation
+        else None
+    )
+    if raw_target is None and config.mcmc_propagation:
+        raw_target = getattr(config.mcmc_propagation, "max_entries", None)
+    mcmc_target_draws = raw_target if (raw_target is not None and raw_target > 0) else 200
+
     # If bestParamsFile is provided in MCMC mode, load best parameters into paramManager
     lines.extend([
         "",
@@ -699,10 +711,28 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         '                  << " TIME=" << Form("%.2f", timer.RealTime())',
         '                  << " OUT=" << outFile << std::endl;',
         '    } else if (TString(mode) == "mcmc") {',
-        "        std::cout << \"[Worker] Running MCMC propagation entries [\" << mcmcStart << \", \" << mcmcEnd << \")...\" << std::endl;",
         '        TString outFile = Form("%s/mcmc_worker_%d.root", outDir, seed);',
-        '        Long64_t nEntriesToFit = (mcmcEnd > mcmcStart) ? (mcmcEnd - mcmcStart) : mcmcEnd;',
-        "        fitter.FitMCMCTree(paramManager, moms, outFile, mcmcStart, nEntriesToFit, mcmcStride, outDir);",
+        f'        Long64_t totalAvailable = moms.GetMCMCEntries();',
+        f'        Long64_t burnIn = {mcmc_burn_in};',
+        '        int stride = mcmcStride;',
+        '        Long64_t startEntry = mcmcStart;',
+        '        Long64_t nEntriesToFit = mcmcEnd - mcmcStart;',
+        '        if (stride <= 0) {',
+        f'            Long64_t targetDraws = {mcmc_target_draws};',
+        '            Long64_t avail = totalAvailable - burnIn;',
+        '            stride = (avail > 0 && targetDraws > 0) ? (int)(avail / targetDraws) : 1;',
+        '            if (stride < 1) stride = 1;',
+        '            startEntry = burnIn + mcmcStart * stride;',
+        '            nEntriesToFit = (mcmcEnd - mcmcStart) * stride;',
+        '        } else {',
+        '            startEntry = burnIn + mcmcStart * stride;',
+        '            nEntriesToFit = (mcmcEnd - mcmcStart) * stride;',
+        '        }',
+        '        std::cout << "[Worker " << seed << "] Running MCMC propagation draws ["',
+        '                  << mcmcStart << ", " << mcmcEnd << ") -> entries ["',
+        '                  << startEntry << ", " << (startEntry + nEntriesToFit)',
+        '                  << ") stride=" << stride << " (avail=" << totalAvailable << ")..." << std::endl;',
+        '        fitter.FitMCMCTree(paramManager, moms, outFile, startEntry, nEntriesToFit, stride, outDir);',
         '        std::cout << "[RESULT_MCMC] WORKER=" << seed',
         '                  << " ENTRIES=" << (mcmcEnd - mcmcStart)',
         '                  << " TIME=" << Form("%.2f", timer.RealTime())',
@@ -1144,41 +1174,6 @@ def run_multi_start_tbins(
 _mcmc_plot_lock = threading.Lock()
 
 
-def get_min_available_mcmc_entries(config: FitConfig, t_bin: Optional[str] = None) -> Optional[int]:
-    """Inspect the moment files across all mass bins for a t-bin and return the minimum number of available MCMC entries."""
-    try:
-        import ROOT
-        moments_dir = Path(config.dataset.get_moments_dir(t_bin))
-        if not moments_dir.is_dir():
-            return None
-        min_entries = None
-        bin_centers = config.dataset.mass_bins.get_bin_centers()
-        if not bin_centers:
-            return None
-        for mass in bin_centers:
-            if config.dataset.var_bin_prefix:
-                dir_name = f"{config.dataset.bin_prefix}{mass:.6f}_{config.dataset.var_bin_prefix}_"
-            else:
-                dir_name = f"{config.dataset.bin_prefix}{mass:.6f}_"
-            fpath = moments_dir / dir_name / config.dataset.results_filename
-            if not fpath.is_file():
-                continue
-            tf = ROOT.TFile.Open(str(fpath))
-            if not tf or tf.IsZombie():
-                if tf:
-                    tf.Close()
-                continue
-            tree = tf.Get("MCMCTree")
-            if tree and not tree.IsZombie():
-                n = tree.GetEntries()
-                if min_entries is None or n < min_entries:
-                    min_entries = n
-            tf.Close()
-        return min_entries
-    except Exception:
-        return None
-
-
 def run_mcmc_propagation(
     config: FitConfig,
     best_params_file: Optional[str] = None,
@@ -1193,6 +1188,8 @@ def run_mcmc_propagation(
 ) -> Dict[str, Any]:
     """
     Run parallel MCMC posterior uncertainty propagation across workers and merge with hadd.
+    Workers are partitioned in draw space [0, target_draws), and adaptive stride is computed
+    directly in C++ inside worker.C via moms.GetMCMCEntries().
     """
     rundir = get_run_directory(config, run_dir)
     rundir.ensure_directories()
@@ -1209,36 +1206,15 @@ def run_mcmc_propagation(
     raw_entries = target_entries if target_entries is not None else (
         max_entries if max_entries is not None else config.mcmc_propagation.target_entries
     )
-
-    # Account for differing MCMC entries across mass bins by finding the minimum available
-    min_avail = get_min_available_mcmc_entries(config, config.dataset.t_bin)
-    avail_after_burnin = (min_avail - burn_in) if min_avail is not None else None
-
-    # Determine desired number of entries to draw
     if raw_entries is not None and raw_entries > 0:
         target_draws = raw_entries
     else:
         target_draws = 200
 
-    # Adaptive stride calculation (always active by default):
-    # Span the available chain so all bins draw target_draws even with different original total entries
     manual_stride = stride if stride is not None else getattr(config.mcmc_propagation, "stride", None)
-    if manual_stride is not None:
-        eff_stride = max(1, manual_stride)
-    elif avail_after_burnin is not None and target_draws > 0:
-        eff_stride = max(1, avail_after_burnin // target_draws)
-    else:
-        eff_stride = 1
+    eff_stride = max(1, manual_stride) if (manual_stride is not None and manual_stride > 0) else 0
 
-    if avail_after_burnin is not None:
-        total_draws = min(target_draws, avail_after_burnin // eff_stride)
-    else:
-        total_draws = target_draws
-
-    if total_draws <= 0:
-        raise ValueError(f"No available MCMC entries to propagate (burn_in={burn_in}, min_available={min_avail}).")
-
-    workers = max(1, min(workers, total_draws))
+    workers = max(1, min(workers, target_draws))
     out_file = Path(output_file or rundir.mcmc_propagated_root).resolve()
 
     # Determine best parameters file
@@ -1263,28 +1239,26 @@ def run_mcmc_propagation(
     generate_root_macro(config, macro_path)
 
     tag_str = f"{tag} " if tag else ""
+    stride_str = f"{eff_stride}" if eff_stride > 0 else "auto"
     print(f"\n=======================================================")
     print(f" {tag_str}Moments2Amplitudes MCMC Propagation")
     print(f" Project:      {config.project.name}")
-    print(f" Target Draws: {total_draws} (stride: {eff_stride}, burn-in: {burn_in})")
-    if min_avail is not None:
-        print(f" Chain Avail:  {min_avail} entries (across mass bins)")
+    print(f" Target Draws: {target_draws} (stride: {stride_str}, burn-in: {burn_in})")
     print(f" Workers:      {workers}")
     print(f" Best Params:  {best_params_file}")
     print(f" Output File:  {out_file}")
     print(f"=======================================================\n")
 
-    # Compute entry chunks per worker using eff_stride
-    draws_per_worker = total_draws // workers
-    rem_draws = total_draws % workers
-    worker_tasks: List[Tuple[int, int, int]] = []  # (worker_id, start_entry, end_entry)
-    curr_start = burn_in
+    # Partition draws evenly across workers in draw space [0, target_draws)
+    draws_per_worker = target_draws // workers
+    rem_draws = target_draws % workers
+    worker_tasks: List[Tuple[int, int, int]] = []  # (worker_id, start_draw, end_draw)
+    curr_draw = 0
     for w in range(workers):
         w_draws = draws_per_worker + (1 if w < rem_draws else 0)
-        w_span = w_draws * eff_stride
-        w_end = curr_start + w_span
-        worker_tasks.append((w, curr_start, w_end))
-        curr_start = w_end
+        w_end = curr_draw + w_draws
+        worker_tasks.append((w, curr_draw, w_end))
+        curr_draw = w_end
 
     worker_outputs: List[str] = []
     import concurrent.futures
@@ -1299,8 +1273,8 @@ def run_mcmc_propagation(
             config,
         )
         out_root = str(rundir.mcmc_workers_dir / f"mcmc_worker_{wid}.root")
-        n_fits = (wend - wstart + eff_stride - 1) // eff_stride
-        return {"worker_id": wid, "ret_code": ret_code, "output_file": out_root, "entries": n_fits}
+        n_draws = wend - wstart
+        return {"worker_id": wid, "ret_code": ret_code, "output_file": out_root, "entries": n_draws}
 
     start_time = time.time()
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
@@ -1319,9 +1293,13 @@ def run_mcmc_propagation(
         raise RuntimeError("No MCMC worker root files were generated.")
 
     print(f"{tag}[Merge] Merging {len(worker_outputs)} root files with hadd -> {out_file}...")
-    rootsys_val = resolve_rootsys(config)
-    hadd_bin = str(Path(rootsys_val) / "bin" / "hadd") if (Path(rootsys_val) / "bin" / "hadd").is_file() else "hadd"
-    hadd_cmd = [hadd_bin, "-f", str(out_file)] + worker_outputs
+    rootsys = resolve_rootsys(config)
+    thisroot = Path(rootsys) / "bin" / "thisroot.sh"
+    inputs_str = " ".join(shlex.quote(w) for w in worker_outputs)
+    if thisroot.is_file():
+        hadd_cmd = ["bash", "-c", f'source "{thisroot}" && hadd -f "{out_file}" {inputs_str}']
+    else:
+        hadd_cmd = ["hadd", "-f", str(out_file)] + worker_outputs
     hadd_env = get_root_subprocess_env(config)
     hadd_res = subprocess.run(hadd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=hadd_env)
     if hadd_res.returncode != 0:

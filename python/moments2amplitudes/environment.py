@@ -11,7 +11,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, Optional, Any
 
-DEFAULT_ROOTSYS = "/d/grid17/septian/root_v6-36-08_cuda_install"
+DEFAULT_ROOTSYS = "/d/grid17/septian/root_v6-36-08_cuda_build"
 DEFAULT_BRUFIT = "/d/grid17/septian/brufit_dev/brufit_negative"
 
 
