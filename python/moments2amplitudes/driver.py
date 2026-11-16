@@ -97,6 +97,22 @@ def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[
         w2 = two_bw_m.group("w2") or two_bw_m.group("w2_b")
         phase1_var = two_bw_m.group("phase1")
         phase2_var = two_bw_m.group("phase2")
+        if phase1_var and phase2_var and "phase1" in parameters and "phase2" in parameters:
+            # When both phase1 and phase2 are listed in parameters, support both 8-param custom
+            # callers and 7-param TwoBreitWigner callers where phase1 is reference (fixed to 0)
+            # and phase2 is the relative phase passed as p[6].
+            param_lines = [
+                "const double s = mass * mass;",
+                f"const double {k1} = (p.size() > 0) ? p[0] : 0.0;",
+                f"const double {m1} = (p.size() > 1) ? p[1] : 0.0;",
+                f"const double {w1} = (p.size() > 2) ? p[2] : 0.0;",
+                f"const double {phase1_var} = (p.size() > 7) ? p[3] : 0.0; // Reference phase (fixed to 0)",
+                f"const double {k2} = (p.size() > 7) ? p[4] : ((p.size() > 3) ? p[3] : 0.0);",
+                f"const double {m2_var} = (p.size() > 7) ? p[5] : ((p.size() > 4) ? p[4] : 0.0);",
+                f"const double {w2} = (p.size() > 7) ? p[6] : ((p.size() > 5) ? p[5] : 0.0);",
+                f"const double {phase2_var} = (p.size() > 7) ? p[7] : ((p.size() > 6) ? p[6] : 0.0); // Relative phase",
+            ]
+
         if phase1_var:
             bw1_str = f"({k1} / std::complex<double>(({m1} * {m1}) - s, -{m1} * {w1})) * std::polar(1.0, {phase1_var})"
         else:
@@ -152,6 +168,22 @@ def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[
     return param_lines, _translate_subexpr(formula)
 
 
+def _get_two_bw_wave_name(w: WaveConfig) -> str:
+    """Derive canonical wave name for a TwoBreitWigner wave (e.g. 'a2_1320_1700')."""
+    if w.name and "_" in w.name and not w.name.lower().endswith("wave"):
+        return w.name
+    if len(w.resonances) >= 2:
+        r1, r2 = w.resonances[0].name, w.resonances[1].name
+        parts1 = r1.split("_", 1)
+        parts2 = r2.split("_", 1)
+        if len(parts1) == 2 and len(parts2) == 2 and parts1[0] == parts2[0]:
+            return f"{r1}_{parts2[1]}"
+        return f"{r1}_{r2}"
+    elif len(w.resonances) == 1:
+        return w.resonances[0].name
+    return f"wave_{w.l}"
+
+
 def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
     """
     Generate a self-contained, robust C++ ROOT macro that initializes and runs
@@ -186,16 +218,38 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
     formula_registrations: List[str] = []
 
     for w in md_waves:
-        for res in w.resonances:
-            if w.formula:
-                safe_name = f"{w.l}_{res.name.replace('-', '_')}"
+        if not w.formula:
+            continue
+        form_esc = w.formula.replace('"', '\\"')
+        param_lines, expr = translate_formula_to_cpp(w.formula, w.parameters)
+        param_code = "\n    ".join(param_lines)
+
+        if w.model == ModelType.TWO_BREIT_WIGNER:
+            wave_name = _get_two_bw_wave_name(w)
+            safe_name = f"{w.l}_{wave_name.replace('-', '_')}"
+            func_name = f"eval_formula_{safe_name}"
+
+            formula_functions.extend([
+                f"// Explicit formula for L={w.l} {wave_name}: {w.formula}",
+                f"std::complex<double> {func_name}(double mass, const std::vector<double>& p) {{",
+                f"    {param_code}",
+                f"    return {expr};",
+                "}",
+                "",
+            ])
+            formula_registrations.extend([
+                f'    // Explicit formula configured for L={w.l} {wave_name}: {w.formula}',
+                f'    fitter.SetWaveCustomFormula({w.l}, "{wave_name}", {func_name}, "{form_esc}");',
+            ])
+        else:
+            target_res = w.resonances if w.resonances else [None]
+            for res in target_res:
+                r_name = res.name if res else f"wave_{w.l}"
+                safe_name = f"{w.l}_{r_name.replace('-', '_')}"
                 func_name = f"eval_formula_{safe_name}"
-                param_lines, expr = translate_formula_to_cpp(w.formula, w.parameters)
-                param_code = "\n    ".join(param_lines)
-                form_esc = w.formula.replace('"', '\\"')
 
                 formula_functions.extend([
-                    f"// Explicit formula for L={w.l} {res.name}: {w.formula}",
+                    f"// Explicit formula for L={w.l} {r_name}: {w.formula}",
                     f"std::complex<double> {func_name}(double mass, const std::vector<double>& p) {{",
                     f"    {param_code}",
                     f"    return {expr};",
@@ -203,8 +257,8 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                     "",
                 ])
                 formula_registrations.extend([
-                    f'    // Explicit formula configured for L={w.l} {res.name}: {w.formula}',
-                    f'    fitter.SetWaveCustomFormula({w.l}, "{res.name}", {func_name}, "{form_esc}");',
+                    f'    // Explicit formula configured for L={w.l} {r_name}: {w.formula}',
+                    f'    fitter.SetWaveCustomFormula({w.l}, "{r_name}", {func_name}, "{form_esc}");',
                 ])
 
     lines: List[str] = [
@@ -274,23 +328,30 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
 
     # Mass-dependent wave models
     for w in md_waves:
-        for res in w.resonances:
-            if w.model == ModelType.CUSTOM:
-                m_type = "MassDependentFitter::MassDependenceConfig::ModelType::CustomFormula"
-            elif w.model == ModelType.TWO_BREIT_WIGNER:
-                m_type = "MassDependentFitter::MassDependenceConfig::ModelType::TwoBreitWignerPlusPolynomial"
-            elif w.model == ModelType.FLATTE_BREIT_WIGNER:
-                m_type = "MassDependentFitter::MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial"
-            elif w.model == ModelType.FLATTE:
-                m_type = "MassDependentFitter::MassDependenceConfig::ModelType::FlattePlusPolynomial"
-            elif w.model == ModelType.POLYNOMIAL:
-                m_type = "MassDependentFitter::MassDependenceConfig::ModelType::Polynomial"
-            else:
-                m_type = "MassDependentFitter::MassDependenceConfig::ModelType::BreitWignerPlusPolynomial"
+        if w.model == ModelType.CUSTOM:
+            m_type = "MassDependentFitter::MassDependenceConfig::ModelType::CustomFormula"
+        elif w.model == ModelType.TWO_BREIT_WIGNER:
+            m_type = "MassDependentFitter::MassDependenceConfig::ModelType::TwoBreitWignerPlusPolynomial"
+        elif w.model == ModelType.FLATTE_BREIT_WIGNER:
+            m_type = "MassDependentFitter::MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial"
+        elif w.model == ModelType.FLATTE:
+            m_type = "MassDependentFitter::MassDependenceConfig::ModelType::FlattePlusPolynomial"
+        elif w.model == ModelType.POLYNOMIAL:
+            m_type = "MassDependentFitter::MassDependenceConfig::ModelType::Polynomial"
+        else:
+            m_type = "MassDependentFitter::MassDependenceConfig::ModelType::BreitWignerPlusPolynomial"
 
-            form_str = (w.formula or "").replace('"', '\\"')
-            param_list_str = ", ".join(f'"{p}"' for p in w.parameters) if w.parameters else ""
-            lines.append(f'    massDepConfig.massDependentWaves[{w.l}].push_back({{"{res.name}", {m_type}, {w.poly_order}, "{form_str}", {{{param_list_str}}}}});')
+        form_str = (w.formula or "").replace('"', '\\"')
+        param_list_str = ", ".join(f'"{p}"' for p in w.parameters) if w.parameters else ""
+
+        if w.model == ModelType.TWO_BREIT_WIGNER:
+            wave_name = _get_two_bw_wave_name(w)
+            lines.append(f'    massDepConfig.massDependentWaves[{w.l}].push_back({{"{wave_name}", {m_type}, {w.poly_order}, "{form_str}", {{{param_list_str}}}}});')
+        else:
+            target_res = w.resonances if w.resonances else [None]
+            for res in target_res:
+                r_name = res.name if res else f"wave_{w.l}"
+                lines.append(f'    massDepConfig.massDependentWaves[{w.l}].push_back({{"{r_name}", {m_type}, {w.poly_order}, "{form_str}", {{{param_list_str}}}}});')
 
     # Moments selection
     lines.extend([
@@ -371,76 +432,97 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
             lines.append(f"    paramManager.AddMassDependentParameter({{{w.l}}}, seed, {w.init.option});")
 
         # Set resonance parameters defaults/limits/fixes
-        for res in w.resonances:
-            lines.append(f'    paramManager.ConfigureBreitWignerDefaultsForWave("{res.name}", {res.mass}, {res.width});')
-            res_mass_name = f"MD_shared_{res.name}_Mass"
-            res_width_name = f"MD_shared_{res.name}_Width"
-            if res.mass_fixed:
-                lines.append(f'    paramManager.FixParameter("{res_mass_name}");')
-            elif res.mass_limits and len(res.mass_limits) == 2:
-                lines.append(f'    paramManager.SetParameterLimits("{res_mass_name}", {res.mass_limits[0]}, {res.mass_limits[1]});')
+        if w.model == ModelType.TWO_BREIT_WIGNER and len(w.resonances) >= 2:
+            res1 = w.resonances[0]
+            res2 = w.resonances[1]
+            wave_name = _get_two_bw_wave_name(w)
 
-            if res.width_fixed:
-                lines.append(f'    paramManager.FixParameter("{res_width_name}");')
-            elif res.width_limits and len(res.width_limits) == 2:
-                lines.append(f'    paramManager.SetParameterLimits("{res_width_name}", {res.width_limits[0]}, {res.width_limits[1]});')
+            # Resonance 1 (e.g. a2_1320)
+            res1_mass_name = f"MD_shared_{wave_name}_Mass1"
+            res1_width_name = f"MD_shared_{wave_name}_Width1"
+            lines.append(f'    paramManager.SetParameterInitialValue("{res1_mass_name}", {res1.mass});')
+            lines.append(f'    paramManager.SetParameterInitialValue("{res1_width_name}", {res1.width});')
+            if res1.mass_fixed:
+                lines.append(f'    paramManager.FixParameter("{res1_mass_name}");')
+            elif res1.mass_limits and len(res1.mass_limits) == 2:
+                lines.append(f'    paramManager.SetParameterLimits("{res1_mass_name}", {res1.mass_limits[0]}, {res1.mass_limits[1]});')
 
-            # Gaussian constraints
-            for par_key, constr in res.gaussian_constraints.items():
+            if res1.width_fixed:
+                lines.append(f'    paramManager.FixParameter("{res1_width_name}");')
+            elif res1.width_limits and len(res1.width_limits) == 2:
+                lines.append(f'    paramManager.SetParameterLimits("{res1_width_name}", {res1.width_limits[0]}, {res1.width_limits[1]});')
+
+            for par_key, constr in res1.gaussian_constraints.items():
                 if len(constr) == 2:
                     lines.append(f'    paramManager.SetGaussianConstraint("{par_key}", {constr[0]}, {constr[1]});')
 
-            # Phase handling for resonance
+            # Resonance 2 (e.g. a2_1700)
+            res2_mass_name = f"MD_shared_{wave_name}_Mass2"
+            res2_width_name = f"MD_shared_{wave_name}_Width2"
+            lines.append(f'    paramManager.SetParameterInitialValue("{res2_mass_name}", {res2.mass});')
+            lines.append(f'    paramManager.SetParameterInitialValue("{res2_width_name}", {res2.width});')
+            if res2.mass_fixed:
+                lines.append(f'    paramManager.FixParameter("{res2_mass_name}");')
+            elif res2.mass_limits and len(res2.mass_limits) == 2:
+                lines.append(f'    paramManager.SetParameterLimits("{res2_mass_name}", {res2.mass_limits[0]}, {res2.mass_limits[1]});')
+
+            if res2.width_fixed:
+                lines.append(f'    paramManager.FixParameter("{res2_width_name}");')
+            elif res2.width_limits and len(res2.width_limits) == 2:
+                lines.append(f'    paramManager.SetParameterLimits("{res2_width_name}", {res2.width_limits[0]}, {res2.width_limits[1]});')
+
+            for par_key, constr in res2.gaussian_constraints.items():
+                if len(constr) == 2:
+                    lines.append(f'    paramManager.SetGaussianConstraint("{par_key}", {constr[0]}, {constr[1]});')
+
+            # Phase handling for TwoBreitWigner:
+            # Resonance 1 is the phase reference (phase fixed to 0 in built-in formula).
+            # Resonance 2 carries the relative phase (represented by wave's global phase).
+            phase_res = res2 if not res2.phase_fixed else (res1 if not res1.phase_fixed else res2)
             res_shared_opt = 2
-            if res.shared_phase is not None:
-                if isinstance(res.shared_phase, bool):
-                    res_shared_opt = 2 if res.shared_phase else 0
-                elif isinstance(res.shared_phase, str):
-                    s = res.shared_phase.strip().lower()
+            if phase_res.shared_phase is not None:
+                if isinstance(phase_res.shared_phase, bool):
+                    res_shared_opt = 2 if phase_res.shared_phase else 0
+                elif isinstance(phase_res.shared_phase, str):
+                    s = phase_res.shared_phase.strip().lower()
                     if s in ("true", "1", "yes", "reflectivity", "by_reflectivity", "per_reflectivity"):
                         res_shared_opt = 2
                     elif s in ("l", "by_l", "same_l", "same-l"):
                         res_shared_opt = 1
                     else:
                         res_shared_opt = 0
-                elif isinstance(res.shared_phase, (int, float)):
-                    res_shared_opt = int(res.shared_phase)
+                elif isinstance(phase_res.shared_phase, (int, float)):
+                    res_shared_opt = int(phase_res.shared_phase)
             elif w.init.option > 0:
                 res_shared_opt = w.init.option
 
             pnames_list: List[str] = []
             if res_shared_opt == 2:
                 pnames_list.extend([
-                    f'"MD_shareda_{res.name}_globalphase"',
-                    f'"MD_sharedb_{res.name}_globalphase"',
-                    f'"MD_shareda_{res.name}_globalphase_flatte"',
-                    f'"MD_shareda_{res.name}_globalphase_bw"',
-                    f'"MD_sharedb_{res.name}_globalphase_flatte"',
-                    f'"MD_sharedb_{res.name}_globalphase_bw"',
-                    f'"MD_shareda_{res.name}_globalphase1"',
-                    f'"MD_shareda_{res.name}_globalphase2"',
-                    f'"MD_sharedb_{res.name}_globalphase1"',
-                    f'"MD_sharedb_{res.name}_globalphase2"',
+                    f'"MD_shareda_{wave_name}_globalphase"',
+                    f'"MD_sharedb_{wave_name}_globalphase"',
+                    f'"MD_shareda_{res2.name}_globalphase"',
+                    f'"MD_sharedb_{res2.name}_globalphase"',
+                    f'"MD_shareda_{res1.name}_globalphase"',
+                    f'"MD_sharedb_{res1.name}_globalphase"',
                 ])
             elif res_shared_opt == 1:
                 pnames_list.extend([
-                    f'"MD_{res.name}_globalphase"',
-                    f'"MD_{res.name}_globalphase_flatte"',
-                    f'"MD_{res.name}_globalphase_bw"',
-                    f'"MD_{res.name}_globalphase1"',
-                    f'"MD_{res.name}_globalphase2"',
+                    f'"MD_{wave_name}_globalphase"',
+                    f'"MD_{res2.name}_globalphase"',
+                    f'"MD_{res1.name}_globalphase"',
                 ])
             pnames_list.extend([
-                f'"MD_{res.name}_phase"',
-                f'"MD_{res.name}_phase1"',
-                f'"MD_{res.name}_phase2"',
+                f'"MD_{wave_name}_phase"',
+                f'"MD_{res2.name}_phase"',
+                f'"MD_{res1.name}_phase"',
             ])
             cand_pnames_str = ",\n        ".join(pnames_list)
 
-            if res.phase_fixed:
-                fix_val = res.fixed_phase if res.fixed_phase is not None else (res.phase if res.phase is not None else 0.0)
+            if phase_res.phase_fixed:
+                fix_val = phase_res.fixed_phase if phase_res.fixed_phase is not None else (phase_res.phase if phase_res.phase is not None else 0.0)
                 lines.extend([
-                    f'    // Fixed phase for resonance {res.name} (phases fixed to {fix_val})',
+                    f'    // Fixed relative phase for {wave_name} (fixed to {fix_val})',
                     f'    for (const char* pName : {{',
                     f'        {cand_pnames_str}',
                     f'    }}) {{',
@@ -450,10 +532,10 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                     f'        }}',
                     f'    }}',
                 ])
-            elif res.phase is not None:
-                init_val = res.phase
+            elif phase_res.phase is not None:
+                init_val = phase_res.phase
                 lines.extend([
-                    f'    // Initial phase for resonance {res.name}',
+                    f'    // Initial relative phase for {wave_name}',
                     f'    for (const char* pName : {{',
                     f'        {cand_pnames_str}',
                     f'    }}) {{',
@@ -463,17 +545,121 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                     f'    }}',
                 ])
 
-            if res.phase_limits and len(res.phase_limits) == 2 and not res.phase_fixed:
+            if phase_res.phase_limits and len(phase_res.phase_limits) == 2 and not phase_res.phase_fixed:
                 lines.extend([
-                    f'    // Set phase limits for resonance {res.name}',
+                    f'    // Set relative phase limits for {wave_name}',
                     f'    for (const char* pName : {{',
                     f'        {cand_pnames_str}',
                     f'    }}) {{',
                     f'        if (paramManager.HasParameter(pName)) {{',
-                    f'            paramManager.SetParameterLimits(pName, {res.phase_limits[0]}, {res.phase_limits[1]});',
+                    f'            paramManager.SetParameterLimits(pName, {phase_res.phase_limits[0]}, {phase_res.phase_limits[1]});',
                     f'        }}',
                     f'    }}',
                 ])
+        else:
+            for res in w.resonances:
+                lines.append(f'    paramManager.ConfigureBreitWignerDefaultsForWave("{res.name}", {res.mass}, {res.width});')
+                res_mass_name = f"MD_shared_{res.name}_Mass"
+                res_width_name = f"MD_shared_{res.name}_Width"
+                if res.mass_fixed:
+                    lines.append(f'    paramManager.FixParameter("{res_mass_name}");')
+                elif res.mass_limits and len(res.mass_limits) == 2:
+                    lines.append(f'    paramManager.SetParameterLimits("{res_mass_name}", {res.mass_limits[0]}, {res.mass_limits[1]});')
+
+                if res.width_fixed:
+                    lines.append(f'    paramManager.FixParameter("{res_width_name}");')
+                elif res.width_limits and len(res.width_limits) == 2:
+                    lines.append(f'    paramManager.SetParameterLimits("{res_width_name}", {res.width_limits[0]}, {res.width_limits[1]});')
+
+                # Gaussian constraints
+                for par_key, constr in res.gaussian_constraints.items():
+                    if len(constr) == 2:
+                        lines.append(f'    paramManager.SetGaussianConstraint("{par_key}", {constr[0]}, {constr[1]});')
+
+                # Phase handling for resonance
+                res_shared_opt = 2
+                if res.shared_phase is not None:
+                    if isinstance(res.shared_phase, bool):
+                        res_shared_opt = 2 if res.shared_phase else 0
+                    elif isinstance(res.shared_phase, str):
+                        s = res.shared_phase.strip().lower()
+                        if s in ("true", "1", "yes", "reflectivity", "by_reflectivity", "per_reflectivity"):
+                            res_shared_opt = 2
+                        elif s in ("l", "by_l", "same_l", "same-l"):
+                            res_shared_opt = 1
+                        else:
+                            res_shared_opt = 0
+                    elif isinstance(res.shared_phase, (int, float)):
+                        res_shared_opt = int(res.shared_phase)
+                elif w.init.option > 0:
+                    res_shared_opt = w.init.option
+
+                pnames_list: List[str] = []
+                if res_shared_opt == 2:
+                    pnames_list.extend([
+                        f'"MD_shareda_{res.name}_globalphase"',
+                        f'"MD_sharedb_{res.name}_globalphase"',
+                        f'"MD_shareda_{res.name}_globalphase_flatte"',
+                        f'"MD_shareda_{res.name}_globalphase_bw"',
+                        f'"MD_sharedb_{res.name}_globalphase_flatte"',
+                        f'"MD_sharedb_{res.name}_globalphase_bw"',
+                        f'"MD_shareda_{res.name}_globalphase1"',
+                        f'"MD_shareda_{res.name}_globalphase2"',
+                        f'"MD_sharedb_{res.name}_globalphase1"',
+                        f'"MD_sharedb_{res.name}_globalphase2"',
+                    ])
+                elif res_shared_opt == 1:
+                    pnames_list.extend([
+                        f'"MD_{res.name}_globalphase"',
+                        f'"MD_{res.name}_globalphase_flatte"',
+                        f'"MD_{res.name}_globalphase_bw"',
+                        f'"MD_{res.name}_globalphase1"',
+                        f'"MD_{res.name}_globalphase2"',
+                    ])
+                pnames_list.extend([
+                    f'"MD_{res.name}_phase"',
+                    f'"MD_{res.name}_phase1"',
+                    f'"MD_{res.name}_phase2"',
+                ])
+                cand_pnames_str = ",\n        ".join(pnames_list)
+
+                if res.phase_fixed:
+                    fix_val = res.fixed_phase if res.fixed_phase is not None else (res.phase if res.phase is not None else 0.0)
+                    lines.extend([
+                        f'    // Fixed phase for resonance {res.name} (phases fixed to {fix_val})',
+                        f'    for (const char* pName : {{',
+                        f'        {cand_pnames_str}',
+                        f'    }}) {{',
+                        f'        if (paramManager.HasParameter(pName)) {{',
+                        f'            paramManager.SetParameterInitialValue(pName, {fix_val});',
+                        f'            paramManager.FixParameter(pName);',
+                        f'        }}',
+                        f'    }}',
+                    ])
+                elif res.phase is not None:
+                    init_val = res.phase
+                    lines.extend([
+                        f'    // Initial phase for resonance {res.name}',
+                        f'    for (const char* pName : {{',
+                        f'        {cand_pnames_str}',
+                        f'    }}) {{',
+                        f'        if (paramManager.HasParameter(pName)) {{',
+                        f'            paramManager.SetParameterInitialValue(pName, {init_val});',
+                        f'        }}',
+                        f'    }}',
+                    ])
+
+                if res.phase_limits and len(res.phase_limits) == 2 and not res.phase_fixed:
+                    lines.extend([
+                        f'    // Set phase limits for resonance {res.name}',
+                        f'    for (const char* pName : {{',
+                        f'        {cand_pnames_str}',
+                        f'    }}) {{',
+                        f'        if (paramManager.HasParameter(pName)) {{',
+                        f'            paramManager.SetParameterLimits(pName, {res.phase_limits[0]}, {res.phase_limits[1]});',
+                        f'        }}',
+                        f'    }}',
+                    ])
 
     # If bestParamsFile is provided in MCMC mode, load best parameters into paramManager
     lines.extend([

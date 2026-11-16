@@ -217,6 +217,21 @@ namespace m2pw {
         }
 
         if (!updated) {
+            const TString sharedMass1Name = Form("MD_%s_Mass1", SharedResonanceKeyForWave(waveName).Data());
+            const TString sharedWidth1Name = Form("MD_%s_Width1", SharedResonanceKeyForWave(waveName).Data());
+            auto itM1 = parsList.find(sharedMass1Name);
+            if (itM1 != parsList.end()) {
+                itM1->second = mass;
+                updated = true;
+            }
+            auto itW1 = parsList.find(sharedWidth1Name);
+            if (itW1 != parsList.end()) {
+                itW1->second = width;
+                updated = true;
+            }
+        }
+
+        if (!updated) {
             LogMDWarn("CONFIG", Form("bw_defaults_failed wave=%s reason=shared_parameters_not_found", waveName.Data()));
             return false;
         }

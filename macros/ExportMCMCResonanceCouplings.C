@@ -69,13 +69,22 @@ void ExportMCMCResonanceCouplings(
 
     // Fallbacks for two-breit-wigner or alternate naming schemes
     if (!hasMass) {
-        std::vector<TString> altMass = {
-            Form("MD_shared_%s_Mass1", res.Data()),
-            Form("MD_shared_%s_Mass2", res.Data()),
-            Form("MD_shared_%s_Mass", res.Data()),
-            "MD_shared_a2_1320_1700_Mass1",
-            "MD_shared_a2_1320_Mass1"
-        };
+        std::vector<TString> altMass;
+        if (res.Contains("1700") || res.BeginsWith("res2")) {
+            altMass = {
+                "MD_shared_a2_1320_1700_Mass2",
+                Form("MD_shared_%s_Mass2", res.Data()),
+                Form("MD_shared_%s_Mass", res.Data()),
+                Form("MD_shared_%s_Mass1", res.Data())
+            };
+        } else {
+            altMass = {
+                "MD_shared_a2_1320_1700_Mass1",
+                Form("MD_shared_%s_Mass1", res.Data()),
+                Form("MD_shared_%s_Mass", res.Data()),
+                "MD_shared_a2_1320_Mass1"
+            };
+        }
         for (const auto& alt : altMass) {
             if (t->GetLeaf(alt)) {
                 massBranch = alt;
@@ -85,13 +94,22 @@ void ExportMCMCResonanceCouplings(
         }
     }
     if (!hasWidth) {
-        std::vector<TString> altWidth = {
-            Form("MD_shared_%s_Width1", res.Data()),
-            Form("MD_shared_%s_Width2", res.Data()),
-            Form("MD_shared_%s_Width", res.Data()),
-            "MD_shared_a2_1320_1700_Width1",
-            "MD_shared_a2_1320_Width1"
-        };
+        std::vector<TString> altWidth;
+        if (res.Contains("1700") || res.BeginsWith("res2")) {
+            altWidth = {
+                "MD_shared_a2_1320_1700_Width2",
+                Form("MD_shared_%s_Width2", res.Data()),
+                Form("MD_shared_%s_Width", res.Data()),
+                Form("MD_shared_%s_Width1", res.Data())
+            };
+        } else {
+            altWidth = {
+                "MD_shared_a2_1320_1700_Width1",
+                Form("MD_shared_%s_Width1", res.Data()),
+                Form("MD_shared_%s_Width", res.Data()),
+                "MD_shared_a2_1320_Width1"
+            };
+        }
         for (const auto& alt : altWidth) {
             if (t->GetLeaf(alt)) {
                 widthBranch = alt;

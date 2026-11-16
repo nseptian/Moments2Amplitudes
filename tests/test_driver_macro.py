@@ -54,6 +54,35 @@ class TestDriverMacro(unittest.TestCase):
         self.assertIn('"MD_sharedb_a2_1320_globalphase"', content)
         self.assertIn("paramManager.FixParameter(pName);", content)
 
+    def test_macro_generation_two_breit_wigner_published_model(self):
+        cfg = load_config(Path("configs/a2CS_published_model.yaml"))
+        macro_path = self.temp_dir / "macro_test_published_model.C"
+        generate_root_macro(cfg, macro_path)
+        self.assertTrue(macro_path.is_file())
+        content = macro_path.read_text()
+
+        # Check single combined wave registered in massDependentWaves[2]
+        self.assertIn('massDepConfig.massDependentWaves[2].push_back({"a2_1320_1700"', content)
+        self.assertEqual(content.count('massDepConfig.massDependentWaves[2].push_back('), 1)
+
+        # Check explicit formula registered once for combined wave
+        self.assertIn('fitter.SetWaveCustomFormula(2, "a2_1320_1700", eval_formula_2_a2_1320_1700', content)
+
+        # Check AddMassDependentParameter uses option 2
+        self.assertIn("paramManager.AddMassDependentParameter({2}, seed, 2);", content)
+
+        # Check Mass1 and Width1 initialization and limits
+        self.assertIn('paramManager.SetParameterInitialValue("MD_shared_a2_1320_1700_Mass1", 1.318);', content)
+        self.assertIn('paramManager.SetParameterLimits("MD_shared_a2_1320_1700_Mass1", 1.2, 1.45);', content)
+        self.assertIn('paramManager.SetParameterInitialValue("MD_shared_a2_1320_1700_Width1", 0.107);', content)
+        self.assertIn('paramManager.SetParameterLimits("MD_shared_a2_1320_1700_Width1", 0.05, 0.25);', content)
+
+        # Check Mass2 and Width2 initialization and fixed parameters
+        self.assertIn('paramManager.SetParameterInitialValue("MD_shared_a2_1320_1700_Mass2", 1.706);', content)
+        self.assertIn('paramManager.FixParameter("MD_shared_a2_1320_1700_Mass2");', content)
+        self.assertIn('paramManager.SetParameterInitialValue("MD_shared_a2_1320_1700_Width2", 0.38);', content)
+        self.assertIn('paramManager.FixParameter("MD_shared_a2_1320_1700_Width2");', content)
+
     @patch("moments2amplitudes.driver.ensure_aclic_updated")
     @patch("moments2amplitudes.driver.run_mcmc_propagation")
     def test_run_mcmc_propagation_tbins(self, mock_run, mock_aclic):
