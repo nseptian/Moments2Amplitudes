@@ -1220,15 +1220,15 @@ def run_mcmc_propagation(
     else:
         target_draws = 200
 
-    # Auto-stride calculation:
-    # Use stride to span the available chain so all bins draw target_draws even with different original total entries
-    use_auto_stride = auto_stride if auto_stride is not None else getattr(config.mcmc_propagation, "auto_stride", True)
-    cfg_stride = stride if stride is not None else getattr(config.mcmc_propagation, "stride", 1)
-
-    if use_auto_stride and avail_after_burnin is not None and target_draws > 0:
+    # Adaptive stride calculation (always active by default):
+    # Span the available chain so all bins draw target_draws even with different original total entries
+    manual_stride = stride if stride is not None else getattr(config.mcmc_propagation, "stride", None)
+    if manual_stride is not None:
+        eff_stride = max(1, manual_stride)
+    elif avail_after_burnin is not None and target_draws > 0:
         eff_stride = max(1, avail_after_burnin // target_draws)
     else:
-        eff_stride = max(1, cfg_stride)
+        eff_stride = 1
 
     if avail_after_burnin is not None:
         total_draws = min(target_draws, avail_after_burnin // eff_stride)

@@ -76,7 +76,6 @@ mcmc_propagation:
   enabled: false
   burn_in: 0
   target_entries: 200
-  stride: 1
   n_workers: 8
   n_tbin_workers: 5
   output_file: "mcmc_propagation_dtwobw_kinematic_results.root"

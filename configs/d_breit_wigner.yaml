@@ -62,7 +62,6 @@ mcmc_propagation:
   mcmc_tree_path: "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200/t010020/Mpi0eta1.300000_/ResultsBruMcmcCovariance.root"
   burn_in: 0
   target_entries: 200
-  stride: 1
   n_workers: 8
   output_file: "mcmc_propagation_dbw_results.root"
   log_dir: "logs_dbw/mcmc_fits"

@@ -82,7 +82,6 @@ mcmc_propagation:
   mcmc_tree_path: "/d/grid17/septian/Moments2Amplitudes/Moments.out/nominal/Mpi0eta1.320000_t010030_/ResultsBruMcmcFixedCovariance.root"
   burn_in: 0
   target_entries: 200
-  stride: 1
   n_workers: 8
   output_file: "mcmc_propagation_twobw_results.root"
   log_dir: "logs_twobw/mcmc_fits"

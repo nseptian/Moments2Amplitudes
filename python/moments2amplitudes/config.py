@@ -510,13 +510,14 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         else None
     )
     target_entries_val = mcmc_dict.get("target_entries", mcmc_dict.get("max_entries", 200))
+    stride_val = mcmc_dict.get("stride")
+    stride_parsed = int(stride_val) if stride_val is not None else None
     mcmc_propagation = MCMCPropagationConfig(
         enabled=bool(mcmc_dict.get("enabled", False)),
         mcmc_tree_path=mcmc_dict.get("mcmc_tree_path", ""),
         burn_in=int(mcmc_dict.get("burn_in", 0)),
         target_entries=int(target_entries_val),
-        stride=int(mcmc_dict.get("stride", 1)),
-        auto_stride=bool(mcmc_dict.get("auto_stride", True)),
+        stride=stride_parsed,
         n_workers=int(mcmc_dict["n_workers"]) if "n_workers" in mcmc_dict and mcmc_dict["n_workers"] is not None else get_default_max_workers(),
         n_tbin_workers=n_tbin_workers_mcmc,
         output_file=mcmc_dict.get("output_file", "mcmc_propagation_results.root"),
@@ -621,7 +622,7 @@ def validate_config(config: FitConfig) -> List[str]:
     if config.mcmc_propagation.enabled:
         if config.mcmc_propagation.burn_in < 0:
             errors.append("mcmc_propagation burn_in must be non-negative.")
-        if config.mcmc_propagation.stride < 1:
+        if config.mcmc_propagation.stride is not None and config.mcmc_propagation.stride < 1:
             errors.append("mcmc_propagation stride must be at least 1.")
 
     return errors
