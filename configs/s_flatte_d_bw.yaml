@@ -37,9 +37,9 @@ waves:
         width: 0.075
         mass_fixed: true
         width_fixed: false
+        shared_phase: true  # Shared global phase per reflectivity
     init:
       strategy: "random"
-      option: 2  # Shared global phase per reflectivity
 
   # L = 1: P-wave fixed to zero
   - l: 1
@@ -67,7 +67,6 @@ waves:
     init:
       strategy: "from_file"
       file_path: "/d/grid17/septian/Moments2Amplitudes/run/MassDependentResults_0.root"
-      option: 0
 
 minimizer:
   algorithm: "Minuit2"

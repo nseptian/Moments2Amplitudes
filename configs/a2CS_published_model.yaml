@@ -79,8 +79,6 @@ waves:
         shared_phase: true     # Shared phase among waves in the same reflectivity
     init:
       strategy: "random"
-      option: 2                # Add shared relative phase per reflectivity
-      shared_phase: true       # Shared phases among waves in the same reflectivity
 
 minimizer:
   algorithm: "Minuit2"

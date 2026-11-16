@@ -70,7 +70,6 @@ waves:
     init:
       strategy: "from_file"
       file_path: "logs_a2CS_dbw_kinematic/{tbin}/fit/nominal_best.root"
-      shared_phase: true       # Shared phases among waves in the same reflectivity
 
 minimizer:
   algorithm: "Minuit2"

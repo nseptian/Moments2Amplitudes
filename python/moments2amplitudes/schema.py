@@ -179,6 +179,11 @@ class WaveConfig:
             else:
                 self.name = f"L{self.l}-wave"
 
+    @property
+    def option(self) -> int:
+        """BruFit parameter sharing option (0, 1, or 2), automatically derived from resonances."""
+        return self.init.option
+
 
 @dataclass
 class MinimizerConfig:

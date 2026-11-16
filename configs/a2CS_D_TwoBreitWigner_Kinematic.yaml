@@ -40,6 +40,9 @@ waves:
         width_fixed: false
         mass_limits: [1.20, 1.45]
         width_limits: [0.05, 0.25]
+        phase: 0.0
+        phase_fixed: true      # Phase reference
+        shared_phase: "l"      # Shared relative phase across same L
       - name: "a2_1700"
         mass: 1.722
         width: 0.247
@@ -47,9 +50,11 @@ waves:
         width_fixed: false
         mass_limits: [1.55, 1.85]
         width_limits: [0.10, 0.40]
+        phase: 0.0
+        phase_fixed: false     # Floating relative phase
+        shared_phase: "l"      # Shared relative phase across same L
     init:
       strategy: "random"
-      option: 1  # Add shared relative phase
 
 minimizer:
   algorithm: "Minuit2"

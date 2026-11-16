@@ -244,28 +244,29 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
     # Init config
     init_dict = wave_dict.get("init", {})
 
-    # Shared phase options (by reflectivity or by L)
-    shared_phase_raw = None
+    # Wave-level shared phase (optional wave-level default)
+    wave_shared_phase_raw = None
     for key in ("shared_phase", "shared_phase_by_reflectivity", "shared_phase_per_reflectivity", "shared_phases_by_reflectivity"):
         if key in wave_dict:
-            shared_phase_raw = wave_dict[key]
+            wave_shared_phase_raw = wave_dict[key]
             break
-        if key in init_dict:
-            shared_phase_raw = init_dict[key]
+        if key in init_dict:  # legacy fallback
+            wave_shared_phase_raw = init_dict[key]
             break
 
-    # If not set at wave/init level, inspect resonances
-    if shared_phase_raw is None:
-        for r in resonances:
-            if r.shared_phase is not None:
-                shared_phase_raw = r.shared_phase
-                break
-
-    # Propagate shared_phase to resonances that didn't specify it
-    if shared_phase_raw is not None:
+    # If set at wave level, propagate as default to resonances that didn't specify it
+    if wave_shared_phase_raw is not None:
         for r in resonances:
             if r.shared_phase is None:
-                r.shared_phase = shared_phase_raw
+                r.shared_phase = wave_shared_phase_raw
+
+    # Wave-level shared phase summary value
+    shared_phase_summary = wave_shared_phase_raw
+    if shared_phase_summary is None:
+        for r in resonances:
+            if r.shared_phase is not None:
+                shared_phase_summary = r.shared_phase
+                break
 
     def _parse_shared_phase_opt(val) -> int:
         if isinstance(val, bool):
@@ -287,8 +288,8 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
         res_opts = [_parse_shared_phase_opt(r.shared_phase) for r in resonances if r.shared_phase is not None]
         if res_opts:
             option = max(res_opts)
-        elif shared_phase_raw is not None:
-            option = _parse_shared_phase_opt(shared_phase_raw)
+        elif wave_shared_phase_raw is not None:
+            option = _parse_shared_phase_opt(wave_shared_phase_raw)
         elif (any(r.phase_fixed for r in resonances) or (wave_phase_val is not None and wave_phase_fixed)):
             # Default to shared phase per reflectivity when a phase is fixed
             option = 2
@@ -347,7 +348,7 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
         fixed_zero=fixed_zero,
         file_path=init_dict.get("file_path"),
         option=option,
-        shared_phase=shared_phase_raw if shared_phase_raw is not None else False,
+        shared_phase=shared_phase_summary if shared_phase_summary is not None else False,
         magnitude=mag_rule,
         phase=phase_rule,
     )
@@ -364,7 +365,7 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
         init=init_cfg,
         phase=wave_phase_val,
         phase_fixed=wave_phase_fixed,
-        shared_phase=shared_phase_raw,
+        shared_phase=shared_phase_summary,
     )
 
 
@@ -550,6 +551,10 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
             if w.type == WaveType.MASS_DEPENDENT and w.init.option == 0:
                 w.init.option = 2
                 w.init.shared_phase = True
+                w.shared_phase = True
+                for r in w.resonances:
+                    if r.shared_phase is None:
+                        r.shared_phase = True
 
     return FitConfig(
         project=project,

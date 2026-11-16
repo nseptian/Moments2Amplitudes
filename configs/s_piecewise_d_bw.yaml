@@ -65,7 +65,6 @@ waves:
     init:
       strategy: "from_file"
       file_path: "logs_dbw/fit/nominal_best.root"
-      option: 0
 
 minimizer:
   algorithm: "Minuit2"
