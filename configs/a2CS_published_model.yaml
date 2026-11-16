@@ -1,0 +1,123 @@
+# Moments2Amplitudes Configuration: Published Model Fit
+# Model: Piecewise S-wave + D-wave two Breit-Wigners (a2(1320) + fixed a2(1700))
+# Mass range: 1.04 - 1.72 GeV
+# Standard Breit-Wigner without kinematics term, a2(1320) as phase reference
+
+project:
+  name: "a2CS_SPiecewise_DTwoBreitWigner_published_model"
+  tag: "published_model"
+  description: "Published Phase-1 PWA reference model: Piecewise S-waves + D-wave a2(1320) + fixed a2(1700) from 1.04 to 1.72 GeV"
+
+dataset:
+  moments_dir: "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200_FixedCov_Lmax4_InitValueScale1.0_step0.8"
+  tbins: ["t010020", "t020032", "t032050", "t050075", "t075100"]  # Runnable in parallel across t-bins
+  results_filename: "ResultsBruMcmcFixedCovariance.root"
+  bin_prefix: "Mpi0eta"
+  var_bin_prefix: ""
+  mass_bins:
+    min: 1.06
+    max: 1.70
+    step: 0.04
+  use_covariance: true
+
+chi2:
+  included_l: [0, 2, 4]
+  excluded_l: []
+  max_l: 4
+
+waves:
+  # L = 0: Piecewise S-wave (per mass bin: random positive magnitude in [0, 200], phase floating relative to reference)
+  - l: 0
+    name: "S-wave"
+    type: "piecewise"
+    init:
+      strategy: "random"
+      magnitude:
+        strategy: "random"
+        min: 0.0
+        max: 200.0
+      phase:
+        strategy: "fixed"
+        value: 0.0
+        fixed: false
+
+  # L = 1: P-wave fixed to zero
+  - l: 1
+    name: "P-wave"
+    type: "piecewise"
+    init:
+      fixed_zero: true
+
+  # L = 2: D-wave two Breit-Wigners: a2(1320) + fixed a2(1700) (d_two_breit_wigner formulation)
+  - l: 2
+    name: "D-wave"
+    type: "mass_dependent"
+    model: "two_breit_wigner"
+    formula: "(k1 / (Mass1^2 - s - i * Mass1 * Width1)) * exp(i * phase1) + (k2 / (Mass2^2 - s - i * Mass2 * Width2)) * exp(i * phase2)"
+    parameters: ["k1", "Mass1", "Width1", "phase1", "k2", "Mass2", "Width2", "phase2"]
+    poly_order: -1
+    resonances:
+      - name: "a2_1320"
+        mass: 1.318
+        width: 0.107
+        mass_fixed: false
+        width_fixed: false
+        mass_limits: [1.20, 1.45]
+        width_limits: [0.05, 0.25]
+        phase: 0.0
+        phase_fixed: true      # General phase set to 0.0 to fix as reference
+        shared_phase: true     # Shared phase among waves in the same reflectivity
+      - name: "a2_1700"
+        mass: 1.706
+        width: 0.380
+        mass_fixed: true
+        width_fixed: true
+        mass_limits: [1.55, 1.85]
+        width_limits: [0.10, 0.40]
+        phase: 0.0
+        phase_fixed: false     # Floating relative phase
+        shared_phase: true     # Shared phase among waves in the same reflectivity
+    init:
+      strategy: "random"
+
+minimizer:
+  algorithm: "Minuit2"
+  strategy: 1
+  tolerance: 1.0e-3
+  max_calls: 1000000
+  print_level: 0
+
+multi_start:
+  enabled: true
+  n_starts: 100
+  n_threads: 20
+  n_tbin_workers: 5
+  output_dir: "logs_a2CS_published_model"
+  plateau_delta_chi2: 0.05
+  seed_offset: 1
+
+mcmc_propagation:
+  enabled: false
+  burn_in: 0
+  target_entries: 200
+  n_workers: 8
+  n_tbin_workers: 5
+  output_file: "mcmc_propagation_published_model_results.root"
+  log_dir: "logs_a2CS_published_model/mcmc_fits"
+
+plotting:
+  enabled: true
+  style: "default"
+  n_lowest_chi2: 10
+  draw_best_fits: true
+  moments: ["all"]
+  formats: ["png", "pdf"]
+
+cross_section:
+  enabled: true
+  resonance: "a2_1320"
+  branching_ratio: 0.0565
+  luminosity: 257.4
+  luminosity_unit: "pb^-1"
+  mass_limits: [0.8, 2.0]
+  phase1_comparison: true

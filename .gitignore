@@ -1,8 +1,16 @@
 # Ignore run outputs
 run/
-test_*
+runs/
+/test_*
+test_*.root
+test_output/
+macros/**/test_output/
 plots*
-data*
+/data/*
+!/data/theory_pred/
+!/data/theory_pred/**
+!python/moments2amplitudes/data/
+!python/moments2amplitudes/data/**
 brufit*
 *.root
 
@@ -18,6 +26,9 @@ __pycache__/
 *.d
 *_ACLiC_*
 *.pcm
+*.lock
+.aclic.lock
+*_tmp_*
 
 # Log files
 *.log
@@ -32,7 +43,13 @@ logs_*/
 *.tmp
 *.swp
 *~
+.env
+
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
 
 # OS files
 .DS_Store
 Thumbs.db
+.nfs*

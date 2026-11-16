@@ -1,0 +1,99 @@
+# Moments2Amplitudes Configuration: Two D-wave Resonances with Kinematic Factor
+# Model: Coherent sum of two D-wave resonances: a2(1320) + a2(1700) with kinematic factor sqrt(rho_etapi)
+# Reference: V. Mathieu et al. (JPAC Collaboration), Phys. Rev. D 100, 054017 (2019), Table I and Eq. (10)-(11).
+
+project:
+  name: "a2CS_DTwoBreitWigner_Kinematic"
+  description: "Fit two coherent D-wave Breit-Wigner states: a2(1320) + a2(1700) with kinematic factor sqrt(rho_etapi) (JPAC PRD 100, 054017)"
+
+dataset:
+  moments_dir: "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200_FixedCov_Lmax4_InitValueScale1.0_step0.8"
+  tbins: ["t010020", "t020032", "t032050", "t050075", "t075100"]
+  results_filename: "ResultsBruMcmcFixedCovariance.root"
+  bin_prefix: "Mpi0eta"
+  var_bin_prefix: ""
+  mass_bins:
+    min: 1.06
+    max: 1.88
+    step: 0.04
+  use_covariance: true
+
+chi2:
+  included_l: [4]
+  excluded_l: []
+  max_l: 4
+
+waves:
+  # L = 2: Two Breit-Wigners (a2_1320 + a2_1700) with kinematic factor sqrt(rho_etapi)
+  - l: 2
+    name: "D-wave"
+    type: "mass_dependent"
+    model: "two_breit_wigner"
+    formula: "sqrt(rho_etapi) * (k1 / (Mass1^2 - s - i * Mass1 * Width1) + (k2 / (Mass2^2 - s - i * Mass2 * Width2)) * exp(i * phase))"
+    parameters: ["k1", "Mass1", "Width1", "k2", "Mass2", "Width2", "phase"]
+    poly_order: -1
+    resonances:
+      - name: "a2_1320"
+        mass: 1.318
+        width: 0.107
+        mass_fixed: false
+        width_fixed: false
+        mass_limits: [1.20, 1.45]
+        width_limits: [0.05, 0.25]
+        phase: 0.0
+        phase_fixed: true      # Phase reference
+        shared_phase: "l"      # Shared relative phase across same L
+      - name: "a2_1700"
+        mass: 1.722
+        width: 0.247
+        mass_fixed: false
+        width_fixed: false
+        mass_limits: [1.55, 1.85]
+        width_limits: [0.10, 0.40]
+        phase: 0.0
+        phase_fixed: false     # Floating relative phase
+        shared_phase: "l"      # Shared relative phase across same L
+    init:
+      strategy: "random"
+
+minimizer:
+  algorithm: "Minuit2"
+  strategy: 1
+  tolerance: 1.0e-3
+  max_calls: 1000000
+  print_level: 0
+
+multi_start:
+  enabled: true
+  n_starts: 100
+  n_threads: 20
+  n_tbin_workers: 5
+  output_dir: "logs_a2CS_dtwobw_kinematic"
+  plateau_delta_chi2: 0.05
+  seed_offset: 1
+
+mcmc_propagation:
+  enabled: false
+  burn_in: 0
+  target_entries: 200
+  n_workers: 8
+  n_tbin_workers: 5
+  output_file: "mcmc_propagation_dtwobw_kinematic_results.root"
+  log_dir: "logs_a2CS_dtwobw_kinematic/mcmc_fits"
+
+plotting:
+  enabled: true
+  style: "default"
+  n_lowest_chi2: 10
+  draw_best_fits: true
+  moments: ["all"]
+  formats: ["png", "pdf"]
+
+cross_section:
+  enabled: false
+  resonance: "a2_1320"
+  branching_ratio: 0.0565
+  luminosity: 257.4
+  luminosity_unit: "pb^-1"
+  mass_limits: [0.8, 2.0]
+  phase1_comparison: true

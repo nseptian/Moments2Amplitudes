@@ -10,20 +10,62 @@ void CleanAclicArtifacts(const TString& srcDir) {
 }
 
 void Load(){
+  if (TClass::GetClass("m2pw::MassDependentFitter")) return;
+
   // Ensure BruFit environment and classes (e.g. RooHSSphHarmonic) are loaded
   if (!TClass::GetClass("RooHSSphHarmonic")) {
     TString brufitDir = gSystem->Getenv("BRUFIT");
-    if (!brufitDir.IsNull() && gSystem->AccessPathName(brufitDir + "/macros/LoadBru.C") == 0) {
-      gROOT->ProcessLine(Form(".x %s/macros/LoadBru.C", brufitDir.Data()));
-    } else if (gSystem->AccessPathName("/d/grid17/septian/brufit_dev/brufit/macros/LoadBru.C") == 0) {
-      gROOT->ProcessLine(".x /d/grid17/septian/brufit_dev/brufit/macros/LoadBru.C");
+    if (brufitDir.IsNull()) {
+      if (gSystem->AccessPathName("/d/grid17/septian/brufit_dev/brufit_negative/macros/LoadBru.C") == 0) {
+        brufitDir = "/d/grid17/septian/brufit_dev/brufit_negative";
+      }
+    }
+    if (!brufitDir.IsNull()) {
+      gSystem->Setenv("BRUFIT", brufitDir.Data());
+      if (gSystem->AccessPathName(brufitDir + "/macros/LoadBru.C") == 0) {
+        gROOT->ProcessLine(Form(".x %s/macros/LoadBru.C", brufitDir.Data()));
+      }
     }
   }
 
-  // Prefer the run-time project directory, then fall back to the legacy env var.
-  TString projectDir = "/d/grid17/septian/Moments2Amplitudes/";
-  // cout << "Using project directory: " << projectDir << endl;
+  // Determine repository root directory
+  TString projectDir = gSystem->Getenv("MOMS2AMPS");
+  if (projectDir.IsNull()) {
+    TString currentDir = gSystem->WorkingDirectory();
+    if (gSystem->AccessPathName(currentDir + "/src/MassDependentFitter.cpp") == 0) {
+      projectDir = currentDir;
+    } else if (gSystem->AccessPathName(currentDir + "/../src/MassDependentFitter.cpp") == 0) {
+      projectDir = gSystem->DirName(currentDir);
+    } else {
+      projectDir = "/d/home/septian/Moments2Amplitudes";
+    }
+  }
   TString srcDir = projectDir + "/src";
+  TString incDir = projectDir + "/include";
+  TString macDir = projectDir + "/macros";
+
+  // Register include paths for Cling interpreter and ACLiC compilation
+  gInterpreter->AddIncludePath(incDir.Data());
+  gInterpreter->AddIncludePath(macDir.Data());
+  gSystem->AddIncludePath(Form("-I%s", incDir.Data()));
+  gSystem->AddIncludePath(Form("-I%s", macDir.Data()));
+
+  TString brufitDirEnv = gSystem->Getenv("BRUFIT");
+  if (!brufitDirEnv.IsNull()) {
+    gInterpreter->AddIncludePath(brufitDirEnv + "/install/include");
+    gInterpreter->AddIncludePath(brufitDirEnv + "/include");
+    gInterpreter->AddIncludePath(brufitDirEnv + "/core");
+    gInterpreter->AddIncludePath(brufitDirEnv + "/utility");
+    gSystem->AddIncludePath(Form("-I%s/install/include", brufitDirEnv.Data()));
+    gSystem->AddIncludePath(Form("-I%s/include", brufitDirEnv.Data()));
+    gSystem->AddIncludePath(Form("-I%s/core", brufitDirEnv.Data()));
+    gSystem->AddIncludePath(Form("-I%s/utility", brufitDirEnv.Data()));
+
+    gSystem->AddDynamicPath(brufitDirEnv + "/install/lib64");
+    gSystem->AddDynamicPath(brufitDirEnv + "/install/lib");
+    gSystem->AddDynamicPath(brufitDirEnv + "/build/lib");
+    gSystem->AddDynamicPath(brufitDirEnv + "/lib");
+  }
 
   // CleanAclicArtifacts(srcDir);
   

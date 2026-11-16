@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moments2amplitudes"
+version = "0.2.0"
+description = "Mass-dependent partial wave analysis framework using angular moments"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pyyaml>=6.0",
+    "numpy>=1.26",
+    "scipy>=1.13",
+    "matplotlib>=3.9"
+]
+
+[project.scripts]
+mom2amp = "moments2amplitudes.cli:main"
+

@@ -1,0 +1,86 @@
+# Moments2Amplitudes Configuration: Stage 1 D-wave Breit-Wigner Fit
+# Fits D-wave resonance a2(1320) using H4 moment with covariance matrix.
+
+project:
+  name: "EtaPi0_DBreitWigner_Stage1"
+  description: "Fit D-wave a2(1320) resonance parameters using H4 moments"
+
+dataset:
+  moments_dir: "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200"
+  t_bin: "t010020"
+  results_filename: "ResultsBruMcmcCovariance.root"
+  bin_prefix: "Mpi0eta"
+  var_bin_prefix: ""
+  mass_bins:
+    min: 1.06
+    max: 1.58
+    step: 0.04
+  use_covariance: true
+
+chi2:
+  included_l: [4]
+  excluded_l: []
+  max_l: 4
+
+waves:
+  # L = 2: D-wave Breit-Wigner
+  - l: 2
+    name: "D-wave"
+    type: "mass_dependent"
+    model: "breit_wigner"
+    formula: "k / (M^2 - s - i * M * width)"
+    parameters: ["k", "M", "width"]
+    poly_order: -1
+    resonances:
+      - name: "a2_1320"
+        mass: 1.318
+        width: 0.107
+        mass_fixed: true
+        width_fixed: true
+        mass_limits: [1.20, 1.45]
+        width_limits: [0.05, 0.25]
+    init:
+      strategy: "random"
+
+minimizer:
+  algorithm: "Minuit2"
+  strategy: 1
+  tolerance: 1.0e-2
+  max_calls: 1000000
+  print_level: 0
+
+multi_start:
+  enabled: true
+  n_starts: 10
+  n_threads: 4
+  output_dir: "logs_dbw"
+  plateau_delta_chi2: 0.05
+  seed_offset: 1
+
+mcmc_propagation:
+  enabled: false
+  mcmc_tree_path: "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200/t010020/Mpi0eta1.300000_/ResultsBruMcmcCovariance.root"
+  burn_in: 0
+  target_entries: 200
+  n_workers: 8
+  output_file: "mcmc_propagation_dbw_results.root"
+  log_dir: "logs_dbw/mcmc_fits"
+
+plotting:
+  enabled: true
+  n_lowest_chi2: 10
+  draw_best_fits: true
+  moments: ["all"]
+  formats: ["png", "pdf"]
+
+cross_section:
+  enabled: true
+  resonance: "a2_1320"
+  branching_ratio: 0.0565
+  luminosity: 257.4
+  luminosity_unit: "pb^-1"
+  mass_limits: [0.8, 2.0]
+  phase1_comparison: true
+
+
+

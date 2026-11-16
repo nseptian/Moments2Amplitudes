@@ -66,107 +66,20 @@ class MassDependentMoments {
             }
         }
 
-        // =========================================================================
-        // OPTION 2 (Commented out for now - working on MCMCTree first):
-        // Load unnormalized moments as a function of mass from a ROOT file containing TGraphErrors
-        // (e.g., UnnormalizedMoments_vs_Mass.root).
-        // =========================================================================
-        /*
-        MassDependentMoments(const TString& momentsVsMassFilePath,
-                             const TString& FitResultsDir = "",
-                             const TString& FitResultsFilename = "ResultsBruMcmcFixedCovariance.root",
-                             const TString& MassBinName = "Mpi0eta",
+        /**
+         * @brief Load moments directly from a list of explicit mass bins
+         */
+        MassDependentMoments(const std::vector<Double_t>& massBins,
+                             const TString& FitResultsDir,
+                             const TString& FitResultsFilename,
+                             const TString& MassBinName,
                              const TString& VarBinName = "")
-            : _FitResultsDir(FitResultsDir), _FitResultsFilename(FitResultsFilename),
-              _MassBinName(MassBinName), _VarBinName(VarBinName) {
-            
-            TFile* file = TFile::Open(momentsVsMassFilePath);
-            if (!file || file->IsZombie()) {
-                if (file) delete file;
-                throw std::runtime_error(Form("Cannot open moments file: %s", momentsVsMassFilePath.Data()));
-            }
-
-            // Map: mass bin center -> (moment name -> pair(val, error))
-            std::map<Double_t, std::map<TString, std::pair<Double_t, Double_t>>> massBinMoments;
-
-            TIter next(file->GetListOfKeys());
-            TKey* key = nullptr;
-            while ((key = (TKey*)next())) {
-                TString keyName = key->GetName();
-                if (!keyName.BeginsWith("gr_unnormalized_moments_") || !keyName.EndsWith("_vs_mass")) {
-                    continue;
-                }
-                TString middle = keyName;
-                middle.ReplaceAll("gr_unnormalized_moments_", "");
-                middle.ReplaceAll("_vs_mass", "");
-                TString momentName = "H_" + middle;
-
-                TGraphErrors* gr = dynamic_cast<TGraphErrors*>(key->ReadObj());
-                if (!gr) continue;
-
-                const int nPoints = gr->GetN();
-                for (int p = 0; p < nPoints; ++p) {
-                    Double_t mass = 0.0;
-                    Double_t val = 0.0;
-                    gr->GetPoint(p, mass, val);
-                    Double_t err = gr->GetErrorY(p);
-                    Double_t roundedMass = std::round(mass * 1e6) / 1e6;
-                    massBinMoments[roundedMass][momentName] = {val, err};
-                }
-                delete gr;
-            }
-            delete file;
-
-            if (massBinMoments.empty()) {
-                throw std::runtime_error(Form("No unnormalized moments found in: %s", momentsVsMassFilePath.Data()));
-            }
-
-            _NMassBins = massBinMoments.size();
-            for (const auto& [mass, momMap] : massBinMoments) {
-                _MassBins.push_back(mass);
-                MomentHelper moments;
-                for (const auto& [momName, valErr] : momMap) {
-                    moments.SetUnnormalized(momName, valErr.first, valErr.second);
-                }
-
-                bool loadedCov = false;
-                if (!_FitResultsDir.IsNull() && !_FitResultsDir.EqualTo("")) {
-                    TString filePath;
-                    if (_VarBinName.IsNull() || _VarBinName.EqualTo("")) {
-                        filePath = Form("%s/%s%1.6f_/", _FitResultsDir.Data(), _MassBinName.Data(), mass);
-                    } else {
-                        filePath = Form("%s/%s%1.6f_%s_/", _FitResultsDir.Data(), _MassBinName.Data(), mass, _VarBinName.Data());
-                    }
-                    const TString fullFilePath = filePath + _FitResultsFilename;
-
-                    TFile* testFile = TFile::Open(fullFilePath);
-                    if (testFile && !testFile->IsZombie()) {
-                        if (testFile->Get("PosteriorCovariance")) {
-                            delete testFile;
-                            moments.SetFilePath(filePath);
-                            loadedCov = moments.LoadCovarianceMatrix(fullFilePath, "PosteriorCovariance");
-                        } else if (testFile->Get("MCMCTree")) {
-                            delete testFile;
-                            moments.Set(filePath, 1, 1);
-                            // Re-apply graph values and errors to ensure they are preserved
-                            for (const auto& [momName, valErr] : momMap) {
-                                moments.SetUnnormalized(momName, valErr.first, valErr.second);
-                            }
-                            loadedCov = moments.HasCovarianceMatrix();
-                        } else {
-                            delete testFile;
-                        }
-                    } else if (testFile) {
-                        delete testFile;
-                    }
-                }
-
-                if (!loadedCov) {
-                    moments.SetDiagonalCovariance();
-                }
-
-                _moments[mass] = moments;
-            }
+            : _NMassBins(massBins.size()),
+              _FitResultsDir(FitResultsDir),
+              _FitResultsFilename(FitResultsFilename),
+              _MassBinName(MassBinName),
+              _VarBinName(VarBinName),
+              _MassBins(massBins) {
 
             if (_MassBins.size() >= 2) {
                 _MassBinWidth = _MassBins[1] - _MassBins[0];
@@ -175,8 +88,29 @@ class MassDependentMoments {
                 _MassBinWidth = 0.0;
                 _FirstMassBinCenter = _MassBins[0];
             }
+
+            for (const Double_t massValue : _MassBins) {
+                TString filePath;
+                if (_VarBinName.IsNull() || _VarBinName.EqualTo("")) {
+                    filePath = Form("%s/%s%1.6f_/", _FitResultsDir.Data(), _MassBinName.Data(), massValue);
+                } else {
+                    filePath = Form("%s/%s%1.6f_%s_/", _FitResultsDir.Data(), _MassBinName.Data(), massValue, _VarBinName.Data());
+                }
+                const TString fullFilePath = filePath + _FitResultsFilename;
+
+                TFile* testFile = TFile::Open(fullFilePath);
+                if (!testFile || testFile->IsZombie()) {
+                    if (testFile) delete testFile;
+                    throw std::runtime_error(Form("File not found: %s", fullFilePath.Data()));
+                }
+                delete testFile;
+
+                std::cout << "Loading moments from: " << filePath << std::endl;
+                MomentHelper moments;
+                moments.Set(filePath, _FitResultsFilename, 1, 1);
+                _moments[massValue] = moments;
+            }
         }
-        */
 
         // Function to set the mass-dependent moments
         void SetMoments(const Double_t massValue, MomentHelper& moments) {
@@ -278,6 +212,16 @@ class MassDependentMoments {
             for (auto& [mass, momHelper] : _moments) {
                 momHelper.LoadMCMCEntry(entryIndex);
             }
+        }
+
+        /**
+         * @brief Get sample weight for a specific MCMC entry
+         * @param entryIndex MCMC tree entry index
+         * @return Weight value, or 1.0 if not available / out of range
+         */
+        Double_t GetMCMCWeight(Long64_t entryIndex) const {
+            if (_moments.empty()) return 1.0;
+            return _moments.begin()->second.GetMCMCWeight(entryIndex);
         }
 
     private:
