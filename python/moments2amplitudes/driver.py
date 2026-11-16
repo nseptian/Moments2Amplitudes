@@ -300,7 +300,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
     no_use_str = ", ".join(f'"{x}"' for x in no_use_items)
 
     lines.extend([
-        "void RunWorker(const char* mode = \"single\", int seed = 1, int mcmcStart = 0, int mcmcEnd = -1, const char* outDir = \".\", const char* bestParamsFile = \"\") {",
+        "void RunWorker(const char* mode = \"single\", int seed = 1, int mcmcStart = 0, int mcmcEnd = -1, const char* outDir = \".\", const char* bestParamsFile = \"\", int mcmcStride = 1) {",
         "    EnsureLoaded();",
         "    TStopwatch timer;",
         "    timer.Start();",
@@ -702,7 +702,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         "        std::cout << \"[Worker] Running MCMC propagation entries [\" << mcmcStart << \", \" << mcmcEnd << \")...\" << std::endl;",
         '        TString outFile = Form("%s/mcmc_worker_%d.root", outDir, seed);',
         '        Long64_t nEntriesToFit = (mcmcEnd > mcmcStart) ? (mcmcEnd - mcmcStart) : mcmcEnd;',
-        f"        fitter.FitMCMCTree(paramManager, moms, outFile, mcmcStart, nEntriesToFit, {config.mcmc_propagation.stride}, outDir);",
+        "        fitter.FitMCMCTree(paramManager, moms, outFile, mcmcStart, nEntriesToFit, mcmcStride, outDir);",
         '        std::cout << "[RESULT_MCMC] WORKER=" << seed',
         '                  << " ENTRIES=" << (mcmcEnd - mcmcStart)',
         '                  << " TIME=" << Form("%.2f", timer.RealTime())',
@@ -710,16 +710,16 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         "    }",
         "}",
         "",
-        f"void {output_macro_path.stem}(const char* mode = \"single\", int seed = 1, int mcmcStart = 0, int mcmcEnd = -1, const char* outDir = \".\", const char* bestParamsFile = \"\") {{",
-        "    RunWorker(mode, seed, mcmcStart, mcmcEnd, outDir, bestParamsFile);",
+        f"void {output_macro_path.stem}(const char* mode = \"single\", int seed = 1, int mcmcStart = 0, int mcmcEnd = -1, const char* outDir = \".\", const char* bestParamsFile = \"\", int mcmcStride = 1) {{",
+        "    RunWorker(mode, seed, mcmcStart, mcmcEnd, outDir, bestParamsFile, mcmcStride);",
         "}",
     ])
 
     if output_macro_path.stem != "worker":
         lines.extend([
             "",
-            "void worker(const char* mode = \"single\", int seed = 1, int mcmcStart = 0, int mcmcEnd = -1, const char* outDir = \".\", const char* bestParamsFile = \"\") {",
-            "    RunWorker(mode, seed, mcmcStart, mcmcEnd, outDir, bestParamsFile);",
+            "void worker(const char* mode = \"single\", int seed = 1, int mcmcStart = 0, int mcmcEnd = -1, const char* outDir = \".\", const char* bestParamsFile = \"\", int mcmcStride = 1) {",
+            "    RunWorker(mode, seed, mcmcStart, mcmcEnd, outDir, bestParamsFile, mcmcStride);",
             "}",
         ])
 
@@ -1184,6 +1184,8 @@ def run_mcmc_propagation(
     best_params_file: Optional[str] = None,
     n_workers: Optional[int] = None,
     max_entries: Optional[int] = None,
+    stride: Optional[int] = None,
+    auto_stride: Optional[bool] = None,
     output_file: Optional[str] = None,
     run_dir: Optional[str] = None,
     tag: str = "",
@@ -1207,25 +1209,33 @@ def run_mcmc_propagation(
 
     # Account for differing MCMC entries across mass bins by finding the minimum available
     min_avail = get_min_available_mcmc_entries(config, config.dataset.t_bin)
-    if raw_entries is not None and raw_entries > 0:
-        total_entries = raw_entries
-        if min_avail is not None and (burn_in + total_entries) > min_avail:
-            clamped = max(0, min_avail - burn_in)
-            tag_pfx = f"{tag} " if tag else ""
-            print(f"{tag_pfx}[INFO] Requested {total_entries} entries (+ burn-in {burn_in}) exceeds minimum available MCMC samples ({min_avail}) across mass bins. Clamping to {clamped}.")
-            total_entries = clamped
-    elif raw_entries == -1 or (max_entries is None and config.mcmc_propagation.max_entries == -1):
-        if min_avail is not None:
-            total_entries = max(0, min_avail - burn_in)
-        else:
-            total_entries = 200
-    else:
-        total_entries = 200
+    avail_after_burnin = (min_avail - burn_in) if min_avail is not None else None
 
-    if total_entries <= 0:
+    # Determine desired number of entries to draw
+    if raw_entries is not None and raw_entries > 0:
+        target_draws = raw_entries
+    else:
+        target_draws = 200
+
+    # Auto-stride calculation:
+    # Use stride to span the available chain so all bins draw target_draws even with different original total entries
+    use_auto_stride = auto_stride if auto_stride is not None else getattr(config.mcmc_propagation, "auto_stride", True)
+    cfg_stride = stride if stride is not None else getattr(config.mcmc_propagation, "stride", 1)
+
+    if use_auto_stride and avail_after_burnin is not None and target_draws > 0:
+        eff_stride = max(1, avail_after_burnin // target_draws)
+    else:
+        eff_stride = max(1, cfg_stride)
+
+    if avail_after_burnin is not None:
+        total_draws = min(target_draws, avail_after_burnin // eff_stride)
+    else:
+        total_draws = target_draws
+
+    if total_draws <= 0:
         raise ValueError(f"No available MCMC entries to propagate (burn_in={burn_in}, min_available={min_avail}).")
 
-    workers = max(1, min(workers, total_entries))
+    workers = max(1, min(workers, total_draws))
     out_file = Path(output_file or rundir.mcmc_propagated_root).resolve()
 
     # Determine best parameters file
@@ -1253,19 +1263,25 @@ def run_mcmc_propagation(
     print(f"\n=======================================================")
     print(f" {tag_str}Moments2Amplitudes MCMC Propagation")
     print(f" Project:      {config.project.name}")
-    print(f" Total Entries:{total_entries} (burn-in: {burn_in})")
+    print(f" Target Draws: {total_draws} (stride: {eff_stride}, burn-in: {burn_in})")
+    if min_avail is not None:
+        print(f" Chain Avail:  {min_avail} entries (across mass bins)")
     print(f" Workers:      {workers}")
     print(f" Best Params:  {best_params_file}")
     print(f" Output File:  {out_file}")
     print(f"=======================================================\n")
 
-    # Compute entry chunks per worker
-    chunk_size = total_entries // workers
+    # Compute entry chunks per worker using eff_stride
+    draws_per_worker = total_draws // workers
+    rem_draws = total_draws % workers
     worker_tasks: List[Tuple[int, int, int]] = []  # (worker_id, start_entry, end_entry)
+    curr_start = burn_in
     for w in range(workers):
-        start = burn_in + w * chunk_size
-        end = burn_in + total_entries if w == workers - 1 else start + chunk_size
-        worker_tasks.append((w, start, end))
+        w_draws = draws_per_worker + (1 if w < rem_draws else 0)
+        w_span = w_draws * eff_stride
+        w_end = curr_start + w_span
+        worker_tasks.append((w, curr_start, w_end))
+        curr_start = w_end
 
     worker_outputs: List[str] = []
     import concurrent.futures
@@ -1275,12 +1291,13 @@ def run_mcmc_propagation(
         log_f = rundir.get_mcmc_worker_log_file(wid)
         ret_code, output = execute_root_command(
             macro_path,
-            ("mcmc", wid, wstart, wend, str(rundir.mcmc_workers_dir), str(best_params_file)),
+            ("mcmc", wid, wstart, wend, str(rundir.mcmc_workers_dir), str(best_params_file), eff_stride),
             log_f,
             config,
         )
         out_root = str(rundir.mcmc_workers_dir / f"mcmc_worker_{wid}.root")
-        return {"worker_id": wid, "ret_code": ret_code, "output_file": out_root, "entries": wend - wstart}
+        n_fits = (wend - wstart + eff_stride - 1) // eff_stride
+        return {"worker_id": wid, "ret_code": ret_code, "output_file": out_root, "entries": n_fits}
 
     start_time = time.time()
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
@@ -1328,6 +1345,8 @@ def run_mcmc_propagation_tbins(
     best_params_file: Optional[str] = None,
     n_workers: Optional[int] = None,
     max_entries: Optional[int] = None,
+    stride: Optional[int] = None,
+    auto_stride: Optional[bool] = None,
     output_file: Optional[str] = None,
     run_dir: Optional[str] = None,
     n_tbin_workers: Optional[int] = None,
@@ -1347,6 +1366,8 @@ def run_mcmc_propagation_tbins(
             best_params_file=best_params_file,
             n_workers=n_workers,
             max_entries=max_entries,
+            stride=stride,
+            auto_stride=auto_stride,
             output_file=output_file,
             run_dir=run_dir,
         )
@@ -1403,6 +1424,8 @@ def run_mcmc_propagation_tbins(
             best_params_file=t_best_params,
             n_workers=effective_workers,
             max_entries=max_entries,
+            stride=stride,
+            auto_stride=auto_stride,
             output_file=t_outfile,
             run_dir=str(t_rundir.root),
             tag=f"[{t_name}]",

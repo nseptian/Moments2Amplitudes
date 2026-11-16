@@ -250,6 +250,7 @@ class MCMCPropagationConfig:
     burn_in: int = 0
     max_entries: int = 200
     stride: int = 1
+    auto_stride: bool = True
     n_workers: int = field(default_factory=get_default_max_workers)
     n_tbin_workers: Optional[int] = None
     output_file: str = "mcmc_propagation_results.root"

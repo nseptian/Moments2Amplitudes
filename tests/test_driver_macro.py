@@ -83,6 +83,51 @@ class TestDriverMacro(unittest.TestCase):
         self.assertIn('paramManager.SetParameterInitialValue("MD_shared_a2_1320_1700_Width2", 0.38);', content)
         self.assertIn('paramManager.FixParameter("MD_shared_a2_1320_1700_Width2");', content)
 
+        # Check RunWorker has mcmcStride parameter and FitMCMCTree uses it
+        self.assertIn("int mcmcStride = 1", content)
+        self.assertIn("fitter.FitMCMCTree(paramManager, moms, outFile, mcmcStart, nEntriesToFit, mcmcStride, outDir);", content)
+
+    @patch("moments2amplitudes.driver.get_min_available_mcmc_entries")
+    @patch("moments2amplitudes.driver.ensure_aclic_updated")
+    @patch("moments2amplitudes.driver.execute_root_command")
+    @patch("subprocess.run")
+    def test_auto_stride_different_bin_totals(self, mock_subp, mock_exec, mock_aclic, mock_min_entries):
+        from moments2amplitudes.driver import run_mcmc_propagation
+        mock_subp.return_value.returncode = 0
+        mock_exec.return_value = (0, "")
+        cfg = load_config(Path("configs/a2CS_published_model.yaml"))
+        cfg.mcmc_propagation.burn_in = 0
+
+        # Scenario 1: Bin with 1582 entries, target 200 draws -> stride = 1582 // 200 = 7
+        from moments2amplitudes.rundir import get_run_directory
+        mock_min_entries.return_value = 1582
+        with tempfile.TemporaryDirectory() as td:
+            rundir = get_run_directory(cfg, td)
+            rundir.ensure_directories()
+            for w in range(4):
+                (rundir.mcmc_workers_dir / f"mcmc_worker_{w}.root").touch()
+            (rundir.root / "central_best_params.root").touch()
+            with patch("moments2amplitudes.driver.run_all_diagnostics_and_plots"):
+                run_mcmc_propagation(cfg, run_dir=td, n_workers=4, max_entries=200, auto_stride=True)
+            for call in mock_exec.call_args_list:
+                args_tuple = call[0][1]
+                self.assertEqual(args_tuple[6], 7)  # eff_stride = 7
+
+        # Scenario 2: Bin with 2500 entries, target 200 draws -> stride = 2500 // 200 = 12
+        mock_exec.reset_mock()
+        mock_min_entries.return_value = 2500
+        with tempfile.TemporaryDirectory() as td:
+            rundir = get_run_directory(cfg, td)
+            rundir.ensure_directories()
+            for w in range(4):
+                (rundir.mcmc_workers_dir / f"mcmc_worker_{w}.root").touch()
+            (rundir.root / "central_best_params.root").touch()
+            with patch("moments2amplitudes.driver.run_all_diagnostics_and_plots"):
+                run_mcmc_propagation(cfg, run_dir=td, n_workers=4, max_entries=200, auto_stride=True)
+            for call in mock_exec.call_args_list:
+                args_tuple = call[0][1]
+                self.assertEqual(args_tuple[6], 12)  # eff_stride = 12
+
     @patch("moments2amplitudes.driver.ensure_aclic_updated")
     @patch("moments2amplitudes.driver.run_mcmc_propagation")
     def test_run_mcmc_propagation_tbins(self, mock_run, mock_aclic):
