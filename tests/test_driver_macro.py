@@ -37,7 +37,7 @@ class TestDriverMacro(unittest.TestCase):
             self.assertIn("MassDependentFitter fitter", content)
             self.assertIn("void RunWorker", content)
 
-    def test_macro_generation_phase_reference_and_shared_phase(self):
+    def test_macro_generation_fixed_phase_and_shared_phase(self):
         cfg = load_config(Path("configs/a2CS_SPiecewise_DBreitWigner.yaml"))
         macro_path = self.temp_dir / "macro_test_phase_ref.C"
         generate_root_macro(cfg, macro_path)
@@ -48,8 +48,8 @@ class TestDriverMacro(unittest.TestCase):
         self.assertIn("paramManager.AddMassDependentParameter({2}", content)
         self.assertIn(", 2);", content)
 
-        # Check phase reference fixing for a2_1320
-        self.assertIn("// Phase reference for resonance a2_1320 (phases fixed to 0.0)", content)
+        # Check fixed phase for a2_1320
+        self.assertIn("// Fixed phase for resonance a2_1320 (phases fixed to 0.0)", content)
         self.assertIn('"MD_shareda_a2_1320_globalphase"', content)
         self.assertIn('"MD_sharedb_a2_1320_globalphase"', content)
         self.assertIn("paramManager.FixParameter(pName);", content)

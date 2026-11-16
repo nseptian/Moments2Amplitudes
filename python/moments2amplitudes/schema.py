@@ -130,7 +130,6 @@ class ResonanceConfig:
     phase_fixed: bool = False
     fixed_phase: Optional[float] = None
     phase_limits: Optional[List[float]] = None
-    phase_reference: bool = False  # Fixed to zero as phase reference (kept for compatibility)
 
 
 @dataclass
@@ -164,7 +163,6 @@ class WaveConfig:
     poly_order: int = -1
     resonances: List[ResonanceConfig] = field(default_factory=list)
     init: WaveInitConfig = field(default_factory=WaveInitConfig)
-    phase_reference: Union[bool, str] = False
     phase: Optional[float] = None
     phase_fixed: bool = False
     shared_phase: Optional[Union[bool, str, int]] = None
@@ -271,7 +269,6 @@ class FitConfig:
     mcmc_propagation: MCMCPropagationConfig = field(default_factory=MCMCPropagationConfig)
     plotting: PlottingConfig = field(default_factory=PlottingConfig)
     cross_section: CrossSectionConfig = field(default_factory=CrossSectionConfig)
-    phase_reference: Optional[Union[str, List[str]]] = None
     shared_phases_by_reflectivity: bool = False
 
     def to_dict(self) -> Dict[str, Any]:

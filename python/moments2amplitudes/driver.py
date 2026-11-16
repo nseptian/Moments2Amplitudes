@@ -337,12 +337,12 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         rand_l_str = ", ".join(str(w.l) for w in mi_random)
         lines.append(f"    paramManager.AddMassIndependentParameter({{{rand_l_str}}}, seed);")
 
-    # Fix phase for piecewise waves if marked as phase reference or phase is fixed
+    # Fix phase for piecewise waves if phase is fixed
     for w in mi_waves:
-        if w.init.phase.is_fixed or w.phase_reference:
-            val = w.init.phase.value
+        if w.init.phase.is_fixed or w.phase_fixed:
+            val = w.init.phase.value if w.init.phase.is_fixed else (w.phase if w.phase is not None else 0.0)
             lines.extend([
-                f"    // Phase reference / fixed phase for piecewise wave L={w.l}",
+                f"    // Fixed phase for piecewise wave L={w.l}",
                 "    for (const double mb : massBins) {",
                 f'        TString aPhaseName = Form("MI_%1.6f_aphi_{w.l}_0", mb);',
                 f'        TString bPhaseName = Form("MI_%1.6f_bphi_{w.l}_0", mb);',
@@ -385,20 +385,11 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                 if len(constr) == 2:
                     lines.append(f'    paramManager.SetGaussianConstraint("{par_key}", {constr[0]}, {constr[1]});')
 
-            # Phase reference / shared phase handling for resonance
-            is_phase_ref = (
-                res.phase_reference
-                or res.phase_fixed
-                or (w.phase_reference is True)
-                or (w.phase_reference == res.name)
-                or (w.phase_fixed and w.phase is not None and (res.phase is None or res.phase_fixed))
-                or (config.phase_reference == res.name)
-                or (isinstance(config.phase_reference, (list, tuple)) and res.name in config.phase_reference)
-            )
-            if is_phase_ref:
+            # Phase handling for resonance
+            if res.phase_fixed:
                 fix_val = res.fixed_phase if res.fixed_phase is not None else (res.phase if res.phase is not None else 0.0)
                 lines.extend([
-                    f'    // Phase reference for resonance {res.name} (phases fixed to {fix_val})',
+                    f'    // Fixed phase for resonance {res.name} (phases fixed to {fix_val})',
                     f'    for (const char* pName : {{',
                     f'        "MD_shareda_{res.name}_globalphase",',
                     f'        "MD_sharedb_{res.name}_globalphase",',
@@ -429,7 +420,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                     f'    }}',
                 ])
 
-            if res.phase_limits and len(res.phase_limits) == 2 and not is_phase_ref:
+            if res.phase_limits and len(res.phase_limits) == 2 and not res.phase_fixed:
                 lines.extend([
                     f'    // Set phase limits for resonance {res.name}',
                     f'    for (const char* pName : {{',

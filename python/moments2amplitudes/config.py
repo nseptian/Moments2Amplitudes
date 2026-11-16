@@ -190,15 +190,6 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
             phase_val = float(res_dict["fixed_phase"])
             phase_fixed = True
 
-        res_phase_ref = bool(
-            res_dict.get("phase_reference", False)
-            or res_dict.get("is_phase_reference", False)
-        )
-        if res_phase_ref:
-            phase_fixed = True
-            if phase_val is None:
-                phase_val = 0.0
-
         if phase_fixed is None:
             phase_fixed = False
 
@@ -218,12 +209,10 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
                 phase_fixed=phase_fixed,
                 fixed_phase=res_fixed_val,
                 phase_limits=phase_limits,
-                phase_reference=res_phase_ref or (phase_fixed and phase_val == 0.0),
             )
         )
 
-    # Wave-level phase reference or general phase
-    wave_phase_ref = wave_dict.get("phase_reference", wave_dict.get("is_phase_reference", False))
+    # Wave-level general phase
     wave_phase_raw = wave_dict.get("phase", None)
     wave_phase_fixed = bool(wave_dict.get("phase_fixed", False))
     wave_phase_val = None
@@ -244,23 +233,6 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
                 r.phase = wave_phase_val
                 r.phase_fixed = True
                 r.fixed_phase = wave_phase_val
-                if wave_phase_val == 0.0:
-                    r.phase_reference = True
-
-    if isinstance(wave_phase_ref, str):
-        # Specific resonance name marked as phase reference
-        for r in resonances:
-            if r.name == wave_phase_ref:
-                r.phase_reference = True
-                r.phase_fixed = True
-                r.fixed_phase = 0.0
-                r.phase = 0.0
-    elif isinstance(wave_phase_ref, bool) and wave_phase_ref:
-        for r in resonances:
-            r.phase_reference = True
-            r.phase_fixed = True
-            r.fixed_phase = 0.0
-            r.phase = 0.0
 
     # Init config
     init_dict = wave_dict.get("init", {})
@@ -289,8 +261,8 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
                 option = 0
         elif isinstance(shared_phase_raw, (int, float)):
             option = int(shared_phase_raw)
-    elif (any(r.phase_fixed for r in resonances) or any(r.phase_reference for r in resonances) or bool(wave_phase_ref) or (wave_phase_val is not None and wave_phase_fixed)) and "option" not in init_dict:
-        # Default to shared phase per reflectivity when designated as phase reference
+    elif (any(r.phase_fixed for r in resonances) or (wave_phase_val is not None and wave_phase_fixed)) and "option" not in init_dict:
+        # Default to shared phase per reflectivity when a phase is fixed
         option = 2
 
     strat_str = init_dict.get("strategy", "default").lower()
@@ -360,7 +332,6 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
         poly_order=poly_order,
         resonances=resonances,
         init=init_cfg,
-        phase_reference=wave_phase_ref or (wave_phase_fixed and wave_phase_val == 0.0),
         phase=wave_phase_val,
         phase_fixed=wave_phase_fixed,
         shared_phase=shared_phase_raw,
@@ -539,22 +510,10 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         propagate_mcmc=bool(cs_dict.get("propagate_mcmc", True)),
     )
 
-    # Top-level phase reference and shared phase options
-    phase_ref = data.get("phase_reference", data.get("phase_ref"))
+    # Top-level shared phase options
     shared_phases_by_refl = bool(
         data.get("shared_phases_by_reflectivity", data.get("shared_phase_per_reflectivity", False))
     )
-
-    if phase_ref is not None:
-        ref_names = [phase_ref] if isinstance(phase_ref, str) else list(phase_ref)
-        for w in waves:
-            for r in w.resonances:
-                if r.name in ref_names:
-                    r.phase_reference = True
-                    r.phase_fixed = True
-                    r.fixed_phase = 0.0
-                    if w.init.option == 0 and w.init.shared_phase is False:
-                        w.init.option = 2
 
     if shared_phases_by_refl:
         for w in waves:
@@ -573,7 +532,6 @@ def load_config(file_path: Union[str, Path]) -> FitConfig:
         mcmc_propagation=mcmc_propagation,
         plotting=plotting,
         cross_section=cross_section,
-        phase_reference=phase_ref,
         shared_phases_by_reflectivity=shared_phases_by_refl,
     )
 

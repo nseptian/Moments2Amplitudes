@@ -90,15 +90,15 @@ class TestConfig(unittest.TestCase):
         self.assertIsNotNone(cfg.environment.brufit_dir)
         self.assertGreater(len(cfg.environment.brufit_dir), 0)
 
-    def test_phase_reference_and_shared_phase_options(self):
+    def test_fixed_phase_and_shared_phase_options(self):
         # 1. Test from updated SPiecewise_DBreitWigner configs
         cfg = load_config(Path("configs/a2CS_SPiecewise_DBreitWigner.yaml"))
         d_wave = next(w for w in cfg.waves if w.l == 2)
         res = d_wave.resonances[0]
         self.assertEqual(res.name, "a2_1320")
-        self.assertTrue(res.phase_reference)
         self.assertTrue(res.phase_fixed)
         self.assertEqual(res.fixed_phase, 0.0)
+        self.assertEqual(res.phase, 0.0)
         self.assertEqual(d_wave.init.option, 2)
         self.assertTrue(bool(d_wave.init.shared_phase))
 
@@ -119,41 +119,29 @@ class TestConfig(unittest.TestCase):
         })
         self.assertEqual(w2.init.option, 1)
 
-        # Resonance marked as phase_reference automatically defaults to option 2 if unspecified
+        # Resonance with fixed phase automatically defaults to option 2 if unspecified
         w3 = parse_wave_config({
-            "l": 2, "name": "D-wave", "type": "mass_dependent",
-            "resonances": [{"name": "a2_1320", "phase_reference": True}]
-        })
-        self.assertEqual(w3.init.option, 2)
-        self.assertTrue(w3.resonances[0].phase_reference)
-        self.assertEqual(w3.resonances[0].fixed_phase, 0.0)
-
-        # Wave-level phase_reference
-        w4 = parse_wave_config({
-            "l": 2, "name": "D-wave", "type": "mass_dependent", "phase_reference": "a2_1320",
-            "resonances": [{"name": "a2_1320"}, {"name": "a2_1700"}]
-        })
-        self.assertTrue(w4.resonances[0].phase_reference)
-        self.assertFalse(w4.resonances[1].phase_reference)
-        self.assertEqual(w4.init.option, 2)
-
-        # General phase set to zero with phase_fixed: true sets it as reference
-        w5 = parse_wave_config({
             "l": 2, "name": "D-wave", "type": "mass_dependent",
             "resonances": [{"name": "a2_1320", "phase": 0.0, "phase_fixed": True}]
         })
-        self.assertTrue(w5.resonances[0].phase_reference)
-        self.assertTrue(w5.resonances[0].phase_fixed)
-        self.assertEqual(w5.resonances[0].fixed_phase, 0.0)
-        self.assertEqual(w5.resonances[0].phase, 0.0)
-        self.assertEqual(w5.init.option, 2)
+        self.assertEqual(w3.init.option, 2)
+        self.assertTrue(w3.resonances[0].phase_fixed)
+        self.assertEqual(w3.resonances[0].fixed_phase, 0.0)
 
-        # General phase scalar 0.0 directly
+        # Wave-level phase
+        w4 = parse_wave_config({
+            "l": 2, "name": "D-wave", "type": "mass_dependent", "phase": 0.0, "phase_fixed": True,
+            "resonances": [{"name": "a2_1320"}, {"name": "a2_1700"}]
+        })
+        self.assertTrue(w4.resonances[0].phase_fixed)
+        self.assertTrue(w4.resonances[1].phase_fixed)
+        self.assertEqual(w4.init.option, 2)
+
+        # General phase scalar 0.0 directly sets fixed
         w6 = parse_wave_config({
             "l": 2, "name": "D-wave", "type": "mass_dependent",
             "resonances": [{"name": "a2_1320", "phase": 0.0}]
         })
-        self.assertTrue(w6.resonances[0].phase_reference)
         self.assertTrue(w6.resonances[0].phase_fixed)
         self.assertEqual(w6.resonances[0].fixed_phase, 0.0)
 
@@ -162,7 +150,9 @@ class TestConfig(unittest.TestCase):
             "l": 2, "name": "D-wave", "type": "mass_dependent",
             "resonances": [{"name": "a2_1700", "phase": 1.57, "phase_fixed": False}]
         })
-        self.assertFalse(w7.resonances[0].phase_reference)
+        self.assertFalse(w7.resonances[0].phase_fixed)
+        self.assertIsNone(w7.resonances[0].fixed_phase)
+        self.assertEqual(w7.resonances[0].phase, 1.57)
         self.assertFalse(w7.resonances[0].phase_fixed)
         self.assertIsNone(w7.resonances[0].fixed_phase)
         self.assertEqual(w7.resonances[0].phase, 1.57)
