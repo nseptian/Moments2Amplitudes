@@ -391,11 +391,12 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                 or res.phase_fixed
                 or (w.phase_reference is True)
                 or (w.phase_reference == res.name)
+                or (w.phase_fixed and w.phase is not None and (res.phase is None or res.phase_fixed))
                 or (config.phase_reference == res.name)
                 or (isinstance(config.phase_reference, (list, tuple)) and res.name in config.phase_reference)
             )
             if is_phase_ref:
-                fix_val = res.fixed_phase if res.fixed_phase is not None else 0.0
+                fix_val = res.fixed_phase if res.fixed_phase is not None else (res.phase if res.phase is not None else 0.0)
                 lines.extend([
                     f'    // Phase reference for resonance {res.name} (phases fixed to {fix_val})',
                     f'    for (const char* pName : {{',
@@ -413,7 +414,22 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                     f'        }}',
                     f'    }}',
                 ])
-            elif res.phase_limits and len(res.phase_limits) == 2:
+            elif res.phase is not None:
+                init_val = res.phase
+                lines.extend([
+                    f'    // Initial phase for resonance {res.name}',
+                    f'    for (const char* pName : {{',
+                    f'        "MD_shareda_{res.name}_globalphase",',
+                    f'        "MD_sharedb_{res.name}_globalphase",',
+                    f'        "MD_{res.name}_globalphase"',
+                    f'    }}) {{',
+                    f'        if (paramManager.HasParameter(pName)) {{',
+                    f'            paramManager.SetParameterInitialValue(pName, {init_val});',
+                    f'        }}',
+                    f'    }}',
+                ])
+
+            if res.phase_limits and len(res.phase_limits) == 2 and not is_phase_ref:
                 lines.extend([
                     f'    // Set phase limits for resonance {res.name}',
                     f'    for (const char* pName : {{',

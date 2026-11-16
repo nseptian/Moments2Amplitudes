@@ -164,20 +164,45 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
     # Resonances
     resonances: List[ResonanceConfig] = []
     for res_dict in wave_dict.get("resonances", []):
+        phase_raw = res_dict.get("phase", None)
+        phase_val = None
+        phase_fixed = None
+        phase_limits = res_dict.get("phase_limits", None)
+
+        if isinstance(phase_raw, dict):
+            phase_val = float(phase_raw.get("value", 0.0))
+            phase_fixed = bool(phase_raw.get("fixed", phase_raw.get("is_fixed", True)))
+            if "limits" in phase_raw:
+                phase_limits = phase_raw["limits"]
+        elif isinstance(phase_raw, (int, float)):
+            phase_val = float(phase_raw)
+            if "phase_fixed" in res_dict:
+                phase_fixed = bool(res_dict["phase_fixed"])
+            elif "fixed" in res_dict:
+                phase_fixed = bool(res_dict["fixed"])
+            else:
+                # Direct scalar e.g. phase: 0.0 -> fixed to zero as reference
+                phase_fixed = True
+        elif "phase_fixed" in res_dict:
+            phase_fixed = bool(res_dict["phase_fixed"])
+            phase_val = float(res_dict.get("fixed_phase", res_dict.get("phase", 0.0)))
+        elif "fixed_phase" in res_dict and res_dict["fixed_phase"] is not None:
+            phase_val = float(res_dict["fixed_phase"])
+            phase_fixed = True
+
         res_phase_ref = bool(
             res_dict.get("phase_reference", False)
             or res_dict.get("is_phase_reference", False)
         )
-        res_phase_fixed = bool(
-            res_dict.get("phase_fixed", False)
-            or res_dict.get("fix_phase", False)
-            or res_phase_ref
-        )
-        res_fixed_val = None
-        if "fixed_phase" in res_dict and res_dict["fixed_phase"] is not None:
-            res_fixed_val = float(res_dict["fixed_phase"])
-        elif res_phase_ref or res_phase_fixed:
-            res_fixed_val = 0.0
+        if res_phase_ref:
+            phase_fixed = True
+            if phase_val is None:
+                phase_val = 0.0
+
+        if phase_fixed is None:
+            phase_fixed = False
+
+        res_fixed_val = phase_val if phase_fixed else None
 
         resonances.append(
             ResonanceConfig(
@@ -189,15 +214,39 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
                 mass_limits=res_dict.get("mass_limits"),
                 width_limits=res_dict.get("width_limits"),
                 gaussian_constraints=res_dict.get("gaussian_constraints", {}),
-                phase_reference=res_phase_ref,
-                phase_fixed=res_phase_fixed,
+                phase=phase_val,
+                phase_fixed=phase_fixed,
                 fixed_phase=res_fixed_val,
-                phase_limits=res_dict.get("phase_limits"),
+                phase_limits=phase_limits,
+                phase_reference=res_phase_ref or (phase_fixed and phase_val == 0.0),
             )
         )
 
-    # Wave-level phase reference
+    # Wave-level phase reference or general phase
     wave_phase_ref = wave_dict.get("phase_reference", wave_dict.get("is_phase_reference", False))
+    wave_phase_raw = wave_dict.get("phase", None)
+    wave_phase_fixed = bool(wave_dict.get("phase_fixed", False))
+    wave_phase_val = None
+
+    if isinstance(wave_phase_raw, dict):
+        wave_phase_fixed = bool(wave_phase_raw.get("fixed", wave_phase_raw.get("is_fixed", True)))
+        wave_phase_val = float(wave_phase_raw.get("value", 0.0))
+    elif isinstance(wave_phase_raw, (int, float)):
+        wave_phase_val = float(wave_phase_raw)
+        if "phase_fixed" in wave_dict:
+            wave_phase_fixed = bool(wave_dict["phase_fixed"])
+        else:
+            wave_phase_fixed = True
+
+    if wave_phase_val is not None and wave_phase_fixed:
+        for r in resonances:
+            if r.phase is None:
+                r.phase = wave_phase_val
+                r.phase_fixed = True
+                r.fixed_phase = wave_phase_val
+                if wave_phase_val == 0.0:
+                    r.phase_reference = True
+
     if isinstance(wave_phase_ref, str):
         # Specific resonance name marked as phase reference
         for r in resonances:
@@ -205,11 +254,13 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
                 r.phase_reference = True
                 r.phase_fixed = True
                 r.fixed_phase = 0.0
+                r.phase = 0.0
     elif isinstance(wave_phase_ref, bool) and wave_phase_ref:
         for r in resonances:
             r.phase_reference = True
             r.phase_fixed = True
             r.fixed_phase = 0.0
+            r.phase = 0.0
 
     # Init config
     init_dict = wave_dict.get("init", {})
@@ -238,7 +289,7 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
                 option = 0
         elif isinstance(shared_phase_raw, (int, float)):
             option = int(shared_phase_raw)
-    elif (any(r.phase_reference for r in resonances) or bool(wave_phase_ref)) and "option" not in init_dict:
+    elif (any(r.phase_fixed for r in resonances) or any(r.phase_reference for r in resonances) or bool(wave_phase_ref) or (wave_phase_val is not None and wave_phase_fixed)) and "option" not in init_dict:
         # Default to shared phase per reflectivity when designated as phase reference
         option = 2
 
@@ -266,15 +317,28 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
         is_fixed=bool(mag_dict.get("fixed", False)),
     )
 
-    phase_dict = init_dict.get("phase", {})
-    phase_strat = phase_dict.get("strategy", "fixed").lower()
-    phase_rule = ParameterInitRule(
-        strategy=InitStrategy.FIXED_VALUE if phase_strat == "fixed" else InitStrategy.RANDOM,
-        min_val=float(phase_dict.get("min", -3.14159265)),
-        max_val=float(phase_dict.get("max", 3.14159265)),
-        value=float(phase_dict.get("value", 0.0)),
-        is_fixed=bool(phase_dict.get("fixed", False)),
-    )
+    phase_dict = init_dict.get("phase", wave_dict.get("phase", {}))
+    if isinstance(phase_dict, (int, float)):
+        phase_rule = ParameterInitRule(
+            strategy=InitStrategy.FIXED_VALUE,
+            value=float(phase_dict),
+            is_fixed=bool(init_dict.get("phase_fixed", wave_dict.get("phase_fixed", True))),
+        )
+    elif isinstance(phase_dict, dict):
+        phase_strat = phase_dict.get("strategy", "fixed").lower()
+        phase_rule = ParameterInitRule(
+            strategy=InitStrategy.FIXED_VALUE if phase_strat == "fixed" else InitStrategy.RANDOM,
+            min_val=float(phase_dict.get("min", -3.14159265)),
+            max_val=float(phase_dict.get("max", 3.14159265)),
+            value=float(phase_dict.get("value", 0.0)),
+            is_fixed=bool(phase_dict.get("fixed", init_dict.get("phase_fixed", wave_dict.get("phase_fixed", False)))),
+        )
+    else:
+        phase_rule = ParameterInitRule(
+            strategy=InitStrategy.FIXED_VALUE,
+            value=0.0,
+            is_fixed=False,
+        )
 
     init_cfg = WaveInitConfig(
         strategy=init_strat,
@@ -296,7 +360,9 @@ def parse_wave_config(wave_dict: Dict[str, Any]) -> WaveConfig:
         poly_order=poly_order,
         resonances=resonances,
         init=init_cfg,
-        phase_reference=wave_phase_ref,
+        phase_reference=wave_phase_ref or (wave_phase_fixed and wave_phase_val == 0.0),
+        phase=wave_phase_val,
+        phase_fixed=wave_phase_fixed,
         shared_phase=shared_phase_raw,
     )
 

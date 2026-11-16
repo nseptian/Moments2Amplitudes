@@ -137,6 +137,36 @@ class TestConfig(unittest.TestCase):
         self.assertFalse(w4.resonances[1].phase_reference)
         self.assertEqual(w4.init.option, 2)
 
+        # General phase set to zero with phase_fixed: true sets it as reference
+        w5 = parse_wave_config({
+            "l": 2, "name": "D-wave", "type": "mass_dependent",
+            "resonances": [{"name": "a2_1320", "phase": 0.0, "phase_fixed": True}]
+        })
+        self.assertTrue(w5.resonances[0].phase_reference)
+        self.assertTrue(w5.resonances[0].phase_fixed)
+        self.assertEqual(w5.resonances[0].fixed_phase, 0.0)
+        self.assertEqual(w5.resonances[0].phase, 0.0)
+        self.assertEqual(w5.init.option, 2)
+
+        # General phase scalar 0.0 directly
+        w6 = parse_wave_config({
+            "l": 2, "name": "D-wave", "type": "mass_dependent",
+            "resonances": [{"name": "a2_1320", "phase": 0.0}]
+        })
+        self.assertTrue(w6.resonances[0].phase_reference)
+        self.assertTrue(w6.resonances[0].phase_fixed)
+        self.assertEqual(w6.resonances[0].fixed_phase, 0.0)
+
+        # General floating phase
+        w7 = parse_wave_config({
+            "l": 2, "name": "D-wave", "type": "mass_dependent",
+            "resonances": [{"name": "a2_1700", "phase": 1.57, "phase_fixed": False}]
+        })
+        self.assertFalse(w7.resonances[0].phase_reference)
+        self.assertFalse(w7.resonances[0].phase_fixed)
+        self.assertIsNone(w7.resonances[0].fixed_phase)
+        self.assertEqual(w7.resonances[0].phase, 1.57)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -62,7 +62,8 @@ waves:
         width_fixed: true
         mass_limits: [1.20, 1.45]
         width_limits: [0.05, 0.25]
-        phase_reference: true  # a2(1320) phase reference (phases fixed to zero)
+        phase: 0.0
+        phase_fixed: true      # General phase set to 0.0 to fix as reference
     init:
       strategy: "from_file"
       file_path: "logs_a2CS_dbw/{tbin}/fit/nominal_best.root"

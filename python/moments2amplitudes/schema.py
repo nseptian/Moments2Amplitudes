@@ -126,10 +126,11 @@ class ResonanceConfig:
     mass_limits: Optional[List[float]] = None
     width_limits: Optional[List[float]] = None
     gaussian_constraints: Dict[str, List[float]] = field(default_factory=dict)  # param -> [mean, sigma]
-    phase_reference: bool = False  # Fixed to zero as phase reference
+    phase: Optional[float] = None
     phase_fixed: bool = False
     fixed_phase: Optional[float] = None
     phase_limits: Optional[List[float]] = None
+    phase_reference: bool = False  # Fixed to zero as phase reference (kept for compatibility)
 
 
 @dataclass
@@ -164,6 +165,8 @@ class WaveConfig:
     resonances: List[ResonanceConfig] = field(default_factory=list)
     init: WaveInitConfig = field(default_factory=WaveInitConfig)
     phase_reference: Union[bool, str] = False
+    phase: Optional[float] = None
+    phase_fixed: bool = False
     shared_phase: Optional[Union[bool, str, int]] = None
 
     def __post_init__(self):
