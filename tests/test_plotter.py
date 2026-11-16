@@ -199,6 +199,41 @@ class TestPlotter(unittest.TestCase):
         self.assertEqual(format_amplitude_symbol("a_2_1"), "D^{+}_{1}")
         self.assertEqual(format_amplitude_squared_symbol("a_2_1"), "|D^{+}_{1}|^2")
 
+    def test_format_mcmc_parameter_label(self):
+        import matplotlib.mathtext as mathtext
+        from moments2amplitudes.plotter import format_mcmc_parameter_label
+
+        parser = mathtext.MathTextParser("path")
+        test_cases = [
+            ("chi2", r"$\chi^2$", r"$\chi^2$"),
+            ("MI_1.300000_a_2_0", r"$D^{+}_{0}$ (1.30 GeV)", r"$D^{+}_{0}$ (1.30)"),
+            ("MD_shared_a2_1320_Mass1", r"$M_{1}$ (a2\_1320)", r"$M_{1}$"),
+            ("MD_shared_a2_1320_Width1", r"$\Gamma_{1}$ (a2\_1320)", r"$\Gamma_{1}$"),
+            ("MD_shared_a2_1700_Mass2", r"$M_{2}$ (a2\_1700)", r"$M_{2}$"),
+            ("MD_shared_a2_1700_Width2", r"$\Gamma_{2}$ (a2\_1700)", r"$\Gamma_{2}$"),
+            ("MD_shared_a2_1320_Mass", r"$M$ (a2\_1320)", r"$M$"),
+            ("MD_shared_a2_1320_Width", r"$\Gamma$ (a2\_1320)", r"$\Gamma$"),
+            ("MD_shareda_a2_1700_globalphase", r"$\phi^{(+)}(a2\_1700)$", r"$\phi^{(+)}(a2\_1700)$"),
+            ("MD_a_2_-2_1700_k1", r"$k_1(D^{+}_{-2})$", r"$k_1(D^{+}_{-2})$"),
+            ("MD_a_2_-2_a2_1320_1700_k1", r"$k_1(D^{+}_{-2})$", r"$k_1(D^{+}_{-2})$"),
+            ("MD_a_2_-2_a2_1320_1700_k2", r"$k_2(D^{+}_{-2})$", r"$k_2(D^{+}_{-2})$"),
+            ("MD_a_2_0_a2_1320_k", r"$k(D^{+}_{0})$", r"$k(D^{+}_{0})$"),
+            ("MD_b_2_1_a2_1700_k", r"$k(D^{-}_{1})$", r"$k(D^{-}_{1})$"),
+            ("MD_shared_f0_980_g_etapi", r"$g_{\eta\pi}$", r"$g_{\eta\pi}$"),
+        ]
+
+        for raw_name, exp_long, exp_short in test_cases:
+            long_lbl = format_mcmc_parameter_label(raw_name, short=False)
+            short_lbl = format_mcmc_parameter_label(raw_name, short=True)
+            self.assertEqual(long_lbl, exp_long, f"Mismatch for long label: {raw_name}")
+            self.assertEqual(short_lbl, exp_short, f"Mismatch for short label: {raw_name}")
+            # Ensure both can be parsed by matplotlib mathtext without double subscript or syntax errors
+            try:
+                parser.parse(long_lbl)
+                parser.parse(short_lbl)
+            except Exception as e:
+                self.fail(f"MathTextParser failed on {raw_name} -> long: {long_lbl}, short: {short_lbl}: {e}")
+
     @patch("moments2amplitudes.plotter.as_completed")
     @patch("moments2amplitudes.plotter.ProcessPoolExecutor")
     def test_plot_tbins_parallel(self, mock_executor_cls, mock_as_completed):

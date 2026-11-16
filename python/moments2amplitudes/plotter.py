@@ -326,11 +326,12 @@ def get_amplitude_symbol_parts(name: str) -> Optional[Tuple[str, str, str, str]]
     if len(parts) >= 3:
         prefix = parts[0]
         l_str = parts[1]
-        m_str = "_".join(parts[2:])
+        m_str = parts[2]
         if prefix in ("a", "b", "aphi", "bphi"):
             try:
                 l_val = int(l_str)
                 l_sym = L_SPECTROSCOPIC.get(l_val, f"L_{{{l_val}}}")
+                int(m_str)
             except ValueError:
                 l_sym = l_str
             refl = "+" if prefix in ("a", "aphi") else "-"
@@ -377,6 +378,115 @@ def format_amplitude_squared_symbol(name: str) -> str:
 def format_amplitude_squared_label(name: str) -> str:
     """Format amplitude squared name into LaTeX math string (e.g. a_2_-1 -> $|D^{+}_{-1}|^2$)."""
     return f"${format_amplitude_squared_symbol(name)}$"
+
+
+def _safe_mathtext_label(label: str, fallback_raw: str = "") -> str:
+    """Validate mathtext with matplotlib parser; if invalid, return escaped plain text."""
+    try:
+        if "$" in label:
+            import matplotlib.mathtext as mathtext
+            mathtext.MathTextParser("path").parse(label)
+        return label
+    except Exception:
+        fallback = fallback_raw or label
+        return fallback.replace("$", "").replace("_", " ")
+
+
+def format_mcmc_parameter_label(pname: str, short: bool = False) -> str:
+    """
+    Format internal parameter names (MD_*, MI_*, chi2) into valid, clean LaTeX mathtext labels.
+    Guarantees no double-subscripts or invalid characters that would cause mathtext parse errors.
+    """
+    if pname == "chi2":
+        return r"$\chi^2$"
+
+    # 1. Piecewise mass-independent parameters: MI_<mass>_<amp>
+    if pname.startswith("MI_"):
+        m_parts = pname.split("_")
+        if len(m_parts) >= 4:
+            mb = m_parts[1]
+            amp = "_".join(m_parts[2:])
+            try:
+                mb_val = f"{float(mb):.2f}"
+            except ValueError:
+                mb_val = mb
+            sym = format_amplitude_symbol(amp)
+            if short:
+                lbl = f"${sym}$ ({mb_val})"
+            else:
+                lbl = f"${sym}$ ({mb_val} GeV)"
+            return _safe_mathtext_label(lbl, pname)
+        return _safe_mathtext_label(pname.replace("_", r"\_"), pname)
+
+    # 2. Shared resonance parameters (Mass, Width, couplings like g_etapi)
+    if "Mass" in pname or "Width" in pname:
+        m_idx = re.search(r"(Mass|Width)([0-9]*)", pname)
+        if m_idx:
+            par_type = m_idx.group(1)
+            idx = m_idx.group(2)
+            sym = "M" if par_type == "Mass" else r"\Gamma"
+            idx_sub = f"_{{{idx}}}" if idx else ""
+            if short:
+                return _safe_mathtext_label(f"${sym}{idx_sub}$", pname)
+            clean_res = pname.replace("MD_", "").replace("shared_", "")
+            clean_res = re.sub(r"_(Mass|Width)[0-9]*$", "", clean_res).replace("_", r"\_")
+            lbl = f"${sym}{idx_sub}$ ({clean_res})" if clean_res else f"${sym}{idx_sub}$"
+            return _safe_mathtext_label(lbl, pname)
+
+    if "_g_" in pname or pname.endswith("_g"):
+        g_match = re.search(r"g_([a-zA-Z0-9]+)", pname)
+        if g_match:
+            channel = g_match.group(1).replace("pi", r"\pi").replace("eta", r"\eta")
+            return _safe_mathtext_label(f"$g_{{{channel}}}$", pname)
+
+    # 3. Global phase parameters
+    if "globalphase" in pname or "phase" in pname:
+        refl_match = re.search(r"shared([ab])_", pname)
+        refl = "^{(+)}" if refl_match and refl_match.group(1) == "a" else ("^{(-)}" if refl_match and refl_match.group(1) == "b" else "")
+        clean_res = pname.replace("MD_", "").replace("shareda_", "").replace("sharedb_", "").replace("shared_", "")
+        clean_res = clean_res.replace("_globalphase", "").replace("_phase", "").replace("_", r"\_")
+        if short:
+            lbl = f"$\\phi{refl}$" if not clean_res else f"$\\phi{refl}({clean_res})$"
+        else:
+            lbl = f"$\\phi{refl}({clean_res})$" if clean_res else f"$\\phi{refl}$"
+        return _safe_mathtext_label(lbl, pname)
+
+    # 4. Wave coupling parameters: MD_<refl>_<L>_<M>_<wave>_<param>
+    # e.g. MD_a_2_-2_a2_1320_1700_k1, MD_a_2_0_a2_1320_k, MD_b_2_1_k2
+    match_wave = re.match(r"^MD_([ab]|aphi|bphi)_([0-9]+)_(-?[0-9]+)(?:_(.*))?$", pname)
+    if match_wave:
+        refl_pre = match_wave.group(1)
+        l_str = match_wave.group(2)
+        m_str = match_wave.group(3)
+        rest = match_wave.group(4) or ""
+        amp_key = f"{refl_pre}_{l_str}_{m_str}"
+        sym = format_amplitude_symbol(amp_key)
+
+        if not rest:
+            lbl = f"${sym}$"
+        elif rest == "k" or rest.endswith("_k"):
+            lbl = f"$k({sym})$"
+        elif rest == "k1" or rest.endswith("_k1") or rest.endswith("_1"):
+            lbl = f"$k_1({sym})$"
+        elif rest == "k2" or rest.endswith("_k2") or rest.endswith("_2"):
+            lbl = f"$k_2({sym})$"
+        elif "re_" in rest or "im_" in rest:
+            re_m = re.search(r"(re|im)_([0-9]+)", rest)
+            if re_m:
+                part_kind = r"\mathrm{Re}" if re_m.group(1) == "re" else r"\mathrm{Im}"
+                c_idx = re_m.group(2)
+                lbl = f"${part_kind}_{{{c_idx}}}({sym})$"
+            else:
+                clean_rest = rest.replace("_", r"\_")
+                lbl = f"$k_{{{clean_rest}}}({sym})$"
+        else:
+            clean_rest = rest.replace("_", r"\_")
+            lbl = f"$k_{{{clean_rest}}}({sym})$"
+        return _safe_mathtext_label(lbl, pname)
+
+    # 5. Generic fallback
+    clean_fallback = pname.replace("MD_", "").replace("_", r"\_")
+    return _safe_mathtext_label(f"${clean_fallback}$", pname)
 
 
 def smooth_curve(
@@ -1976,30 +2086,7 @@ def plot_amplitudes_and_bands(
                 ax.axvline(q84, color="#2B4C7E", linestyle=":", linewidth=1.2)
                 ax.axvspan(q16, q84, color="#2B4C7E", alpha=0.15)
 
-                clean_name = pname
-                if pname.startswith("MI_"):
-                    m_parts = pname.split("_")
-                    if len(m_parts) >= 4:
-                        mb = m_parts[1]
-                        amp = "_".join(m_parts[2:])
-                        try:
-                            mb_val = f"{float(mb):.2f}"
-                        except ValueError:
-                            mb_val = mb
-                        clean_name = f"${format_amplitude_symbol(amp)}$ ({mb_val} GeV)"
-                    else:
-                        clean_name = pname.replace("_", "\\_")
-                elif pname.startswith("MD_"):
-                    parts = pname[3:].split("_")
-                    if len(parts) >= 3 and parts[0] in ("a", "b", "aphi", "bphi"):
-                        amp_key = f"{parts[0]}_{parts[1]}_{parts[2]}"
-                        sym = format_amplitude_symbol(amp_key)
-                        suffix = "_".join(parts[3:]) if len(parts) > 3 else ""
-                        clean_name = f"$k({sym})$" if suffix == "k" else f"${sym}$"
-                    else:
-                        clean_name = pname.replace("_", "\\_")
-                else:
-                    clean_name = pname.replace("_", "\\_")
+                clean_name = format_mcmc_parameter_label(pname, short=False)
 
                 ax.set_title(f"MCMC Posterior Distribution: {clean_name}", fontsize=11, pad=6)
                 ax.set_xlabel(f"{clean_name}", fontsize=10)
@@ -2048,20 +2135,7 @@ def plot_amplitudes_and_bands(
                     ax.axvline(q84, color="#2B4C7E", linestyle=":", linewidth=1.2)
                     ax.axvspan(q16, q84, color="#2B4C7E", alpha=0.15)
 
-                    raw_short = pname.replace("MD_", "").replace("_a2_1320", "")
-                    p_parts = raw_short.split("_")
-                    if len(p_parts) >= 3 and p_parts[0] in ("a", "b", "aphi", "bphi"):
-                        amp_key = f"{p_parts[0]}_{p_parts[1]}_{p_parts[2]}"
-                        sym = format_amplitude_symbol(amp_key)
-                        suffix = "_".join(p_parts[3:]) if len(p_parts) > 3 else ""
-                        if suffix == "k":
-                            short_name = f"$k({sym})$"
-                        elif suffix:
-                            short_name = f"${sym}_{{{suffix}}}$"
-                        else:
-                            short_name = f"${sym}$"
-                    else:
-                        short_name = raw_short.replace("_", "\\_")
+                    short_name = format_mcmc_parameter_label(pname, short=True)
 
                     ax.set_title(f"{short_name} [{q50:.3f}]", fontsize=10, pad=4)
                     if should_show_grid(config):
