@@ -196,8 +196,10 @@ namespace m2pw {
         massDepFuncs_.clear();
         
         std::map<TString, MassDependenceConfig::WaveModelConfig> uniqueWaveConfigs;
+        std::map<TString, int> waveToEll;
         for (const auto& [ell_value, waveConfigs] : massDependenceConfig_.massDependentWaves) {
             for (const auto& waveConfig : waveConfigs) {
+                waveToEll[waveConfig.waveName] = ell_value;
                 auto [it, inserted] = uniqueWaveConfigs.emplace(waveConfig.waveName, waveConfig);
                 if (!inserted) {
                     const bool sameModel = (it->second.modelType == waveConfig.modelType);
@@ -216,12 +218,14 @@ namespace m2pw {
         for (const auto& [waveName, waveConfig] : uniqueWaveConfigs) {
             const int funcType = static_cast<int>(waveConfig.modelType);
             const int polyOrder = waveConfig.polyOrder;
+            const int ell = (waveToEll.find(waveName) != waveToEll.end()) ? waveToEll[waveName] : 2;
 
             massDepFuncs_.emplace_back(static_cast<int>(massBins_.size()),
                                        massBins_.front(),
                                        bin_width,
                                        funcType,
-                                       polyOrder);
+                                       polyOrder,
+                                       ell);
             if (!waveConfig.formula.IsNull()) {
                 massDepFuncs_.back().SetFormulaString(waveConfig.formula.Data());
             }
@@ -390,6 +394,9 @@ namespace m2pw {
     void MassDependentFitter::MinimizeChi2(ParameterManager& paramManager) {
         LogFitInfo("MIN", Form("total_parameters=%d", paramManager.totalNpars));
 
+        minimizerHitLimit_ = false;
+        limitHitParams_.clear();
+
         std::vector<double> initialValues = paramManager.GetValues();
 
         auto minimizer = std::unique_ptr<ROOT::Math::Minimizer>(
@@ -430,12 +437,23 @@ namespace m2pw {
             } else {
                 auto limitIt = paramManager.parameterLimits.find(parName);
                 if (limitIt != paramManager.parameterLimits.end()) {
+                    const double lower = limitIt->second.first;
+                    const double upper = limitIt->second.second;
+                    double clampedVal = value;
+                    const double margin = 1e-4 * std::abs(upper - lower);
+                    if (clampedVal <= lower) {
+                        clampedVal = lower + margin;
+                        LogFitWarn("LIMIT", Form("param=%s value=%g below lower limit %g, clamped to %g", parName.Data(), value, lower, clampedVal));
+                    } else if (clampedVal >= upper) {
+                        clampedVal = upper - margin;
+                        LogFitWarn("LIMIT", Form("param=%s value=%g above upper limit %g, clamped to %g", parName.Data(), value, upper, clampedVal));
+                    }
                     minimizer->SetLimitedVariable(i,
                                                   parName.Data(),
-                                                  value,
+                                                  clampedVal,
                                                   0.01,
-                                                  limitIt->second.first,
-                                                  limitIt->second.second);
+                                                  lower,
+                                                  upper);
                 } else {
                     minimizer->SetVariable(i, parName.Data(), value, 0.01);
                 }
@@ -458,9 +476,36 @@ namespace m2pw {
         for (int i = 0; i < paramManager.totalNpars; ++i) {
             const TString& parName = paramManager.parIndexNames[i];
             paramManager.parsList[parName] = parValues[i];
+
+            const bool fixed = std::find(paramManager.fixedParNames.begin(),
+                                         paramManager.fixedParNames.end(),
+                                         parName) != paramManager.fixedParNames.end();
+            if (!fixed) {
+                auto limitIt = paramManager.parameterLimits.find(parName);
+                if (limitIt != paramManager.parameterLimits.end() && limitIt->second.first < limitIt->second.second) {
+                    const double lower = limitIt->second.first;
+                    const double upper = limitIt->second.second;
+                    const double span = upper - lower;
+                    const double tol = std::max(1e-9, boundaryLimitRelTol_ * span);
+                    if (parValues[i] <= lower + tol || parValues[i] >= upper - tol) {
+                        limitHitParams_.push_back(parName);
+                        LogFitWarn("LIMIT_HIT", Form("param=%s value=%.12g lower=%g upper=%g tol=%g",
+                            parName.Data(), parValues[i], lower, upper, tol));
+                    }
+                }
+            }
+        }
+
+        minimizerHitLimit_ = !limitHitParams_.empty();
+        if (rejectBoundaryLimits_ && minimizerHitLimit_) {
+            minimizerIsValid_ = false;
+            LogFitWarn("MIN", Form("status=%d valid=0 reason=parameter_hit_limit count=%zu",
+                minimizerStatus_, limitHitParams_.size()));
         }
 
         chi2Function(parValues);
+        LogFitInfo("CHI2", Form("total=%g moments=%g penalty=%g",
+            lastChi2_, lastMomentsChi2_, lastConstraintPenalty_));
         paramManager.StoreResults(minimizer.get());
     }
 
@@ -493,7 +538,48 @@ namespace m2pw {
 
             const TString reflTag = ReflectivityTagFromParameterName(par_name);
             bool includeGlobalPhase = false;
-            if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial) || funcType == 4) {
+            if (funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBreitWignerPlusPolynomial) || funcType == 3 ||
+                funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBarrierBreitWignerPlusPolynomial) || funcType == 7) {
+                double phase1 = 0.0;
+                double phase2 = 0.0;
+                bool foundAny = false;
+
+                auto p1It = massDepPars.find(GlobalPhaseComponentKeyForWave(waveName, reflTag, "globalphase1"));
+                if (p1It == massDepPars.end() && reflTag.Length() > 0) {
+                    p1It = massDepPars.find(GlobalPhaseComponentKeyForWave(waveName, "globalphase1"));
+                }
+                if (p1It != massDepPars.end() && !p1It->second.empty()) {
+                    phase1 = p1It->second[0];
+                    foundAny = true;
+                }
+
+                auto p2It = massDepPars.find(GlobalPhaseComponentKeyForWave(waveName, reflTag, "globalphase2"));
+                if (p2It == massDepPars.end() && reflTag.Length() > 0) {
+                    p2It = massDepPars.find(GlobalPhaseComponentKeyForWave(waveName, "globalphase2"));
+                }
+                if (p2It != massDepPars.end() && !p2It->second.empty()) {
+                    phase2 = p2It->second[0];
+                    foundAny = true;
+                }
+
+                // Backward compatibility: fallback to legacy single globalphase
+                if (!foundAny) {
+                    auto phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName, reflTag));
+                    if (phaseIt == massDepPars.end() && reflTag.Length() > 0) {
+                        phaseIt = massDepPars.find(GlobalPhaseKeyForWave(waveName));
+                    }
+                    if (phaseIt != massDepPars.end() && !phaseIt->second.empty()) {
+                        phase2 = phaseIt->second[0];
+                        foundAny = true;
+                    }
+                }
+
+                includeGlobalPhase = foundAny;
+                if (includeGlobalPhase) {
+                    params.push_back(phase1);
+                    params.push_back(phase2);
+                }
+            } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial) || funcType == 4) {
                 double phaseFlatte = 0.0;
                 double phaseBW = 0.0;
                 bool foundAny = false;

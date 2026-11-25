@@ -74,9 +74,12 @@ namespace m2pw {
         const std::map<TString, double> centralParamValues = paramManager.parsList;
         const std::vector<double> centralParErrors = paramManager.parErrors;
         const double centralChi2 = lastChi2_;
+        const double centralMomentsChi2 = lastMomentsChi2_;
+        const double centralConstraintPenalty = lastConstraintPenalty_;
         const int centralStatus = minimizerStatus_;
         const bool centralIsValid = minimizerIsValid_;
         const bool centralIsValidError = minimizerHasValidErrors_;
+        const bool centralAtLimit = minimizerHitLimit_;
         const int centralSeed = paramManager.randomSeed;
 
         const int nPars = pars_.begin()->second.Nvars();
@@ -143,14 +146,20 @@ namespace m2pw {
 
         TTree* centralChi2Tree = new TTree("central_chi2", "Nominal Fit Chi2 and Status");
         double c_chi2 = centralChi2;
+        double c_moments_chi2 = centralMomentsChi2;
+        double c_constraint_penalty = centralConstraintPenalty;
         int c_status = centralStatus;
         bool c_isValid = centralIsValid;
         bool c_isValidError = centralIsValidError;
+        bool c_atLimit = centralAtLimit;
         int c_seed = centralSeed;
         centralChi2Tree->Branch("chi2", &c_chi2);
+        centralChi2Tree->Branch("moments_chi2", &c_moments_chi2);
+        centralChi2Tree->Branch("constraint_penalty", &c_constraint_penalty);
         centralChi2Tree->Branch("Status", &c_status);
         centralChi2Tree->Branch("isValid", &c_isValid);
         centralChi2Tree->Branch("isValidError", &c_isValidError);
+        centralChi2Tree->Branch("atLimit", &c_atLimit);
         centralChi2Tree->Branch("seed", &c_seed);
         centralChi2Tree->Fill();
 
@@ -181,9 +190,12 @@ namespace m2pw {
         Long64_t mcmc_entry = 0;
         double m_weight = 1.0;
         double m_chi2 = 0.0;
+        double m_moments_chi2 = 0.0;
+        double m_constraint_penalty = 0.0;
         int m_status = -1;
         bool m_isValid = false;
         bool m_isValidError = false;
+        bool m_atLimit = false;
         mcmcParamsTree->Branch("mcmc_entry", &mcmc_entry);
         mcmcParamsTree->Branch("weight", &m_weight);
         std::vector<double> mcmcParVals(registeredParNames.size(), 0.0);
@@ -191,17 +203,23 @@ namespace m2pw {
             mcmcParamsTree->Branch(registeredParNames[i], &mcmcParVals[i]);
         }
         mcmcParamsTree->Branch("chi2", &m_chi2);
+        mcmcParamsTree->Branch("moments_chi2", &m_moments_chi2);
+        mcmcParamsTree->Branch("constraint_penalty", &m_constraint_penalty);
         mcmcParamsTree->Branch("Status", &m_status);
         mcmcParamsTree->Branch("isValid", &m_isValid);
         mcmcParamsTree->Branch("isValidError", &m_isValidError);
+        mcmcParamsTree->Branch("atLimit", &m_atLimit);
 
         TTree* mcmcChi2Tree = new TTree("mcmc_chi2", "MCMC Posterior Sample Chi2 and Status");
         mcmcChi2Tree->Branch("mcmc_entry", &mcmc_entry);
         mcmcChi2Tree->Branch("weight", &m_weight);
         mcmcChi2Tree->Branch("chi2", &m_chi2);
+        mcmcChi2Tree->Branch("moments_chi2", &m_moments_chi2);
+        mcmcChi2Tree->Branch("constraint_penalty", &m_constraint_penalty);
         mcmcChi2Tree->Branch("Status", &m_status);
         mcmcChi2Tree->Branch("isValid", &m_isValid);
         mcmcChi2Tree->Branch("isValidError", &m_isValidError);
+        mcmcChi2Tree->Branch("atLimit", &m_atLimit);
 
         TTree* mcmcResultTree = new TTree("mcmc_result", "MCMC Amplitudes and Moments per Mass Bin");
         double m_mass_bin = 0.0;
@@ -245,7 +263,8 @@ namespace m2pw {
             if (!logDir.IsNull()) {
                 std::cout << "\nFit Finished: Chi2 = " << lastChi2_
                           << " | Status = " << minimizerStatus_
-                          << " | Valid = " << (minimizerIsValid_ ? "true" : "false") << std::endl;
+                          << " | Valid = " << (minimizerIsValid_ ? "true" : "false")
+                          << " | AtLimit = " << (minimizerHitLimit_ ? "true" : "false") << std::endl;
                 gSystem->RedirectOutput(0);
                 SetMinimizerPrintLevel(0);
             }
@@ -257,9 +276,12 @@ namespace m2pw {
             mcmc_entry = entry;
             m_weight = moms.GetMCMCWeight(entry);
             m_chi2 = lastChi2_;
+            m_moments_chi2 = lastMomentsChi2_;
+            m_constraint_penalty = lastConstraintPenalty_;
             m_status = minimizerStatus_;
             m_isValid = minimizerIsValid_;
             m_isValidError = minimizerHasValidErrors_;
+            m_atLimit = minimizerHitLimit_;
 
             if (m_isValid) nConverged++;
 

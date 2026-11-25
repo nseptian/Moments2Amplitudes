@@ -13,11 +13,13 @@ from .config import load_config, validate_config, parse_t_bins_input
 from .driver import run_multi_start, run_multi_start_tbins, run_mcmc_propagation, run_mcmc_propagation_tbins
 from .rundir import get_run_directory, RunDirectory
 from .summary import FitSummary
-from .plotter import run_all_diagnostics_and_plots, plot_tbins_parallel, plot_moments_across_tbins
+from .plotter import run_all_diagnostics_and_plots, plot_tbins_parallel, plot_moments_across_tbins, plot_amplitudes_across_tbins, plot_multistart_landscape_all_tbins
+from .environment import get_default_max_workers
+from .schema import FitConfig, parse_seed_range
 
 
 def apply_cli_overrides(cfg: FitConfig, args: argparse.Namespace) -> None:
-    """Apply common CLI overrides such as t-bins to configuration."""
+    """Apply common CLI overrides such as t-bins and multi-start seed range to configuration."""
     tbins_arg = getattr(args, "tbins", None)
     tbin_arg = getattr(args, "t_bin", None)
 
@@ -32,9 +34,44 @@ def apply_cli_overrides(cfg: FitConfig, args: argparse.Namespace) -> None:
             cfg.dataset.t_bin = parsed[0]
             cfg.dataset.t_bins = parsed
 
+    # Multi-start CLI overrides
+    if getattr(cfg, "multi_start", None) is not None:
+        n_starts_arg = getattr(args, "n_starts", None) or getattr(args, "trials", None)
+        if n_starts_arg is not None:
+            cfg.multi_start.n_starts = int(n_starts_arg)
+
+        seed_range_arg = getattr(args, "seed_range", None)
+        if seed_range_arg is not None:
+            cfg.multi_start.seed_range = seed_range_arg
+
+        seed_start_arg = getattr(args, "seed_start", None)
+        if seed_start_arg is not None:
+            cfg.multi_start.seed_start = int(seed_start_arg)
+
+        seed_end_arg = getattr(args, "seed_end", None)
+        if seed_end_arg is not None:
+            cfg.multi_start.seed_end = int(seed_end_arg)
+
+        skip_existing_arg = getattr(args, "skip_existing", None)
+        if skip_existing_arg is not None:
+            cfg.multi_start.skip_existing = bool(skip_existing_arg)
+
     style_arg = getattr(args, "style", None)
     if style_arg is not None and getattr(cfg, "plotting", None) is not None:
         cfg.plotting.style = style_arg
+
+    dist_bins_arg = getattr(args, "distribution_bins", None)
+    if dist_bins_arg is not None and getattr(cfg, "plotting", None) is not None:
+        cfg.plotting.distribution_bins = int(dist_bins_arg)
+
+    chi2_bins_arg = getattr(args, "chi2_bins", None)
+    if chi2_bins_arg is not None and getattr(cfg, "plotting", None) is not None:
+        cfg.plotting.chi2_landscape_bins = int(chi2_bins_arg)
+
+    ref_amp_arg = getattr(args, "reference_amplitude", None) or getattr(args, "anchor_amplitude", None)
+    if ref_amp_arg is not None and getattr(cfg, "plotting", None) is not None:
+        cfg.plotting.reference_amplitude = str(ref_amp_arg).strip()
+        cfg.plotting.anchor_amplitude = str(ref_amp_arg).strip()
 
     stride_arg = getattr(args, "stride", None)
     if stride_arg is not None and getattr(cfg, "mcmc_propagation", None) is not None:
@@ -72,12 +109,20 @@ def cmd_validate(args: argparse.Namespace) -> int:
         print(f"  t-bin:          {tbins[0]} (resolved dir: {cfg.dataset.get_moments_dir()})")
     print(f"  Mass Bins:      {len(cfg.get_mass_bins())} bins ({cfg.get_mass_bins()[0]:.3f} to {cfg.get_mass_bins()[-1]:.3f} GeV)")
     print(f"  Use Covariance: {cfg.dataset.use_covariance}")
-    print(f"  Chi2 Included L:{cfg.chi2.included_l}")
+    print(f"  Chi2 Included L:{cfg.chi2.included_L}")
     print(f"  Waves Defined:  {len(cfg.waves)}")
     for w in cfg.waves:
         res_names = [r.name for r in w.resonances] if w.resonances else "none"
         print(f"    * L={w.l} ({w.name}): type={w.type.value}, model={w.model.value}, resonances={res_names}")
-    print(f"  Multi-start:    {cfg.multi_start.n_starts} trials on {cfg.multi_start.n_threads} threads")
+    threads_display = (
+        cfg.multi_start.n_threads
+        if cfg.multi_start.n_threads is not None
+        else get_default_max_workers()
+    )
+    seeds = cfg.multi_start.get_seeds()
+    s_start, s_end = cfg.multi_start.get_seed_range()
+    skip_str = ", skip_existing=True" if cfg.multi_start.skip_existing else ""
+    print(f"  Multi-start:    {len(seeds)} trials (seeds {s_start}..{s_end}{skip_str}) on {threads_display} threads")
     print(f"  MCMC Prop:      enabled={cfg.mcmc_propagation.enabled} ({cfg.mcmc_propagation.target_entries} entries on {cfg.mcmc_propagation.n_workers} workers)")
     brufit_disp = (
         (cfg.environment.brufit_dir if cfg.environment and cfg.environment.brufit_dir else None)
@@ -109,7 +154,11 @@ def cmd_fit(args: argparse.Namespace) -> int:
     res = run_multi_start_tbins(
         cfg,
         tbins=tbins,
-        n_starts=args.n_starts,
+        n_starts=getattr(args, "n_starts", None) or getattr(args, "trials", None),
+        seed_start=getattr(args, "seed_start", None),
+        seed_end=getattr(args, "seed_end", None),
+        seed_range=getattr(args, "seed_range", None),
+        skip_existing=getattr(args, "skip_existing", None),
         n_threads=args.n_threads,
         n_tbin_workers=n_tbin_workers,
         output_dir=args.output_dir,
@@ -185,7 +234,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     res_fit = run_multi_start_tbins(
         cfg,
         tbins=tbins,
-        n_starts=args.n_starts,
+        n_starts=getattr(args, "n_starts", None) or getattr(args, "trials", None),
+        seed_start=getattr(args, "seed_start", None),
+        seed_end=getattr(args, "seed_end", None),
+        seed_range=getattr(args, "seed_range", None),
+        skip_existing=getattr(args, "skip_existing", None),
         n_threads=args.n_threads,
         n_tbin_workers=n_tbin_workers,
         output_dir=args.output_dir,
@@ -250,6 +303,48 @@ def cmd_plot(args: argparse.Namespace) -> int:
         print(f"[SUCCESS] Generated {len(res_plots)} multi-t-bin moment comparison plot files.")
         return 0 if res_plots else 1
 
+    if getattr(args, "amplitudes_vs_t", False):
+        run_dir = getattr(args, "run_dir", None) or getattr(args, "output_dir", None)
+        res_plots = plot_amplitudes_across_tbins(
+            cfg,
+            tbins=tbins,
+            run_dir=run_dir,
+            formats=formats,
+            style=getattr(args, "style", None),
+            sharey=getattr(args, "amplitudes_vs_t_sharey", False),
+        )
+        print(f"[SUCCESS] Generated {len(res_plots)} multi-t-bin amplitude comparison plot files.")
+        return 0 if res_plots else 1
+
+    if getattr(args, "chi2_landscape", False) or getattr(args, "multistart_landscape", False):
+        run_dir = getattr(args, "run_dir", None) or getattr(args, "output_dir", None)
+        parent_out = Path(run_dir) if run_dir else Path(cfg.multi_start.output_dir if cfg.multi_start.output_dir else "runs")
+        plots_out = parent_out / "plots" if (parent_out / "plots").is_dir() else parent_out
+        results_by_tbin = {}
+        for t_name in tbins:
+            cfg_t = copy.deepcopy(cfg)
+            cfg_t.dataset.t_bin = t_name
+            rdir = get_run_directory(cfg_t, run_dir)
+            results_by_tbin[t_name] = rdir
+        show_grid = getattr(cfg.plotting, "show_grid", False) if getattr(cfg, "plotting", None) else False
+        chi2_bins = getattr(args, "chi2_bins", None) or (getattr(cfg.plotting, "chi2_landscape_bins", None) if getattr(cfg, "plotting", None) else None)
+        res_plots = plot_multistart_landscape_all_tbins(
+            results_by_tbin,
+            output_dir=plots_out,
+            project_name=cfg.project.name,
+            plateau_delta=cfg.multi_start.plateau_delta_chi2,
+            formats=formats,
+            style=getattr(args, "style", None),
+            show_grid=show_grid,
+            bins=chi2_bins,
+        )
+        if res_plots:
+            print(f"[SUCCESS] Generated multi-start Chi2 landscape plot across {len(tbins)} t-bins: {res_plots[0]}")
+            return 0
+        else:
+            print(f"[WARNING] No multi-start fit starts found to plot in {parent_out}")
+            return 1
+
     only_prop = getattr(args, "only_propagated", False)
     only_dist = getattr(args, "only_distributions", False)
     only_amp = getattr(args, "only_amplitudes", False)
@@ -266,6 +361,33 @@ def cmd_plot(args: argparse.Namespace) -> int:
             only_distributions=only_dist,
             only_amplitudes=only_amp,
         )
+
+        # Automatically generate multi-start Chi2 landscape across all t-bins if starts exist and not filtered
+        if not (only_prop or only_dist or only_amp):
+            run_dir = getattr(args, "run_dir", None) or getattr(args, "output_dir", None)
+            parent_out = Path(run_dir) if run_dir else Path(cfg.multi_start.output_dir if cfg.multi_start.output_dir else "runs")
+            plots_out = parent_out / "plots" if (parent_out / "plots").is_dir() else parent_out
+            results_by_tbin = {}
+            for t_name in tbins:
+                cfg_t = copy.deepcopy(cfg)
+                cfg_t.dataset.t_bin = t_name
+                rdir = get_run_directory(cfg_t, run_dir)
+                results_by_tbin[t_name] = rdir
+            show_grid = getattr(cfg.plotting, "show_grid", False) if getattr(cfg, "plotting", None) else False
+            chi2_bins = getattr(args, "chi2_bins", None) or (getattr(cfg.plotting, "chi2_landscape_bins", None) if getattr(cfg, "plotting", None) else None)
+            res_plots = plot_multistart_landscape_all_tbins(
+                results_by_tbin,
+                output_dir=plots_out,
+                project_name=cfg.project.name,
+                plateau_delta=cfg.multi_start.plateau_delta_chi2,
+                formats=formats,
+                style=getattr(args, "style", None),
+                show_grid=show_grid,
+                bins=chi2_bins,
+            )
+            if res_plots:
+                print(f"[OK] Saved multi-start Chi2 landscape across all {len(tbins)} t-bins to: {plots_out / 'multistart_chi2_landscape_all_tbins.png'}")
+
         return 0 if (res.get("success", False) or res.get("total_plots", 0) > 0) else 1
 
     run_dir = getattr(args, "run_dir", None) or getattr(args, "output_dir", None)
@@ -521,6 +643,71 @@ def cmd_compile(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_momentfit(args: argparse.Namespace) -> int:
+    """Run the MomentFit workflow (linear algebra -> export covariance -> BruFit MCMC -> diagnostics & plotting)."""
+    from .momentfit.runner import run_momentfit
+    config_path = getattr(args, "config_opt", None) or getattr(args, "config", None)
+    run_dir = getattr(args, "run_dir", None)
+    stages = args.stage
+
+    if not config_path and not run_dir:
+        print("[ERROR] A configuration file or --run-dir is required.\nUsage: mom2amp momentfit <config.yaml> [options]")
+        return 1
+
+    if getattr(args, "monitor", False) or getattr(args, "watch", False) or getattr(args, "cancel", False) or getattr(args, "progress_only", False):
+        if stages is None:
+            stages = ["monitor"]
+        elif "monitor" not in stages:
+            stages.append("monitor")
+
+    if getattr(args, "collect", False) or getattr(args, "auto_retry", False):
+        if stages is None:
+            stages = ["collect"]
+        elif "collect" not in stages:
+            stages.append("collect")
+
+    if getattr(args, "plot", False) or getattr(args, "plot_traces", False) or getattr(args, "plot_posteriors", False):
+        if stages is None:
+            stages = ["plot"]
+        elif "plot" not in stages and "4" not in stages:
+            stages.append("plot")
+
+    if getattr(args, "plot_cov", False) or getattr(args, "plot_covariance", False):
+        if stages is None:
+            stages = ["plot_covariance"]
+        elif "plot_covariance" not in stages:
+            stages.append("plot_covariance")
+
+    return run_momentfit(
+        config_path=config_path,
+        stages=stages,
+        tbins_filter=args.tbin,
+        max_l_filter=args.max_l,
+        dry_run=args.dry_run,
+        validate_only=args.validate,
+        overwrite=args.overwrite,
+        force_integral=args.force_integral,
+        plot_type=getattr(args, "plot_type", None),
+        moments_filter=getattr(args, "plot_moments", None),
+        run_dir=run_dir,
+        watch=getattr(args, "watch", False),
+        interval=getattr(args, "interval", 10.0),
+        progress_only=getattr(args, "progress_only", False),
+        cancel=getattr(args, "cancel", False),
+        force=getattr(args, "force", False),
+        auto_retry=getattr(args, "auto_retry", False),
+        no_exec=getattr(args, "no_exec", False),
+        ess_threshold=getattr(args, "ess_threshold", None),
+        ess_metric=getattr(args, "ess_metric", None),
+        plot_traces=getattr(args, "plot_traces", False),
+        plot_posteriors=getattr(args, "plot_posteriors", False),
+        downsample_trace=getattr(args, "downsample_trace", None),
+        replot_from_root=getattr(args, "replot_from_root", False),
+        plot_cov=getattr(args, "plot_cov", False) or getattr(args, "plot_covariance", False),
+        plot_cov_bins=getattr(args, "plot_cov_bins", None),
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="mom2amp",
@@ -531,13 +718,24 @@ def main():
     # Validate
     p_val = subparsers.add_parser("validate", help="Validate a YAML fit configuration")
     p_val.add_argument("config", help="Path to config.yaml")
+    p_val.add_argument("--trials", "--n-starts", dest="n_starts", type=int, default=None, help="Number of randomized starts (trials)")
+    p_val.add_argument("--seed-range", dest="seed_range", type=str, default=None, help="Seed range start:end (e.g. 5001:10000 or 5001-10000)")
+    p_val.add_argument("--seed-start", dest="seed_start", type=int, default=None, help="Starting seed (1-based, inclusive)")
+    p_val.add_argument("--seed-end", dest="seed_end", type=int, default=None, help="Ending seed (inclusive)")
+    p_val.add_argument("--skip-existing", dest="skip_existing", action="store_true", default=None, help="Skip seeds that have already completed in the output directory")
+    p_val.add_argument("--no-skip-existing", dest="skip_existing", action="store_false", help="Force re-running existing seeds")
     p_val.add_argument("--t-bin", "--tbin", dest="t_bin", type=str, default=None, help="Single t-bin directory override (e.g. t010020, t020032)")
     p_val.add_argument("--tbins", "--t-bins", dest="tbins", nargs="*", default=None, help="t-bins to evaluate (e.g. 'all', 't010020 t020032', '0 1 2')")
 
     # Fit
     p_fit = subparsers.add_parser("fit", help="Run multi-start global minimum fit")
     p_fit.add_argument("config", help="Path to config.yaml")
-    p_fit.add_argument("--n-starts", type=int, default=None, help="Number of randomized starts")
+    p_fit.add_argument("--n-starts", "--trials", dest="n_starts", type=int, default=None, help="Number of randomized starts (or trials)")
+    p_fit.add_argument("--seed-range", dest="seed_range", type=str, default=None, help="Seed range start:end (e.g. 5001:10000 or 5001-10000)")
+    p_fit.add_argument("--seed-start", dest="seed_start", type=int, default=None, help="Starting seed (1-based, inclusive)")
+    p_fit.add_argument("--seed-end", dest="seed_end", type=int, default=None, help="Ending seed (inclusive)")
+    p_fit.add_argument("--skip-existing", dest="skip_existing", action="store_true", default=None, help="Skip seeds whose fit results already exist")
+    p_fit.add_argument("--no-skip-existing", dest="skip_existing", action="store_false", help="Force re-running existing seeds")
     p_fit.add_argument("--n-threads", type=int, default=None, help="Parallel worker threads per fit")
     p_fit.add_argument("--tbin-workers", type=int, default=None, help="Max concurrent t-bins running in parallel")
     p_fit.add_argument("--output-dir", "--run-dir", dest="output_dir", type=str, default=None, help="Run / output directory (supports {t_bin})")
@@ -559,6 +757,7 @@ def main():
     p_prop.add_argument("--tbins", "--t-bins", dest="tbins", nargs="*", default=None, help="t-bins to evaluate (e.g. 'all', 't010020 t020032', '0 1 2')")
     p_prop.add_argument("--plot", "--draw", dest="draw_plots", action="store_true", help="Automatically draw propagated amplitude distributions and credible bands after propagation completes")
     p_prop.add_argument("--style", "--plot-style", dest="style", type=str, default=None, help="Plot style for --plot (default: from config or 'default'; options: default, LHCb, ROOT, ATLAS, CMS, ALICE)")
+    p_prop.add_argument("--reference-amplitude", "--anchor-amplitude", "--anchor", "--ref-amp", dest="reference_amplitude", type=str, default=None, help="Reference / anchor amplitude name for relative phase plotting (e.g. 'a_2_1', 'a_2_2', 'a_0_0')")
 
     # Plot
     p_plot = subparsers.add_parser("plot", help="Generate publication amplitude plots and error bands")
@@ -575,8 +774,14 @@ def main():
     p_plot.add_argument("--only-propagated", "--propagated-only", dest="only_propagated", action="store_true", help="Only draw plots derived from propagated MCMC results (credible bands, individual amplitudes, and posterior distributions)")
     p_plot.add_argument("--only-distributions", "--distributions-only", "--only-distribution", "--distribution-only", dest="only_distributions", action="store_true", help="Only draw 1D posterior distributions of propagated MCMC parameters and yields")
     p_plot.add_argument("--only-amplitudes", "--amplitudes-only", dest="only_amplitudes", action="store_true", help="Only draw amplitude curves and credible bands (individual amplitudes and wave overviews)")
+    p_plot.add_argument("--chi2-landscape", "--multistart-landscape", dest="chi2_landscape", action="store_true", help="Plot combined multi-start Chi2 distribution landscapes across all t-bins side-by-side in one row")
     p_plot.add_argument("--moments-vs-t", dest="moments_vs_t", action="store_true", help="Plot each moment vs mass across all t-bins as a side-by-side plot (N_tbins x 1) to inspect evolution with -t")
     p_plot.add_argument("--moments-vs-t-sharey", dest="moments_vs_t_sharey", action="store_true", help="Share y-axis scale across all t-bins in moments-vs-t plots")
+    p_plot.add_argument("--amplitudes-vs-t", dest="amplitudes_vs_t", action="store_true", help="Plot each partial wave amplitude and total intensity vs mass across all t-bins as a side-by-side plot (1 x N_tbins) to inspect evolution with -t")
+    p_plot.add_argument("--amplitudes-vs-t-sharey", dest="amplitudes_vs_t_sharey", action="store_true", help="Share y-axis scale across all t-bins in amplitudes-vs-t plots")
+    p_plot.add_argument("--reference-amplitude", "--anchor-amplitude", "--anchor", "--ref-amp", dest="reference_amplitude", type=str, default=None, help="Reference / anchor amplitude name for relative phase plotting (e.g. 'a_2_1', 'a_2_2', 'a_0_0')")
+    p_plot.add_argument("--distribution-bins", "--dist-bins", dest="distribution_bins", type=int, default=None, help="Number of histogram bins for 1D MCMC parameter and yield posterior distribution plots (default: 50)")
+    p_plot.add_argument("--chi2-bins", dest="chi2_bins", type=int, default=None, help="Number of histogram bins for multi-start Chi2 landscape plots (default: 60)")
 
     # Summary
     p_sum = subparsers.add_parser("summary", help="Display fit parameter summary and save report tables")
@@ -607,7 +812,12 @@ def main():
     # Run (All in one)
     p_run = subparsers.add_parser("run", help="Run full pipeline (multi-start fit + MCMC propagation)")
     p_run.add_argument("config", help="Path to config.yaml")
-    p_run.add_argument("--n-starts", type=int, default=None, help="Number of randomized starts")
+    p_run.add_argument("--n-starts", "--trials", dest="n_starts", type=int, default=None, help="Number of randomized starts (or trials)")
+    p_run.add_argument("--seed-range", dest="seed_range", type=str, default=None, help="Seed range start:end (e.g. 5001:10000 or 5001-10000)")
+    p_run.add_argument("--seed-start", dest="seed_start", type=int, default=None, help="Starting seed (1-based, inclusive)")
+    p_run.add_argument("--seed-end", dest="seed_end", type=int, default=None, help="Ending seed (inclusive)")
+    p_run.add_argument("--skip-existing", dest="skip_existing", action="store_true", default=None, help="Skip seeds whose fit results already exist")
+    p_run.add_argument("--no-skip-existing", dest="skip_existing", action="store_false", help="Force re-running existing seeds")
     p_run.add_argument("--n-threads", type=int, default=None, help="Parallel worker threads")
     p_run.add_argument("--tbin-workers", type=int, default=None, help="Max concurrent t-bins running in parallel")
     p_run.add_argument("--output-dir", "--run-dir", dest="output_dir", type=str, default=None, help="Run directory")
@@ -625,6 +835,57 @@ def main():
     p_comp.add_argument("--force", "-f", action="store_true", help="Force unconditional recompilation")
     p_comp.add_argument("--check", action="store_true", help="Only check if libraries are up-to-date without compiling")
 
+    # MomentFit Pipeline
+    p_mfit = subparsers.add_parser(
+        "momentfit",
+        aliases=["pipeline"],
+        help="Run end-to-end moments pipeline (Linear Algebra -> Export Covariance -> MomentFit MCMC -> Diagnostics & Plotting)",
+    )
+    p_mfit.add_argument("config", nargs="?", default=None, help="Path to MomentFit YAML config (e.g. configs/momentfit_nominal.yaml)")
+    p_mfit.add_argument("--config", "-c", dest="config_opt", default=None, help="Path to MomentFit YAML configuration file override")
+    p_mfit.add_argument(
+        "--stage", "-s",
+        nargs="+",
+        choices=[
+            "1", "2", "3", "4",
+            "linear_algebra", "export_covariance", "moment_fit",
+            "plot", "plotting",
+            "monitor", "status",
+            "collect", "collector", "diagnostics",
+            "plot_covariance", "plot_cov", "cov",
+            "all",
+        ],
+        default=None,
+        help="Specify which stage(s) to run (default: from YAML)",
+    )
+    p_mfit.add_argument("--monitor", "--status", dest="monitor", action="store_true", help="Monitor BruFit MomentFit running progress, view status tables, and generate diagnostics")
+    p_mfit.add_argument("--collect", "--diagnose", dest="collect", action="store_true", help="Diagnose BruFit MomentFit results across bins and generate targeted retries for unsuccessful bins")
+    p_mfit.add_argument("--watch", "-w", action="store_true", help="Continuously monitor and refresh progress until interrupted (Ctrl+C)")
+    p_mfit.add_argument("--interval", type=float, default=10.0, help="Refresh interval in seconds when --watch is enabled (default: 10.0s)")
+    p_mfit.add_argument("--progress-only", "--status-only", dest="progress_only", action="store_true", help="Display status and progress tables only; do not generate PDF plots")
+    p_mfit.add_argument("--cancel", "--stop", action="store_true", help="Cancel running MomentFit jobs for the specified t-bin(s) or run directory")
+    p_mfit.add_argument("--force", "-f", action="store_true", help="Force terminate immediately using SIGKILL instead of graceful SIGTERM (with --cancel)")
+    p_mfit.add_argument("--auto-retry", action="store_true", help="Automatically execute targeted retries generated by the collector")
+    p_mfit.add_argument("--no-exec", action="store_true", help="Do not execute retry script from within Python (collector script generation only)")
+    p_mfit.add_argument("--run-dir", "-d", type=str, default=None, help="Override or specify the base MomentFit run directory directly")
+    p_mfit.add_argument("--ess-threshold", type=float, default=None, help="Effective Sample Size (ESS) threshold for fit evaluation (default: from YAML or 20.0)")
+    p_mfit.add_argument("--ess-metric", type=str, choices=["mean", "min"], default=None, help="ESS metric to evaluate against threshold: 'mean' or 'min' (default: from YAML or 'mean')")
+    p_mfit.add_argument("--plot", action="store_true", help="Run Stage 4 (plot unnormalized moments vs mass)")
+    p_mfit.add_argument("--plot-type", choices=["all", "linear_algebra", "mcmc", "overlay"], default=None, help="Which unnormalized moment plots to generate: linear_algebra, mcmc, overlay, or all")
+    p_mfit.add_argument("--plot-moments", nargs="+", default=None, help="Specific moment names to plot (e.g. 'H_0_0_0' 'H_0_2_0' or 'all')")
+    p_mfit.add_argument("--plot-traces", action="store_true", help="Generate MCMC trace plots across all moments via MonitorMomentFit")
+    p_mfit.add_argument("--plot-posteriors", action="store_true", help="Generate 1D posterior distributions across all moments via MonitorMomentFit")
+    p_mfit.add_argument("--downsample-trace", type=int, nargs="?", const=300, default=None, help="Downsample MCMC trace plots to N points per moment (default: 300)")
+    p_mfit.add_argument("--replot-from-root", action="store_true", help="Re-render all PDF plots directly from saved ROOT files without re-evaluating MCMC trees")
+    p_mfit.add_argument("--plot-cov", "--plot-covariance", dest="plot_cov", action="store_true", help="Plot comparison of MCMC proposal covariance matrix before and after alignment (SPD regularization)")
+    p_mfit.add_argument("--plot-cov-bins", nargs="+", default=None, help="Filter specific mass bin labels or centers to plot covariance for (default: all)")
+    p_mfit.add_argument("--tbin", "-t", nargs="+", default=None, help="Filter specific t-bin(s) to run (e.g. 't010020' or '0')")
+    p_mfit.add_argument("--max-l", "-l", nargs="+", type=int, default=None, help="Filter specific maxL multipole(s) to run (e.g. 4 or 4 6 8)")
+    p_mfit.add_argument("--dry-run", action="store_true", help="Preview tasks and command lines without executing fits")
+    p_mfit.add_argument("--validate", action="store_true", help="Validate configuration file and prerequisite paths, then exit")
+    p_mfit.add_argument("--overwrite", action="store_true", help="Overwrite existing output directories without prompting")
+    p_mfit.add_argument("--force-integral", action="store_true", help="Force recalculation of acceptance integral matrices in Stage 1")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -632,6 +893,8 @@ def main():
 
     if args.command == "compile":
         sys.exit(cmd_compile(args))
+    elif args.command in ("momentfit", "pipeline"):
+        sys.exit(cmd_momentfit(args))
     elif args.command == "validate":
         sys.exit(cmd_validate(args))
     elif args.command == "fit":

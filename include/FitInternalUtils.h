@@ -31,6 +31,10 @@ namespace m2pw {
                     return "flatte_breitwigner_plus_polynomial";
                 case 5:
                     return "custom_formula";
+                case 6:
+                    return "barrier_breitwigner_plus_polynomial";
+                case 7:
+                    return "two_barrier_breitwigner_plus_polynomial";
                 default:
                     return Form("unknown_%d", funcType);
             }
@@ -118,12 +122,11 @@ namespace m2pw {
             }
 
             const std::vector<TString> suffixes = {
-                "_globalphase_flatte",
-                "_globalphase_bw",
                 "_globalphase",
                 "_m_threshold",
                 "_m_expansion",
                 "_g_etapi",
+                "_g_s",
                 "_g_KK",
                 "_g_etaprimepi",
                 "_MassFlatte",
@@ -190,7 +193,9 @@ namespace m2pw {
                 return true;
             }
 
-            if (funcType == static_cast<int>(MassDependenceConfig::ModelType::BreitWignerPlusPolynomial)) {
+            if (funcType == static_cast<int>(MassDependenceConfig::ModelType::BreitWignerPlusPolynomial) ||
+                funcType == static_cast<int>(MassDependenceConfig::ModelType::BarrierBreitWignerPlusPolynomial) ||
+                funcType == 6) {
                 if (params.empty()) {
                     return false;
                 }
@@ -210,7 +215,9 @@ namespace m2pw {
                 return true;
             }
 
-            if (funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBreitWignerPlusPolynomial)) {
+            if (funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBreitWignerPlusPolynomial) ||
+                funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBarrierBreitWignerPlusPolynomial) ||
+                funcType == 7) {
                 if (params.size() < 2) {
                     return false;
                 }

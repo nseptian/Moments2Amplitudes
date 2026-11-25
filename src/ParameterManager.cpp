@@ -22,14 +22,15 @@ namespace m2pw {
             return false;
         }
 
-        auto it = parsList.find(parName);
+        const TString resolved = ResolveParName(parName);
+        auto it = parsList.find(resolved);
         if (it == parsList.end()) {
             LogMDWarn("CONFIG", Form("set_gauss_constraint_failed param=%s reason=not_found", parName.Data()));
             return false;
         }
 
-        gaussianConstraints[parName] = {mean, sigma};
-        LogMDInfo("CONFIG", Form("set_gauss_constraint_ok param=%s mean=%g sigma=%g", parName.Data(), mean, sigma));
+        gaussianConstraints[resolved] = {mean, sigma};
+        LogMDInfo("CONFIG", Form("set_gauss_constraint_ok param=%s mean=%g sigma=%g", resolved.Data(), mean, sigma));
         return true;
     }
 
@@ -81,17 +82,18 @@ namespace m2pw {
             LogMDWarn("CONFIG", "registered_parameter_list_end");
         };
 
-        auto it = parsList.find(parName);
+        const TString resolved = ResolveParName(parName);
+        auto it = parsList.find(resolved);
         if (it == parsList.end()) {
             LogMDWarn("CONFIG", "Parameter is not found in the parameter list!");
-            LogMDWarn("CONFIG", Form("set_initial_failed param=%s reason=not_found", parName.Data()));
+            LogMDWarn("CONFIG", Form("set_initial_failed param=%s (resolved=%s) reason=not_found", parName.Data(), resolved.Data()));
             printRegisteredParameters();
             throw std::runtime_error("Parameter is not found in the parameter list!");
         }
 
         const double oldValue = it->second;
         it->second = value;
-        LogMDInfo("CONFIG", Form("set_initial_ok param=%s old=%g new=%g", parName.Data(), oldValue, value));
+        LogMDInfo("CONFIG", Form("set_initial_ok param=%s resolved=%s old=%g new=%g", parName.Data(), resolved.Data(), oldValue, value));
         return true;
     }
 
@@ -104,47 +106,48 @@ namespace m2pw {
             LogMDWarn("CONFIG", "registered_parameter_list_end");
         };
 
-        auto indexIt = nameToIndex.find(parName);
+        const TString resolved = ResolveParName(parName);
+        auto indexIt = nameToIndex.find(resolved);
         if (indexIt == nameToIndex.end() || indexIt->second < 0 || indexIt->second >= static_cast<int>(parIndexNames.size())) {
             LogMDWarn("CONFIG", "Parameter is not found in the parameter list!");
-            LogMDWarn("CONFIG", Form("set_initial_failed param=%s reason=not_found_in_added_parameter_list", parName.Data()));
+            LogMDWarn("CONFIG", Form("set_initial_failed param=%s (resolved=%s) reason=not_found_in_added_parameter_list", parName.Data(), resolved.Data()));
             printRegisteredParameters();
             throw std::runtime_error("Parameter is not found in the parameter list!");
         }
 
-        if (parIndexNames[indexIt->second] != parName) {
-            LogMDWarn("CONFIG", Form("set_initial_failed param=%s reason=index_mapping_mismatch", parName.Data()));
+        if (parIndexNames[indexIt->second] != resolved) {
+            LogMDWarn("CONFIG", Form("set_initial_failed param=%s (resolved=%s) reason=index_mapping_mismatch", parName.Data(), resolved.Data()));
             printRegisteredParameters();
             throw std::runtime_error(TString::Format(
-                "Parameter '%s' index mapping mismatch.",
-                parName.Data()).Data());
+                "Parameter '%s' (resolved '%s') index mapping mismatch.",
+                parName.Data(), resolved.Data()).Data());
         }
 
-        auto valueIt = parsList.find(parName);
+        auto valueIt = parsList.find(resolved);
         if (valueIt == parsList.end()) {
-            LogMDWarn("CONFIG", Form("set_initial_failed param=%s reason=missing_in_value_map", parName.Data()));
+            LogMDWarn("CONFIG", Form("set_initial_failed param=%s (resolved=%s) reason=missing_in_value_map", parName.Data(), resolved.Data()));
             printRegisteredParameters();
             throw std::runtime_error(TString::Format(
-                "Parameter '%s' is registered but missing in value map.",
-                parName.Data()).Data());
+                "Parameter '%s' (resolved '%s') is registered but missing in value map.",
+                parName.Data(), resolved.Data()).Data());
         }
 
         const double oldValue = valueIt->second;
         valueIt->second = value;
-        LogMDInfo("CONFIG", Form("set_initial_update param=%s old=%g new=%g",
-            parName.Data(), oldValue, value));
+        LogMDInfo("CONFIG", Form("set_initial_update param=%s resolved=%s old=%g new=%g",
+            parName.Data(), resolved.Data(), oldValue, value));
 
-        const auto fixedIt = std::find(fixedParNames.begin(), fixedParNames.end(), parName);
+        const auto fixedIt = std::find(fixedParNames.begin(), fixedParNames.end(), resolved);
         if (isFixed) {
             if (fixedIt == fixedParNames.end()) {
-                fixedParNames.push_back(parName);
+                fixedParNames.push_back(resolved);
             }
-            LogMDInfo("CONFIG", Form("set_initial_fix param=%s fixed=1", parName.Data()));
+            LogMDInfo("CONFIG", Form("set_initial_fix param=%s resolved=%s fixed=1", parName.Data(), resolved.Data()));
         } else {
             if (fixedIt != fixedParNames.end()) {
                 fixedParNames.erase(fixedIt);
             }
-            LogMDInfo("CONFIG", Form("set_initial_fix param=%s fixed=0", parName.Data()));
+            LogMDInfo("CONFIG", Form("set_initial_fix param=%s resolved=%s fixed=0", parName.Data(), resolved.Data()));
         }
 
         return true;
@@ -156,14 +159,21 @@ namespace m2pw {
             return false;
         }
 
-        auto it = parsList.find(parName);
+        const TString resolved = ResolveParName(parName);
+        auto it = parsList.find(resolved);
         if (it == parsList.end()) {
-            LogMDWarn("CONFIG", Form("set_limits_failed param=%s reason=not_found", parName.Data()));
+            LogMDWarn("CONFIG", Form("set_limits_failed param=%s (resolved=%s) reason=not_found", parName.Data(), resolved.Data()));
             return false;
         }
 
-        parameterLimits[parName] = {lower, upper};
-        LogMDInfo("CONFIG", Form("set_limits_ok param=%s lower=%g upper=%g", parName.Data(), lower, upper));
+        // Piecewise phases are periodic angles; box limits create hard walls in chi2 space and spurious boundary hits.
+        if (resolved.BeginsWith("MI_") && resolved.Contains("phi")) {
+            LogMIInfo("CONFIG", Form("set_limits_skipped param=%s (resolved=%s) reason=piecewise_phase_unbounded", parName.Data(), resolved.Data()));
+            return false;
+        }
+
+        parameterLimits[resolved] = {lower, upper};
+        LogMDInfo("CONFIG", Form("set_limits_ok param=%s resolved=%s lower=%g upper=%g", parName.Data(), resolved.Data(), lower, upper));
         return true;
     }
 
@@ -286,22 +296,101 @@ namespace m2pw {
         }
     }
 
+    namespace {
+        double SampleMassIndependentValue(const bool isPhase,
+                                          const MassDependentFitter::WaveInitRule& initRule,
+                                          TRandom3& rng) {
+            using Strategy = MassDependentFitter::WaveInitRule::Strategy;
+            switch (initRule.strategy) {
+                case Strategy::FixedZero:
+                    return 0.0;
+                case Strategy::FixedValue:
+                    return initRule.fixedValue;
+                case Strategy::RandomPositiveMagnitudeZeroPhase:
+                    return isPhase ? initRule.fixedValue : rng.Uniform(initRule.minVal, initRule.maxVal);
+                case Strategy::RandomFullPhase:
+                    return isPhase
+                        ? rng.Uniform(initRule.phaseMinVal, initRule.phaseMaxVal)
+                        : rng.Uniform(initRule.minVal, initRule.maxVal);
+                default:
+                    return isPhase ? initRule.fixedValue : rng.Uniform(initRule.minVal, initRule.maxVal);
+            }
+        }
+
+        double SampleMassDependentDefault(const TString& paramType,
+                                          const MassDependentFitter::MDInitRule& mdRule,
+                                          TRandom3& rng,
+                                          bool allowRandom,
+                                          TString& sourceTag,
+                                          double legacyMissingKFallback = 1.0) {
+            if (paramType.BeginsWith("re_") || paramType.BeginsWith("im_")) {
+                TString indexStr = paramType;
+                indexStr.Remove(0, 3);
+                const int coeffIndex = indexStr.Atoi();
+                if (!allowRandom) {
+                    sourceTag = "default";
+                    return 0.0;
+                }
+                const double scale = TMath::Power(mdRule.polyGrowth, coeffIndex);
+                sourceTag = "seed";
+                return rng.Uniform(-mdRule.polyScale, mdRule.polyScale) * scale;
+            } else if (paramType == "g_etapi" || paramType == "g_s") {
+                sourceTag = allowRandom ? "seed" : "default";
+                return 0.5;
+            } else if (paramType == "g_KK" || paramType == "g_etaprimepi") {
+                sourceTag = allowRandom ? "seed" : "default";
+                return -99.0;
+            } else if (paramType == "m_threshold") {
+                sourceTag = "default";
+                return 0.683;
+            } else if (paramType == "m_expansion") {
+                sourceTag = "default";
+                return 1.2;
+            } else if (paramType.BeginsWith("k")) {
+                if (!allowRandom) {
+                    sourceTag = "default";
+                    return (paramType == "k") ? legacyMissingKFallback : 0.0;
+                }
+                sourceTag = "seed";
+                return rng.Uniform(mdRule.couplingMin, mdRule.couplingMax);
+            }
+            sourceTag = "default";
+            return 0.0;
+        }
+
+        std::vector<TString> BuildGlobalPhaseNames(const TString& waveName, int funcType, const TString& reflTag, int opt) {
+            using MT = MassDependentFitter::MassDependenceConfig::ModelType;
+            const TString prefix = (opt == 2)
+                ? Form("MD_shared%s_%s", reflTag.Data(), waveName.Data())
+                : Form("MD_%s", waveName.Data());
+            if (funcType == static_cast<int>(MT::TwoBreitWignerPlusPolynomial) || funcType == 3 ||
+                funcType == static_cast<int>(MT::TwoBarrierBreitWignerPlusPolynomial) || funcType == 7) {
+                return {prefix + "_globalphase1", prefix + "_globalphase2"};
+            } else if (funcType == static_cast<int>(MT::FlatteBreitWignerPlusPolynomial) || funcType == 4) {
+                return {prefix + "_globalphase_flatte", prefix + "_globalphase_bw"};
+            }
+            return {prefix + "_globalphase"};
+        }
+    } // namespace
+
     void MassDependentFitter::ParameterManager::AddMassIndependentParameter(
         const std::vector<int>& targetELL,
         const int seed) {
         randomSeed = seed;
-        
+
         auto parNames = MassDependentFitter::GetParNames();
         auto& config = fitter.GetMassDependenceConfig();
         auto& hConfig = fitter.GetMomentsConfig();
         auto& massBins = fitter.GetMassBins();
-        
-        rng.SetSeed(seed);
+
+        if (seed > 0) {
+            rng.SetSeed(seed);
+        }
         for (const double massBin : massBins) {
             for (const TString& parName : parNames) {
                 std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
                 if (parts->GetEntries() < 3) continue;
-                
+
                 TString l_str = ((TObjString*)parts->At(1))->GetString();
                 int ell_value = l_str.Atoi();
 
@@ -323,49 +412,34 @@ namespace m2pw {
                     } else {
                         initRule.strategy = WaveInitRule::Strategy::RandomPositiveMagnitudeZeroPhase;
                         initRule.minVal = 0.0;
-                        initRule.maxVal = 200.0;
+                        initRule.maxVal = 350.0;
                     }
                 }
 
-                const bool isFixed = initRule.isFixed || (initRule.strategy == WaveInitRule::Strategy::FixedZero) || (initRule.strategy == WaveInitRule::Strategy::FixedValue);
+                const bool isFixed = initRule.isFixed ||
+                    (initRule.strategy == WaveInitRule::Strategy::FixedZero) ||
+                    (initRule.strategy == WaveInitRule::Strategy::FixedValue);
 
                 const bool neededForMoments = fitter.ParameterNeededForMoments(ell_value, hConfig);
                 if (!neededForMoments && !isFixed) {
                     continue;
                 }
-                
+
                 if (!neededForMoments) {
                     LogMIInfo("SKIP", Form("param=%s reason=not_needed_for_selected_moments l=%d", parName.Data(), ell_value));
                 }
-                
+
                 if (!config.IsMassIndependent(ell_value)) continue;
 
                 TString name = Form("MI_%1.6f_%s", massBin, parName.Data());
-                
+
                 if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
                     LogMIInfo("SKIP", Form("param=%s reason=already_exists", name.Data()));
                     continue;
                 }
-                
+
                 const bool isPhase = name.Contains("phi");
-                double initialValue = 0.0;
-                switch (initRule.strategy) {
-                    case WaveInitRule::Strategy::FixedZero:
-                        initialValue = 0.0;
-                        break;
-                    case WaveInitRule::Strategy::FixedValue:
-                        initialValue = initRule.fixedValue;
-                        break;
-                    case WaveInitRule::Strategy::RandomPositiveMagnitudeZeroPhase:
-                        initialValue = isPhase ? 0.0 : rng.Uniform(initRule.minVal, initRule.maxVal);
-                        break;
-                    case WaveInitRule::Strategy::RandomFullPhase:
-                        initialValue = isPhase ? rng.Uniform(-TMath::Pi(), TMath::Pi()) : rng.Uniform(initRule.minVal, initRule.maxVal);
-                        break;
-                    default:
-                        initialValue = isPhase ? 0.0 : rng.Uniform(initRule.minVal, initRule.maxVal);
-                        break;
-                }
+                const double initialValue = SampleMassIndependentValue(isPhase, initRule, rng);
 
                 parsList[name] = initialValue;
                 nameToIndex[name] = totalNpars;
@@ -383,47 +457,64 @@ namespace m2pw {
 
     void MassDependentFitter::ParameterManager::AddMassIndependentParameter(
         const std::vector<int>& targetELL,
-        const TString filePath) {
+        const TString filePath,
+        const int seed) {
+        randomSeed = seed;
+        if (seed > 0) {
+            rng.SetSeed(seed);
+        }
+
         auto parNames = MassDependentFitter::GetParNames();
+        auto& config = fitter.GetMassDependenceConfig();
+        auto& hConfig = fitter.GetMomentsConfig();
         auto& massBins = fitter.GetMassBins();
-        
+
         TFile file(filePath, "READ");
         if (!file.IsOpen() || file.IsZombie()) {
-            LogMIWarn("FILE", Form("failed_to_open path=%s", filePath.Data()));
+            LogMIWarn("FILE", Form("failed_to_open path=%s fallback=wave_init_rule", filePath.Data()));
+            AddMassIndependentParameter(targetELL, seed);
             return;
         }
-        
+
         TTree* tree = dynamic_cast<TTree*>(file.Get("result"));
         if (!tree) {
-            LogMIWarn("FILE", Form("missing_tree tree=result path=%s", filePath.Data()));
+            LogMIWarn("FILE", Form("missing_tree tree=result path=%s fallback=wave_init_rule", filePath.Data()));
+            file.Close();
+            AddMassIndependentParameter(targetELL, seed);
             return;
         }
 
-        LogMIInfo("FILE", Form("loading_from_file path=%s selected_mass_bins=%zu", filePath.Data(), massBins.size()));
+        LogMIInfo("FILE", Form("loading_from_file path=%s selected_mass_bins=%zu seed=%d", filePath.Data(), massBins.size(), seed));
 
         std::set<int> targetELLSet(targetELL.begin(), targetELL.end());
-        
+
         double mass_bin_from_file = 0.0;
         tree->SetBranchAddress("mass_bin", &mass_bin_from_file);
-        
+
         std::map<TString, double> paramValues;
         for (const TString& parName : parNames) {
             std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
             if (parts->GetEntries() < 3) continue;
-            
+
             TString l_str = ((TObjString*)parts->At(1))->GetString();
             int ell_value = l_str.Atoi();
-            
+
             if (targetELLSet.find(ell_value) == targetELLSet.end()) {
                 continue;
             }
-            
+            if (!config.IsMassIndependent(ell_value)) {
+                continue;
+            }
+            if (!fitter.ParameterNeededForMoments(ell_value, hConfig)) {
+                continue;
+            }
+
             TBranch* branch = tree->GetBranch(parName);
             if (!branch) {
                 LogMIWarn("FILE", Form("missing_branch branch=%s", parName.Data()));
                 continue;
             }
-            
+
             paramValues[parName] = 0.0;
             tree->SetBranchAddress(parName, &paramValues[parName]);
         }
@@ -431,39 +522,74 @@ namespace m2pw {
         Long64_t nEntries = tree->GetEntries();
         for (Long64_t entry = 0; entry < nEntries; entry++) {
             tree->GetEntry(entry);
-            
+
             bool foundMassBin = false;
+            double matchedMassBin = mass_bin_from_file;
             for (double targetMassBin : massBins) {
                 if (TMath::Abs(mass_bin_from_file - targetMassBin) < 1e-6) {
                     foundMassBin = true;
+                    matchedMassBin = targetMassBin;
                     break;
                 }
             }
-            
+
             if (!foundMassBin) continue;
-            
-            for (const auto& [parName, value] : paramValues) {
-                TString name = Form("MI_%1.6f_%s", mass_bin_from_file, parName.Data());
+
+            for (const auto& [parName, rawValue] : paramValues) {
+                TString name = Form("MI_%1.6f_%s", matchedMassBin, parName.Data());
                 if (parsList.find(name) != parsList.end() || nameToIndex.find(name) != nameToIndex.end()) {
                     LogMIInfo("SKIP", Form("param=%s reason=already_exists", name.Data()));
                     continue;
                 }
-                
-                parsList[name] = value;
-                nameToIndex[name] = totalNpars;
-                parIndexNames.push_back(name);
-                
+
                 std::unique_ptr<TObjArray> parts(parName.Tokenize("_"));
                 TString l_str = ((TObjString*)parts->At(1))->GetString();
                 int ell_value = l_str.Atoi();
-                
-                LogMIInfo("ADD", Form("param=%s l=%d mass_bin=%g index=%d value=%g",
-                    name.Data(), ell_value, mass_bin_from_file, totalNpars, value));
+
+                WaveInitRule initRule;
+                auto ruleIt = waveInitRules.find(ell_value);
+                if (ruleIt != waveInitRules.end()) {
+                    initRule = ruleIt->second;
+                }
+
+                const bool isPhase = name.Contains("phi");
+                const bool isFixed = initRule.isFixed ||
+                    (initRule.strategy == WaveInitRule::Strategy::FixedZero) ||
+                    (initRule.strategy == WaveInitRule::Strategy::FixedValue);
+
+                double value = rawValue;
+                if (seed > 0 && !isFixed) {
+                    if (isPhase) {
+                        if (initRule.strategy == WaveInitRule::Strategy::RandomFullPhase) {
+                            value = rng.Uniform(initRule.phaseMinVal, initRule.phaseMaxVal);
+                        } else if (initRule.phaseSpread > 0.0) {
+                            value += rng.Uniform(-initRule.phaseSpread, initRule.phaseSpread);
+                        }
+                    } else if (initRule.relSpread > 0.0) {
+                        const double floorVal = (initRule.absFloor > 0.0) ? initRule.absFloor : 10.0;
+                        const double delta = std::max(std::abs(value) * initRule.relSpread, floorVal);
+                        value += rng.Uniform(-delta, delta);
+                    }
+                }
+
+                parsList[name] = value;
+                nameToIndex[name] = totalNpars;
+                parIndexNames.push_back(name);
+                loadedFromFileParams.insert(name);
+                if (isFixed) {
+                    fixedParNames.push_back(name);
+                }
+
+                LogMIInfo("ADD", Form("param=%s l=%d mass_bin=%g index=%d value=%g fixed=%d",
+                    name.Data(), ell_value, matchedMassBin, totalNpars, value, isFixed ? 1 : 0));
                 totalNpars++;
             }
         }
-        
+
         file.Close();
+
+        // Populate any mass bins or waves missing from the reference file using the configured WaveInitRule
+        AddMassIndependentParameter(targetELL, seed);
     }
 
     std::vector<TString> MassDependentFitter::ParameterManager::BuildParamTypesForWave(int funcType, int funcIndex) const {
@@ -497,7 +623,9 @@ namespace m2pw {
                     paramTypes.push_back(Form("im_%d", i));
                 }
             }
-        } else if (funcType == static_cast<int>(MT::BreitWignerPlusPolynomial)) {
+        } else if (funcType == static_cast<int>(MT::BreitWignerPlusPolynomial) ||
+                   funcType == static_cast<int>(MT::BarrierBreitWignerPlusPolynomial) ||
+                   funcType == 6) {
             const int polyOrder = getPolyOrder(funcIndex);
             paramTypes = {"k", "Mass", "Width"};
             if (polyOrder >= 0) {
@@ -508,7 +636,9 @@ namespace m2pw {
                     paramTypes.push_back(Form("im_%d", i));
                 }
             }
-        } else if (funcType == static_cast<int>(MT::TwoBreitWignerPlusPolynomial)) {
+        } else if (funcType == static_cast<int>(MT::TwoBreitWignerPlusPolynomial) ||
+                   funcType == static_cast<int>(MT::TwoBarrierBreitWignerPlusPolynomial) ||
+                   funcType == 7) {
             const int polyOrder = getPolyOrder(funcIndex);
             paramTypes = {"k1", "Mass1", "Width1", "k2", "Mass2", "Width2"};
             if (polyOrder >= 0) {
@@ -623,37 +753,29 @@ namespace m2pw {
                         continue;
                     }
 
-                    double initialValue;
-                    if (paramType.BeginsWith("re_") || paramType.BeginsWith("im_")) {
-                        TString indexStr = paramType;
-                        indexStr.Remove(0, 3);
-                        int coeffIndex = indexStr.Atoi();
-                        double scale = TMath::Power(0.5, coeffIndex);
-                        initialValue = rng.Uniform(-50, 50) * scale;
-                        LogMDInfo("INIT", Form("param=%s source=seed field=%s value=%g", name.Data(), paramType.Data(), initialValue));
-                    } else if (paramType == "g_etapi") {
-                        initialValue = 0.5;
-                        LogMDInfo("INIT", Form("param=%s source=seed field=%s value=%g", name.Data(), paramType.Data(), initialValue));
-                    } else if (paramType == "g_KK") {
-                        initialValue = -99.0;
-                        LogMDInfo("INIT", Form("param=%s source=seed field=%s value=%g", name.Data(), paramType.Data(), initialValue));
-                    } else if (paramType == "g_etaprimepi") {
-                        initialValue = -99.0;
-                        LogMDInfo("INIT", Form("param=%s source=seed field=%s value=%g", name.Data(), paramType.Data(), initialValue));
-                    } else if (paramType.BeginsWith("k")) {
-                        initialValue = rng.Uniform(-30, 30);
-                        LogMDInfo("INIT", Form("param=%s source=seed field=%s value=%g", name.Data(), paramType.Data(), initialValue));
-                    } else { 
-                        initialValue = 0.0;
-                        LogMDInfo("INIT", Form("param=%s source=default field=%s value=%g", name.Data(), paramType.Data(), initialValue));
+                    MDInitRule mdRule;
+                    if (auto mdIt = mdInitRules.find(ell_value); mdIt != mdInitRules.end()) {
+                        mdRule = mdIt->second;
                     }
+
+                    TString sourceTag;
+                    const double initialValue = SampleMassDependentDefault(
+                        paramType, mdRule, rng, true, sourceTag);
+                    LogMDInfo("INIT", Form("param=%s source=%s field=%s value=%g",
+                        name.Data(), sourceTag.Data(), paramType.Data(), initialValue));
 
                     parsList[name] = initialValue;
                     nameToIndex[name] = totalNpars;
                     parIndexNames.push_back(name);
 
-                    LogMDInfo("ADD", Form("scope=L%d param=%s state=FREE index=%d value=%g",
-                        ell_value, name.Data(), totalNpars, initialValue));
+                    if (paramType == "m_threshold" || paramType == "m_expansion") {
+                        fixedParNames.push_back(name);
+                        LogMDInfo("ADD", Form("scope=L%d param=%s state=FIXED index=%d value=%g",
+                            ell_value, name.Data(), totalNpars, initialValue));
+                    } else {
+                        LogMDInfo("ADD", Form("scope=L%d param=%s state=FREE index=%d value=%g",
+                            ell_value, name.Data(), totalNpars, initialValue));
+                    }
                     
                     totalNpars++;
                 }
@@ -661,72 +783,38 @@ namespace m2pw {
         }
 
         if (option == 1 || option == 2) {
+            const std::vector<TString> reflTags = (option == 2) ? std::vector<TString>{"a", "b"} : std::vector<TString>{""};
             for (const int ell_value : targetELL) {
                 if (!config.IsMassDependent(ell_value)) continue;
                 if (!fitter.ParameterNeededForMoments(ell_value, hConfig)) continue;
 
-                const std::vector<TString> waves = config.GetWaves(ell_value);
-                for (const TString& waveName : waves) {
-                    if (option == 1) {
-                        const int funcIndex = fitter.GetFunctionIndexForWave(waveName);
-                        const int funcType = (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size()))
-                            ? fitter.massDepFuncs_[funcIndex].GetFuncType()
-                            : -1;
+                MDInitRule mdRule;
+                if (auto mdIt = mdInitRules.find(ell_value); mdIt != mdInitRules.end()) {
+                    mdRule = mdIt->second;
+                }
 
-                        std::vector<TString> phaseNames;
-                        if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial) || funcType == 4) {
-                            phaseNames = {
-                                Form("MD_%s_globalphase_flatte", waveName.Data()),
-                                Form("MD_%s_globalphase_bw", waveName.Data())
-                            };
-                        } else {
-                            phaseNames = {Form("MD_%s_globalphase", waveName.Data())};
-                        }
-
-                        for (const TString& phaseParName : phaseNames) {
-                            if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
-                                continue;
-                            }
-
-                            parsList[phaseParName] = 0.0;
-                            nameToIndex[phaseParName] = totalNpars;
-                            parIndexNames.push_back(phaseParName);
-                            totalNpars++;
-
-                            LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase option=%d state=FREE index=%d value=0",
-                                ell_value, phaseParName.Data(), option, totalNpars - 1));
-                        }
-                        continue;
-                    }
-
+                for (const TString& waveName : config.GetWaves(ell_value)) {
                     const int funcIndex = fitter.GetFunctionIndexForWave(waveName);
                     const int funcType = (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size()))
                         ? fitter.massDepFuncs_[funcIndex].GetFuncType()
                         : -1;
 
-                    for (const TString& reflTag : {TString("a"), TString("b")}) {
-                        std::vector<TString> phaseNames;
-                        if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial) || funcType == 4) {
-                            phaseNames = {
-                                Form("MD_shared%s_%s_globalphase_flatte", reflTag.Data(), waveName.Data()),
-                                Form("MD_shared%s_%s_globalphase_bw", reflTag.Data(), waveName.Data())
-                            };
-                        } else {
-                            phaseNames = {Form("MD_shared%s_%s_globalphase", reflTag.Data(), waveName.Data())};
-                        }
-
-                        for (const TString& phaseParName : phaseNames) {
+                    for (const TString& reflTag : reflTags) {
+                        for (const TString& phaseParName : BuildGlobalPhaseNames(waveName, funcType, reflTag, option)) {
                             if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
                                 continue;
                             }
 
-                            parsList[phaseParName] = 0.0;
+                            const double initPhase = (seed > 0 && mdRule.randomizeFloatingPhases)
+                                ? rng.Uniform(-TMath::Pi(), TMath::Pi())
+                                : 0.0;
+                            parsList[phaseParName] = initPhase;
                             nameToIndex[phaseParName] = totalNpars;
                             parIndexNames.push_back(phaseParName);
                             totalNpars++;
 
-                            LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase reflectivity=%s option=%d state=FREE index=%d value=0",
-                                ell_value, phaseParName.Data(), reflTag.Data(), option, totalNpars - 1));
+                            LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase reflectivity=%s option=%d state=FREE index=%d value=%g",
+                                ell_value, phaseParName.Data(), reflTag.Data(), option, totalNpars - 1, initPhase));
                         }
                     }
                 }
@@ -737,7 +825,13 @@ namespace m2pw {
     void MassDependentFitter::ParameterManager::AddMassDependentParameter(
         const std::vector<int>& targetELL,
         const TString filePath,
-        const int option) {
+        const int option,
+        const int seed) {
+
+        randomSeed = seed;
+        if (seed > 0) {
+            rng.SetSeed(seed);
+        }
 
         const bool includePhaseParameters = false;
 
@@ -747,19 +841,21 @@ namespace m2pw {
 
         std::unique_ptr<TFile> file(TFile::Open(filePath, "READ"));
         if (!file || file->IsZombie()) {
-            LogMDWarn("FILE", Form("failed_to_open path=%s", filePath.Data()));
+            LogMDWarn("FILE", Form("failed_to_open path=%s fallback=random_init", filePath.Data()));
+            AddMassDependentParameter(targetELL, seed, option);
             return;
         }
 
         TTree* tree = nullptr;
         file->GetObject("mass_dependent_params", tree);
         if (!tree) {
-            LogMDWarn("FILE", Form("missing_tree tree=mass_dependent_params path=%s", filePath.Data()));
+            LogMDWarn("FILE", Form("missing_tree tree=mass_dependent_params path=%s fallback=random_init", filePath.Data()));
             file->Close();
+            AddMassDependentParameter(targetELL, seed, option);
             return;
         }
 
-        LogMDInfo("FILE", Form("loading_from_file path=%s", filePath.Data()));
+        LogMDInfo("FILE", Form("loading_from_file path=%s seed=%d", filePath.Data(), seed));
         
         if (tree->GetEntries() > 0) {
             tree->GetEntry(0);
@@ -798,6 +894,11 @@ namespace m2pw {
                 continue;
             }
 
+            MDInitRule mdRule;
+            if (auto mdIt = mdInitRules.find(ell_value); mdIt != mdInitRules.end()) {
+                mdRule = mdIt->second;
+            }
+
             for (const TString& waveName : waves) {
                 int funcIndex = fitter.GetFunctionIndexForWave(waveName);
                 int funcType = (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size()))
@@ -820,6 +921,7 @@ namespace m2pw {
                         continue;
                     }
 
+                    const bool isCouplingLike = paramType.BeginsWith("k") || paramType.BeginsWith("re_") || paramType.BeginsWith("im_");
                     double value = 0.0;
                     TLeaf* leaf = tree->GetLeaf(name);
                     if (!leaf && isSharedResonanceParam) {
@@ -831,38 +933,43 @@ namespace m2pw {
                     }
                     if (leaf) {
                         value = leaf->GetValue();
-                        LogMDInfo("LOAD", Form("param=%s source=file value=%g", name.Data(), value));
-                    } else {
-                        std::cout << "Parameter " << name << " not found in file. Using default value based on paramType." << std::endl;
-                        if (paramType == "k") {
-                            value = 1.0;
-                            LogMDInfo("INIT", Form("param=%s source=default field=k value=%g", name.Data(), value));
-                        } else if (paramType == "g_etapi") {
-                            value = 0.5;
-                            LogMDInfo("INIT", Form("param=%s source=default field=g_etapi value=%g", name.Data(), value));
-                        } else if (paramType == "g_KK") {
-                            value = -99.0;
-                            LogMDInfo("INIT", Form("param=%s source=default field=g_KK value=%g", name.Data(), value));
-                        } else if (paramType == "g_etaprimepi") {
-                            value = -99.0;
-                            LogMDInfo("INIT", Form("param=%s source=default field=g_etaprimepi value=%g", name.Data(), value));
-                        } else if (paramType == "m_threshold") {
-                            value = 0.683;
-                            LogMDInfo("INIT", Form("param=%s source=default field=m_threshold value=%g", name.Data(), value));
-                        } else if (paramType == "m_expansion") {
-                            value = 1.2;
-                            LogMDInfo("INIT", Form("param=%s source=default field=m_expansion value=%g", name.Data(), value));
-                        } else { 
-                            value = 0.0;
-                            LogMDInfo("INIT", Form("param=%s source=default field=%s value=%g", name.Data(), paramType.Data(), value));
+                        loadedFromFileParams.insert(name);
+                        if (seed > 0 && mdRule.randomizeLoadedCouplings && isCouplingLike) {
+                            TString srcTag;
+                            value = SampleMassDependentDefault(paramType, mdRule, rng, true, srcTag);
+                            LogMDInfo("INIT", Form("param=%s source=file_random_coupling value=%g", name.Data(), value));
+                        } else if (seed > 0 && mdRule.fileRelSpread > 0.0 && isCouplingLike) {
+                            double floorVal = mdRule.fileCouplingFloor;
+                            if (paramType.BeginsWith("re_") || paramType.BeginsWith("im_")) {
+                                TString idxStr = paramType;
+                                idxStr.Remove(0, 3);
+                                floorVal = 50.0 * TMath::Power(mdRule.polyGrowth, idxStr.Atoi());
+                            }
+                            const double baseVal = value;
+                            const double delta = std::max(std::abs(baseVal) * mdRule.fileRelSpread, floorVal);
+                            value = baseVal + rng.Uniform(-delta, delta);
+                            LogMDInfo("LOAD", Form("param=%s source=file_perturbed base=%g delta=%g value=%g",
+                                name.Data(), baseVal, delta, value));
+                        } else {
+                            LogMDInfo("LOAD", Form("param=%s source=file value=%g", name.Data(), value));
                         }
+                    } else {
+                        TString srcTag;
+                        value = SampleMassDependentDefault(paramType, mdRule, rng, (seed > 0), srcTag);
+                        LogMDInfo("INIT", Form("param=%s source=%s_missing field=%s value=%g",
+                            name.Data(), srcTag.Data(), paramType.Data(), value));
                     }
 
                     parsList[name] = value;
                     nameToIndex[name] = totalNpars;
                     parIndexNames.push_back(name);
 
-                    LogMDInfo("ADD", Form("param=%s state=FREE index=%d value=%g", name.Data(), totalNpars, value));
+                    if (paramType == "m_threshold" || paramType == "m_expansion") {
+                        fixedParNames.push_back(name);
+                        LogMDInfo("ADD", Form("param=%s state=FIXED index=%d value=%g", name.Data(), totalNpars, value));
+                    } else {
+                        LogMDInfo("ADD", Form("param=%s state=FREE index=%d value=%g", name.Data(), totalNpars, value));
+                    }
 
                     totalNpars++;
                 }
@@ -870,69 +977,24 @@ namespace m2pw {
         }
 
         if (option == 1 || option == 2) {
+            const std::vector<TString> reflTags = (option == 2) ? std::vector<TString>{"a", "b"} : std::vector<TString>{""};
             for (const int ell_value : targetELL) {
                 if (!config.IsMassDependent(ell_value)) continue;
                 if (!fitter.ParameterNeededForMoments(ell_value, hConfig)) continue;
 
-                const std::vector<TString> waves = config.GetWaves(ell_value);
-                for (const TString& waveName : waves) {
-                    if (option == 1) {
-                        const int funcIndex = fitter.GetFunctionIndexForWave(waveName);
-                        const int funcType = (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size()))
-                            ? fitter.massDepFuncs_[funcIndex].GetFuncType()
-                            : -1;
+                MDInitRule mdRule;
+                if (auto mdIt = mdInitRules.find(ell_value); mdIt != mdInitRules.end()) {
+                    mdRule = mdIt->second;
+                }
 
-                        std::vector<TString> phaseNames;
-                        if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial) || funcType == 4) {
-                            phaseNames = {
-                                Form("MD_%s_globalphase_flatte", waveName.Data()),
-                                Form("MD_%s_globalphase_bw", waveName.Data())
-                            };
-                        } else {
-                            phaseNames = {Form("MD_%s_globalphase", waveName.Data())};
-                        }
-
-                        for (const TString& phaseParName : phaseNames) {
-                            if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
-                                continue;
-                            }
-
-                            double value = 0.0;
-                            if (TLeaf* leaf = tree->GetLeaf(phaseParName)) {
-                                value = leaf->GetValue();
-                                LogMDInfo("LOAD", Form("param=%s source=file value=%g", phaseParName.Data(), value));
-                            } else {
-                                LogMDInfo("INIT", Form("param=%s source=default field=globalphase value=0", phaseParName.Data()));
-                            }
-
-                            parsList[phaseParName] = value;
-                            nameToIndex[phaseParName] = totalNpars;
-                            parIndexNames.push_back(phaseParName);
-                            totalNpars++;
-
-                            LogMDInfo("ADD", Form("scope=L%d param=%s role=globalphase option=%d state=FREE index=%d value=%g",
-                                ell_value, phaseParName.Data(), option, totalNpars - 1, value));
-                        }
-                        continue;
-                    }
-
+                for (const TString& waveName : config.GetWaves(ell_value)) {
                     const int funcIndex = fitter.GetFunctionIndexForWave(waveName);
                     const int funcType = (funcIndex >= 0 && funcIndex < static_cast<int>(fitter.massDepFuncs_.size()))
                         ? fitter.massDepFuncs_[funcIndex].GetFuncType()
                         : -1;
 
-                    for (const TString& reflTag : {TString("a"), TString("b")}) {
-                        std::vector<TString> phaseNames;
-                        if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial) || funcType == 4) {
-                            phaseNames = {
-                                Form("MD_shared%s_%s_globalphase_flatte", reflTag.Data(), waveName.Data()),
-                                Form("MD_shared%s_%s_globalphase_bw", reflTag.Data(), waveName.Data())
-                            };
-                        } else {
-                            phaseNames = {Form("MD_shared%s_%s_globalphase", reflTag.Data(), waveName.Data())};
-                        }
-
-                        for (const TString& phaseParName : phaseNames) {
+                    for (const TString& reflTag : reflTags) {
+                        for (const TString& phaseParName : BuildGlobalPhaseNames(waveName, funcType, reflTag, option)) {
                             if (parsList.find(phaseParName) != parsList.end() || nameToIndex.find(phaseParName) != nameToIndex.end()) {
                                 continue;
                             }
@@ -940,9 +1002,16 @@ namespace m2pw {
                             double value = 0.0;
                             if (TLeaf* leaf = tree->GetLeaf(phaseParName)) {
                                 value = leaf->GetValue();
+                                loadedFromFileParams.insert(phaseParName);
+                                if (seed > 0 && mdRule.filePhaseSpread > 0.0) {
+                                    value += rng.Uniform(-mdRule.filePhaseSpread, mdRule.filePhaseSpread);
+                                }
                                 LogMDInfo("LOAD", Form("param=%s source=file value=%g", phaseParName.Data(), value));
                             } else {
-                                LogMDInfo("INIT", Form("param=%s source=default field=globalphase value=0", phaseParName.Data()));
+                                if (seed > 0 && (mdRule.randomizeFloatingPhases || mdRule.filePhaseSpread > 0.0)) {
+                                    value = rng.Uniform(-TMath::Pi(), TMath::Pi());
+                                }
+                                LogMDInfo("INIT", Form("param=%s source=default field=globalphase value=%g", phaseParName.Data(), value));
                             }
 
                             parsList[phaseParName] = value;
@@ -1125,16 +1194,23 @@ namespace m2pw {
 
         TTree* chi2_tree = new TTree("chi2", "chi2");
         double chi2 = lastChi2_;
+        double moments_chi2 = lastMomentsChi2_;
+        double constraint_penalty = lastConstraintPenalty_;
         chi2_tree->Branch("chi2", &chi2);
+        chi2_tree->Branch("moments_chi2", &moments_chi2);
+        chi2_tree->Branch("constraint_penalty", &constraint_penalty);
         int seed_val = paramManager.randomSeed;
         bool isValid = minimizerIsValid_;
         bool isValidError = minimizerHasValidErrors_;
+        bool atLimit = minimizerHitLimit_;
         int status = minimizerStatus_;
 
-        LogFitInfo("MIN", Form("seed=%d is_valid=%d is_valid_error=%d status=%d", seed_val, isValid, isValidError, status));
+        LogFitInfo("MIN", Form("seed=%d is_valid=%d is_valid_error=%d status=%d at_limit=%d",
+            seed_val, isValid, isValidError, status, atLimit ? 1 : 0));
 
         chi2_tree->Branch("isValid", &isValid);
         chi2_tree->Branch("isValidError", &isValidError);
+        chi2_tree->Branch("atLimit", &atLimit);
         chi2_tree->Branch("Status", &status);
         chi2_tree->Fill();
 

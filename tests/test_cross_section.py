@@ -8,6 +8,10 @@ from moments2amplitudes.schema import CrossSectionConfig
 from moments2amplitudes.cross_section import (
     parse_t_bin_from_string,
     compute_bw_integral,
+    blatt_weisskopf_sq,
+    breakup_momentum,
+    dynamic_breit_wigner_width,
+    blatt_weisskopf_barrier_ratio,
     WaveResonanceYield,
     CrossSectionResult,
     format_cross_section_table,
@@ -214,6 +218,78 @@ class TestCrossSection(unittest.TestCase):
         self.assertAlmostEqual(ratio, 130.0 / 250.0, places=4)
         # Weighted std of couplings: sqrt( (9*(10-11)^2 + 1*(20-11)^2)/10 ) = sqrt( (9 + 81)/10 ) = sqrt(9) = 3.0
         self.assertAlmostEqual(updated.wave_yields["a_2_1"].coupling_mcmc_err, 3.0, places=4)
+
+    def test_blatt_weisskopf_barrier_math(self):
+        # L=0 is always 1.0
+        self.assertEqual(blatt_weisskopf_sq(0, 0.5), 1.0)
+        self.assertEqual(blatt_weisskopf_sq(0, 0.0), 1.0)
+        # q <= 0 gives 0.0 for L > 0
+        self.assertEqual(blatt_weisskopf_sq(2, 0.0), 0.0)
+
+        # Breakup momentum for eta-pi at threshold
+        m_th = 0.547853 + 0.13957
+        self.assertEqual(breakup_momentum(m_th - 0.01), 0.0)
+        self.assertGreater(breakup_momentum(1.318), 0.0)
+
+        # Barrier ratio and dynamic width at resonance peak M = M0
+        M0 = 1.318
+        Gamma0 = 0.107
+        self.assertAlmostEqual(blatt_weisskopf_barrier_ratio(M0, M0, l=2), 1.0, places=5)
+        self.assertAlmostEqual(dynamic_breit_wigner_width(M0, M0, Gamma0, l=2), Gamma0, places=5)
+
+        # Below threshold: returns 0.0
+        self.assertEqual(blatt_weisskopf_barrier_ratio(0.5, M0, l=2), 0.0)
+        self.assertEqual(dynamic_breit_wigner_width(0.5, M0, Gamma0, l=2), 0.0)
+
+    def test_compute_bw_integral_with_barrier(self):
+        # Test BW integral with barrier factor enabled
+        integral_std = compute_bw_integral(10.0, 1.318, 0.107, 0.8, 2.0, 0.04, has_barrier=False)
+        integral_barrier = compute_bw_integral(10.0, 1.318, 0.107, 0.8, 2.0, 0.04, has_barrier=True, barrier_l=2)
+        self.assertGreater(integral_barrier, 0.0)
+        # Yield scales strictly as k^2
+        integral_barrier_2x = compute_bw_integral(20.0, 1.318, 0.107, 0.8, 2.0, 0.04, has_barrier=True, barrier_l=2)
+        self.assertAlmostEqual(integral_barrier_2x / integral_barrier, 4.0, places=4)
+
+        # With both kinematic factor and barrier factor
+        integral_kin_barrier = compute_bw_integral(10.0, 1.318, 0.107, 0.8, 2.0, 0.04,
+                                                    has_kinematic=True, has_barrier=True, barrier_l=2)
+        self.assertGreater(integral_kin_barrier, 0.0)
+
+    def test_cross_section_table_formatting_with_barrier(self):
+        res = CrossSectionResult(
+            resonance="a2_1318",
+            mass=1.318,
+            mass_error=0.001,
+            width=0.107,
+            width_error=0.002,
+            t_min=0.1,
+            t_max=0.2,
+            t_center=0.15,
+            delta_t=0.1,
+            luminosity=257.4,
+            branching_ratio=0.0565,
+            den_factor=1e6,
+            pos_refl_yield=100000.0,
+            pos_refl_yield_err=5000.0,
+            neg_refl_yield=50000.0,
+            neg_refl_yield_err=2500.0,
+            total_yield=150000.0,
+            total_yield_err=math.sqrt(5000**2 + 2500**2),
+            cs_pos=0.06876,
+            cs_pos_err=0.00344,
+            cs_neg=0.03438,
+            cs_neg_err=0.00172,
+            cs_total=0.10314,
+            cs_total_err=math.sqrt(0.00344**2 + 0.00172**2),
+            pos_refl_fraction=100000.0 / 150000.0,
+            wave_yields={},
+            has_kinematic=True,
+            has_barrier=True,
+            barrier_l=2,
+        )
+        table = format_cross_section_table(res)
+        self.assertIn("Blatt-Weisskopf (L=2) enabled", table)
+        self.assertIn("sqrt(rho_etapi) enabled", table)
 
 
 if __name__ == "__main__":

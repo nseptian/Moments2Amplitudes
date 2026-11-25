@@ -28,12 +28,13 @@ namespace m2pw{
         MassDependentFunction& operator=(MassDependentFunction&&) = default;
         ~MassDependentFunction() = default;
 
-        MassDependentFunction(int NMassBins, double FirstMassBinCenter, double MassBinWidth, int FuncType, int PolyOrder = 2) : 
+        MassDependentFunction(int NMassBins, double FirstMassBinCenter, double MassBinWidth, int FuncType, int PolyOrder = 2, int L = 2) : 
             _NMassBins(NMassBins),
             _FirstMassBinCenter(FirstMassBinCenter),
             _MassBinWidth(MassBinWidth),
             _FuncType(FuncType),
-            _PolyOrder(PolyOrder) {}
+            _PolyOrder(PolyOrder),
+            _L(L) {}
 
         void SetCustomFormula(CustomFormulaFunc func, const string& formulaStr = "", int nParams = 0) {
             _customFormula = func;
@@ -46,6 +47,8 @@ namespace m2pw{
         const string& GetFormulaString() const { return _formulaString; }
         void SetFormulaString(const string& str) { _formulaString = str; }
         void SetNCustomParams(int n) { _nCustomParams = n; }
+        int GetL() const { return _L; }
+        void SetL(int l) { _L = l; }
 
         static double PhaseSpaceFactor(double mass, double m1, double m2) {
             double s = mass * mass;
@@ -54,6 +57,100 @@ namespace m2pw{
             double diff_sq = (m1 - m2) * (m1 - m2);
             double k = TMath::Sqrt((s - threshold_sq) * (s - diff_sq)) / (2.0 * mass);
             return 2.0 * k / mass;
+        }
+
+        static double BreakupMomentum(double mass, double m1, double m2) {
+            double s = mass * mass;
+            double threshold_sq = (m1 + m2) * (m1 + m2);
+            if (s <= threshold_sq) return 0.0;
+            double diff_sq = (m1 - m2) * (m1 - m2);
+            return TMath::Sqrt((s - threshold_sq) * (s - diff_sq)) / (2.0 * mass);
+        }
+
+        static double BlattWeisskopfBarrierSq(int L, double q, double R = 5.0677) {
+            if (q <= 0.0) return (L == 0) ? 1.0 : 0.0;
+            double z = (q * R) * (q * R);
+            switch (L) {
+                case 0:
+                    return 1.0;
+                case 1:
+                    return (2.0 * z) / (1.0 + z);
+                case 2:
+                    return (13.0 * z * z) / (z * z + 3.0 * z + 9.0);
+                case 3:
+                    return (277.0 * z * z * z) / (z * z * z + 6.0 * z * z + 45.0 * z + 225.0);
+                case 4: {
+                    double z2 = z * z;
+                    double z3 = z2 * z;
+                    double z4 = z2 * z2;
+                    return (12746.0 * z4) / (z4 + 10.0 * z3 + 135.0 * z2 + 1575.0 * z + 11025.0);
+                }
+                default:
+                    return 1.0;
+            }
+        }
+
+        static double BlattWeisskopfBarrier(int L, double q, double R = 5.0677) {
+            double bSq = BlattWeisskopfBarrierSq(L, q, R);
+            return (bSq > 0.0) ? TMath::Sqrt(bSq) : 0.0;
+        }
+
+        static double DynamicBreitWignerWidth(double mass, double M0, double width0, int L, double m1 = 0.547853, double m2 = 0.13957, double R = 5.0677) {
+            if (mass <= (m1 + m2) || M0 <= (m1 + m2)) return 0.0;
+            double q = BreakupMomentum(mass, m1, m2);
+            double q0 = BreakupMomentum(M0, m1, m2);
+            if (q0 <= 0.0) return 0.0;
+            double bSq = BlattWeisskopfBarrierSq(L, q, R);
+            double b0Sq = BlattWeisskopfBarrierSq(L, q0, R);
+            if (b0Sq <= 0.0) return 0.0;
+            return width0 * (M0 / mass) * (q / q0) * (bSq / b0Sq);
+        }
+
+        static double BlattWeisskopfBarrierRatio(double mass, double M0, int L, double m1 = 0.547853, double m2 = 0.13957, double R = 5.0677) {
+            if (mass <= (m1 + m2) || M0 <= (m1 + m2)) return 0.0;
+            double q = BreakupMomentum(mass, m1, m2);
+            double q0 = BreakupMomentum(M0, m1, m2);
+            if (q0 <= 0.0) return 0.0;
+            double bSq = BlattWeisskopfBarrierSq(L, q, R);
+            double b0Sq = BlattWeisskopfBarrierSq(L, q0, R);
+            if (b0Sq <= 0.0) return 0.0;
+            return TMath::Sqrt(bSq / b0Sq);
+        }
+
+        static complex<double> EvaluateBarrierBreitWigner(double mass, double k, double M0, double width0, int L,
+                                                        double m1, double m2, double R,
+                                                        bool useDynamicWidth, bool peakNormalize) {
+            if (mass <= (m1 + m2) || M0 <= (m1 + m2) || width0 <= 0.0) return complex<double>(0.0, 0.0);
+            double bRatio = BlattWeisskopfBarrierRatio(mass, M0, L, m1, m2, R);
+            double gamma = useDynamicWidth ? DynamicBreitWignerWidth(mass, M0, width0, L, m1, m2, R) : width0;
+            double numerScale = peakNormalize ? (M0 * width0) : 1.0;
+            double s = mass * mass;
+            complex<double> denom(M0 * M0 - s, -M0 * gamma);
+            return (k * numerScale * bRatio) / denom;
+        }
+
+        static complex<double> BarrierBreitWigner(double mass, double k, double M0, double width0, int L = 2, double m1 = 0.547853, double m2 = 0.13957, double R = 5.0677) {
+            return EvaluateBarrierBreitWigner(mass, k, M0, width0, L, m1, m2, R, true, false);
+        }
+
+        static complex<double> PeakNormalizedBarrierBreitWigner(double mass, double k, double M0, double width0, int L = 2, double m1 = 0.547853, double m2 = 0.13957, double R = 5.0677) {
+            return EvaluateBarrierBreitWigner(mass, k, M0, width0, L, m1, m2, R, true, true);
+        }
+
+        static complex<double> ConstantWidthBarrierBreitWigner(double mass, double k, double M0, double width0, int L = 2, double m1 = 0.547853, double m2 = 0.13957, double R = 5.0677) {
+            return EvaluateBarrierBreitWigner(mass, k, M0, width0, L, m1, m2, R, false, false);
+        }
+
+        static complex<double> PeakNormalizedConstantWidthBarrierBreitWigner(double mass, double k, double M0, double width0, int L = 2, double m1 = 0.547853, double m2 = 0.13957, double R = 5.0677) {
+            return EvaluateBarrierBreitWigner(mass, k, M0, width0, L, m1, m2, R, false, true);
+        }
+
+        static complex<double> BarrierTwoBreitWigner(double mass, double k1, double M1, double w1, double phase1,
+                                                     double k2, double M2, double w2, double phase2,
+                                                     int L = 2, double m1 = 0.547853, double m2 = 0.13957, double R = 5.0677) {
+            complex<double> amp1 = BarrierBreitWigner(mass, k1, M1, w1, L, m1, m2, R) * exp(complex<double>(0.0, phase1));
+            complex<double> amp2 = BarrierBreitWigner(mass, k2, M2, w2, L, m1, m2, R) * exp(complex<double>(0.0, phase2));
+            return amp1 + amp2;
         }
 
         // Single parameter version
@@ -89,8 +186,13 @@ namespace m2pw{
         // Get number of parameters needed for this function type
         // If _PolyOrder == -1 the polynomial block is disabled and contributes 0 parameters.
         int GetNParameters() const {
+            int polyBlock = 0;
+            if (_PolyOrder >= 0) {
+                // polynomial block layout: m_threshold, m_expansion, then 2*(order+1) real/imag coefficients
+                polyBlock = 2 + 2*(_PolyOrder + 1);
+            }
             if (_isCustom && _nCustomParams > 0) {
-                return _nCustomParams;
+                return _nCustomParams + polyBlock;
             }
             int base = 0;
             switch (_FuncType) {
@@ -110,13 +212,7 @@ namespace m2pw{
                     base = 8; // k_fl, g_etapi, g_KK, g_etaprimepi, M_fl, k_bw, M_bw, width_bw
                     break;
                 case 5: // Custom formula
-                    return _nCustomParams;
-            }
-
-            int polyBlock = 0;
-            if (_PolyOrder >= 0) {
-                // polynomial block layout: m_threshold, m_expansion, then 2*(order+1) real/imag coefficients
-                polyBlock = 2 + 2*(_PolyOrder + 1);
+                    return _nCustomParams + polyBlock;
             }
 
             if (_FuncType == 0) {
@@ -132,6 +228,7 @@ namespace m2pw{
         double _MassBinWidth = 0.0;
         int _FuncType = 0;
         int _PolyOrder = 2;  // Polynomial order for conformal polynomial
+        int _L = 2;          // Wave orbital angular momentum for barrier factors
         bool _isCustom = false;
         int _nCustomParams = 0;
         string _formulaString = "";
@@ -150,19 +247,64 @@ namespace m2pw{
             }
 
             if (_isCustom && _customFormula) {
-                return _customFormula(mass, params);
+                if (_PolyOrder < 0) {
+                    return _customFormula(mass, params);
+                }
+
+                // Wave has both a custom formula lineshape AND a conformal polynomial!
+                int baseReq = 0;
+                int nPhases = 0;
+                if (_FuncType == 1) { // Flatte
+                    baseReq = 5;
+                    nPhases = (include_globalphase && params.size() > 1) ? 1 : 0;
+                } else if (_FuncType == 2 || _FuncType == 6) { // Breit-Wigner
+                    baseReq = 3;
+                    nPhases = (include_globalphase && params.size() > 1) ? 1 : 0;
+                } else if (_FuncType == 3 || _FuncType == 7) { // Two Breit-Wigner
+                    baseReq = 6;
+                    nPhases = (include_globalphase && params.size() > 2) ? 2 : 0;
+                } else if (_FuncType == 4) { // Flatte + BW
+                    baseReq = 8;
+                    nPhases = (include_globalphase && params.size() > 2) ? 2 : 0;
+                }
+
+                const int polyBlockSize = 2 + 2 * (_PolyOrder + 1);
+                if (baseReq > 0 && static_cast<int>(params.size()) >= baseReq + polyBlockSize + nPhases) {
+                    std::vector<double> baseWithPhase(params.begin(), params.begin() + baseReq);
+                    if (nPhases > 0) {
+                        baseWithPhase.insert(baseWithPhase.end(), params.end() - nPhases, params.end());
+                    }
+                    std::complex<double> resAmp = _customFormula(mass, baseWithPhase);
+
+                    double m_threshold = params[baseReq];
+                    double m_expansion = params[baseReq + 1];
+                    std::vector<double> polyParams(params.begin() + baseReq + 2, params.begin() + baseReq + polyBlockSize);
+                    std::complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
+
+                    return resAmp + polyAmp;
+                } else {
+                    return _customFormula(mass, params);
+                }
             }
 
             vector<double> coreParams = params;
             double phase = 0.0;
             double phase_flatte = 0.0;
             double phase_bw = 0.0;
+            double phase1 = 0.0;
+            double phase2 = 0.0;
             if (include_globalphase && params.size() > 1) {
                 if (_FuncType == 4 && params.size() > 2) {
                     // case-4 uses two independent phases appended in order: [phase_flatte, phase_bw]
                     phase_bw = coreParams.back();
                     coreParams.pop_back();
                     phase_flatte = coreParams.back();
+                    coreParams.pop_back();
+                } else if ((_FuncType == 3 || _FuncType == 7) && params.size() > 2) {
+                    // case-3 and case-7 use two independent phases appended in order: [phase1, phase2]
+                    phase2 = coreParams.back();
+                    coreParams.pop_back();
+                    phase1 = coreParams.back();
                     coreParams.pop_back();
                 } else {
                     phase = coreParams.back();
@@ -261,9 +403,14 @@ namespace m2pw{
                         const complex<double> denom1(M1 * M1 - s, -M1 * w1);
                         const complex<double> denom2(M2 * M2 - s, -M2 * w2);
 
-                        // resonance 1 phase is fixed to 0; optional global phase rotates only resonance 2.
-                        complex<double> amp_1 = k1 / denom1;
-                        complex<double> amp_2 = (k2 / denom2) * exp(complex<double>(0, phase));
+                        // If single phase was passed (backward compatibility):
+                        if (phase1 == 0.0 && phase != 0.0) {
+                            phase2 = phase;
+                        }
+
+                        // resonance 1 rotated by phase1, resonance 2 rotated by phase2
+                        complex<double> amp_1 = (k1 / denom1) * exp(complex<double>(0, phase1));
+                        complex<double> amp_2 = (k2 / denom2) * exp(complex<double>(0, phase2));
                         complex<double> baseAmp = amp_1 + amp_2;
 
                         if (!hasPoly) return baseAmp;
@@ -297,6 +444,54 @@ namespace m2pw{
 
                         // If polynomial block present, it is expected appended after base params
                         const size_t baseReq = flatteReq + bwReq;
+                        if (coreParams.size() < static_cast<size_t>(baseReq + polyBlockSize)) return baseAmp;
+                        double m_threshold = coreParams[baseReq];
+                        double m_expansion = coreParams[baseReq + 1];
+                        vector<double> polyParams(coreParams.begin() + baseReq + 2, coreParams.begin() + baseReq + polyBlockSize);
+                        complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
+                        return baseAmp + polyAmp;
+                    }
+
+                case 6: // Relativistic Blatt-Weisskopf Breit-Wigner + optional polynomial
+                    {
+                        const int baseReq = 3;
+                        if (coreParams.size() < static_cast<size_t>(baseReq)) return complex<double>(0.0, 0.0);
+                        double k = coreParams[0];
+                        double M = coreParams[1];
+                        double width = coreParams[2];
+                        complex<double> bwAmp = BarrierBreitWigner(mass, k, M, width, _L) * exp(complex<double>(0, phase));
+
+                        if (!hasPoly) return bwAmp;
+
+                        if (coreParams.size() < static_cast<size_t>(baseReq + polyBlockSize)) return bwAmp;
+                        double m_threshold = coreParams[baseReq];
+                        double m_expansion = coreParams[baseReq + 1];
+                        vector<double> polyParams(coreParams.begin() + baseReq + 2, coreParams.begin() + baseReq + polyBlockSize);
+                        complex<double> polyAmp = GetConformalPolynomialAmplitude(mass, polyParams, m_threshold, m_expansion);
+                        return bwAmp + polyAmp;
+                    }
+
+                case 7: // Coherent sum of two Blatt-Weisskopf Breit-Wigners + optional polynomial
+                    {
+                        if (coreParams.size() < 6) return complex<double>(0.0, 0.0);
+                        const double k1 = coreParams[0];
+                        const double M1 = coreParams[1];
+                        const double w1 = coreParams[2];
+                        const double k2 = coreParams[3];
+                        const double M2 = coreParams[4];
+                        const double w2 = coreParams[5];
+
+                        if (phase1 == 0.0 && phase != 0.0) {
+                            phase2 = phase;
+                        }
+
+                        complex<double> amp_1 = BarrierBreitWigner(mass, k1, M1, w1, _L) * exp(complex<double>(0, phase1));
+                        complex<double> amp_2 = BarrierBreitWigner(mass, k2, M2, w2, _L) * exp(complex<double>(0, phase2));
+                        complex<double> baseAmp = amp_1 + amp_2;
+
+                        if (!hasPoly) return baseAmp;
+
+                        const size_t baseReq = 6;
                         if (coreParams.size() < static_cast<size_t>(baseReq + polyBlockSize)) return baseAmp;
                         double m_threshold = coreParams[baseReq];
                         double m_expansion = coreParams[baseReq + 1];
@@ -403,9 +598,15 @@ namespace m2pw{
             if (s > s_min) {
                 sqrt_s_minus_smin = TMath::Sqrt(s - s_min);
             }
-            double sqrt_s0_minus_smin = TMath::Sqrt(s_0 - s_min);
-            double z = (sqrt_s_minus_smin - sqrt_s0_minus_smin) /
-                       (sqrt_s_minus_smin + sqrt_s0_minus_smin);
+            double sqrt_s0_minus_smin = 0.0;
+            if (s_0 > s_min) {
+                sqrt_s0_minus_smin = TMath::Sqrt(s_0 - s_min);
+            }
+            const double denom = sqrt_s_minus_smin + sqrt_s0_minus_smin;
+            double z = 0.0;
+            if (std::abs(denom) > 1e-12) {
+                z = (sqrt_s_minus_smin - sqrt_s0_minus_smin) / denom;
+            }
             
             // Build polynomial: sum_{i=0}^{N} (re_i + i*im_i) * z^i
             complex<double> amplitude(0.0, 0.0);

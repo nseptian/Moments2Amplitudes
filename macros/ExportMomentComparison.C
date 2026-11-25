@@ -96,6 +96,7 @@ void ExportMomentComparison(
         double chi2Val = 0.0;
         int statusVal = 0;
         bool isValidVal = true;
+        bool atLimitVal = false;
         if (chi2Tree && chi2Tree->GetEntries() > 0) {
             if (chi2Tree->GetBranch("chi2")) {
                 chi2Tree->SetBranchAddress("chi2", &chi2Val);
@@ -112,11 +113,14 @@ void ExportMomentComparison(
             } else if (chi2Tree->GetBranch("valid")) {
                 chi2Tree->SetBranchAddress("valid", &isValidVal);
             }
+            if (chi2Tree->GetBranch("atLimit")) {
+                chi2Tree->SetBranchAddress("atLimit", &atLimitVal);
+            }
             chi2Tree->GetEntry(0);
         }
 
-        // Only include converged fits (Status == 0 and isValid == true)
-        if (statusVal != 0 || !isValidVal) {
+        // Only include converged fits (Status == 0, isValid == true, and not at parameter limits)
+        if (statusVal != 0 || !isValidVal || atLimitVal) {
             f_fit->Close();
             delete f_fit;
             continue;
