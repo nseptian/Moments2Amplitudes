@@ -1,0 +1,154 @@
+# Moments2Amplitudes Configuration: Realistic S-, P-, and D-Wave Model Fit
+# Physics:
+#   - Kinematic phase-space factor sqrt(rho_etapi) and Blatt-Weisskopf barrier factors
+#     ensuring correct threshold and centrifugal physics.
+#   - L = 0 (S-wave): Coupled-channel a0(980) Flatté (g_etapi, g_KK, g_etaprimepi) + order-2 conformal
+#     polynomial capturing non-resonant S-wave continuum physics extending across mass bins.
+#   - L = 1 (P-wave): pi1(1600) relativistic Breit-Wigner with L=1 Blatt-Weisskopf barrier factor.
+#   - L = 2 (D-wave): a2(1320) + a2(1700) Two Breit-Wigners with L=2 Blatt-Weisskopf barrier factors.
+#   - Global phase gauge: a2(1320) phase anchored to 0.0; relative phases of a0(980), pi1(1600),
+#     and a2(1700) float freely.
+#   - Included moments: L in [0, 1, 2, 3, 4] (captures P-wave odd interference moments H1, H3 and even H0, H2, H4).
+
+project:
+  name: "SPiecewise_PBreitWigner_DTwoBreitWigner_Kinematic_Barrier"
+  tag: "spiecewise_pbreitwigner_dtwobreitwigner_kinematic_barrier"
+  description: "Realistic S+P+D wave fit with S-wave (a0(980) Flatté + conformal polynomial), P-wave (pi1(1600) L=1 barrier), and D-wave (a2(1320)+a2(1700) L=2 barrier)"
+
+dataset:
+  moments_dir: "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200_FixedCov_Lmax4_InitValueScale1.0_step0.8"
+  tbins: ["t010020", "t020032", "t032050", "t050075", "t075100"]  # Runnable in parallel across t-bins
+  results_filename: "ResultsBruMcmcFixedCovariance.root"
+  bin_prefix: "Mpi0eta"
+  var_bin_prefix: ""
+  mass_bins:
+    min: 0.86
+    max: 1.78
+    step: 0.04
+  use_covariance: true
+
+chi2:
+  included_L: [0, 1, 2, 3, 4]  # S, P, D self and interference moments up to L=4
+  max_l: 4
+
+waves:
+  # L = 0: Piecewise S-wave (per mass bin: random positive magnitude in [0, 200], phase fixed to 0)
+  - l: 0
+    name: "S-wave"
+    type: "piecewise"
+    init:
+      strategy: "random"
+      magnitude:
+        strategy: "random"
+        min: 0.0
+        max: 200.0
+      phase:
+        strategy: "fixed"
+        value: 0.0
+        fixed: false
+
+  # L = 1: P-wave pi1(1600) with Blatt-Weisskopf centrifugal barrier factor (L=1) and kinematic factor
+  - l: 1
+    name: "P-wave"
+    type: "mass_dependent"
+    model: "barrier_breit_wigner"
+    barrier_l: 1
+    barrier_radius: 5.0677
+    formula: "sqrt(rho_etapi) * barrier_bw_etapi(k, Mass, Width, 1) * exp(i * phase)"
+    parameters: ["k", "Mass", "Width", "phase"]
+    poly_order: -1
+    resonances:
+      - name: "pi1_1600"
+        mass: 1.354 # PDG average
+        width: 0.330 # PDG average
+        mass_fixed: false
+        width_fixed: true
+        mass_limits: [1.2, 1.8]
+        width_limits: [0.10, 0.60]
+        phase: 0.0
+        phase_fixed: false     # Floating relative phase
+        shared_phase: true    # Shared phase among waves in the same reflectivity
+    init:
+      # strategy: "random"
+      fixed_zero: true
+
+  # L = 2: D-wave two Breit-Wigners: a2(1320) + a2(1700) with L=2 barrier factors and kinematic factor
+  - l: 2
+    name: "D-wave"
+    type: "mass_dependent"
+    model: "barrier_two_breit_wigner"
+    barrier_l: 2
+    barrier_radius: 5.0677
+    formula: "sqrt(rho_etapi) * (barrier_bw_etapi(k1, Mass1, Width1, 2) * exp(i * phase1) + barrier_bw_etapi(k2, Mass2, Width2, 2) * exp(i * phase2))"
+    parameters: ["k1", "Mass1", "Width1", "phase1", "k2", "Mass2", "Width2", "phase2"]
+    poly_order: -1
+    resonances:
+      - name: "a2_1320"
+        mass: 1.318
+        width: 0.107
+        mass_fixed: false
+        width_fixed: false
+        mass_limits: [1.20, 1.5]
+        width_limits: [0.05, 0.25]
+        phase: 0.0
+        phase_fixed: true      # General phase reference fixed to 0.0
+        shared_phase: true     # Shared phase among waves in the same reflectivity
+      - name: "a2_1700"
+        mass: 1.706
+        width: 0.380
+        mass_fixed: false       # Standard reference fixed parameters
+        width_fixed: true
+        mass_limits: [1.5, 1.85]
+        width_limits: [0.10, 0.40]
+        phase: 0.0
+        phase_fixed: false     # Floating relative phase
+        shared_phase: true     # Shared phase among waves in the same reflectivity
+    init:
+      strategy: "random"
+
+minimizer:
+  algorithm: "Minuit2"
+  strategy: 1
+  tolerance: 1.0e-3
+  max_calls: 1000000
+  print_level: 0
+
+multi_start:
+  enabled: true
+  n_starts: 5000
+  n_threads: 50
+  n_tbin_workers: 5
+  output_dir: "logs_SPiecewise_PBreitWigner_DTwoBreitWigner_Kinematic_Barrier"
+  plateau_delta_chi2: 0.1
+  seed_offset: 1
+
+mcmc_propagation:
+  enabled: false
+  burn_in: 0
+  target_entries: 200
+  n_workers: 8
+  n_tbin_workers: 5
+  output_file: "mcmc_propagation_spiecewise_pbreitwigner_dtwobreitwigner_kinematic_barrier_results.root"
+  log_dir: "logs_SPiecewise_PBreitWigner_DTwoBreitWigner_Kinematic_Barrier/mcmc_fits"
+
+plotting:
+  enabled: true
+  style: "default"
+  moments_vs_t: true
+  moments_vs_t_sharey: false
+  amplitudes_vs_t: true
+  amplitudes_vs_t_sharey: false
+  distributions: true
+
+cross_section:
+  enabled: true
+  resonance: "a2_1320"
+  branching_ratio: 0.0565
+  luminosity: 257.4
+  luminosity_unit: "pb^-1"
+  mass_limits: [0.86, 1.78]
+  has_barrier: true
+  barrier_l: 2
+  barrier_radius: 5.0677
+  phase1_comparison: true
+  propagate_mcmc: true

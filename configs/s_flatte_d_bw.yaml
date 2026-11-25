@@ -18,8 +18,7 @@ dataset:
   use_covariance: true
 
 chi2:
-  included_l: [0, 2, 4]
-  excluded_l: []
+  included_L: [0, 2, 4]
   max_l: 4
 
 waves:
@@ -28,15 +27,19 @@ waves:
     name: "S-wave"
     type: "mass_dependent"
     model: "flatte"
-    formula: "k / (Mass^2 - s - i * (g_etapi^2 * rho_etapi + g_KK^2 * rho_KK + g_etaprimepi^2 * rho_etaprimepi))"
-    parameters: ["k", "Mass", "g_etapi", "g_KK", "g_etaprimepi"]
+    formula: "k / (Mass^2 - s - i * (g_etapi^2 * rho_etapi + g_KK^2 * rho_KK + g_etaprimepi^2 * rho_etaprimepi)) * exp(i * phase)"
+    parameters: ["k", "Mass", "g_etapi", "g_KK", "g_etaprimepi", "phase"]
     poly_order: -1
     resonances:
       - name: "a0_980"
         mass: 0.980
-        width: 0.075
         mass_fixed: true
-        width_fixed: false
+        g_etapi: 0.5          # Flatté coupling g_etapi (g_s)
+        g_etapi_fixed: false
+        g_KK: -99.0          # Coupling to K-Kbar (-99.0 uses CBAR ratio)
+        g_KK_fixed: true
+        g_etaprimepi: -99.0  # Coupling to eta'-pi (-99.0 uses CBAR ratio)
+        g_etaprimepi_fixed: true
         shared_phase: true  # Shared global phase per reflectivity
     init:
       strategy: "random"

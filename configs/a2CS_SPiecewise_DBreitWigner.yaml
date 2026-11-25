@@ -19,8 +19,7 @@ dataset:
   use_covariance: true
 
 chi2:
-  included_l: [0, 2, 4]
-  excluded_l: []
+  included_L: [0, 2, 4]
   max_l: 4
 
 waves:
@@ -82,7 +81,7 @@ multi_start:
   n_threads: 20
   n_tbin_workers: 5
   output_dir: "logs_a2CS_spiecewise_dbw"
-  plateau_delta_chi2: 0.05
+  plateau_delta_chi2: 0.1
   seed_offset: 1
 
 mcmc_propagation:
@@ -100,7 +99,7 @@ plotting:
   n_lowest_chi2: 10
   draw_best_fits: true
   moments: ["all"]
-  formats: ["png", "pdf"]
+  formats: ["pdf","png"]
 
 cross_section:
   enabled: false
