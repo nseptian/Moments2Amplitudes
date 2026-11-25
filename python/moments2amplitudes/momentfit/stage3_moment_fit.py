@@ -1,0 +1,244 @@
+"""
+Stage 3: MomentFit with BruFit MCMC using fixed covariance from linear algebra.
+"""
+
+from __future__ import annotations
+
+import functools
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import List, Optional, Tuple
+
+from .config import PipelineConfig
+
+print = functools.partial(print, flush=True)
+
+TBIN_INDEX_MAP = {
+    "t010020": 0,
+    "t020032": 1,
+    "t032050": 2,
+    "t050075": 3,
+    "t075100": 4,
+}
+
+
+def build_moment_fit_command(
+    cfg: PipelineConfig,
+    max_l: int,
+    tbin_arg: str,
+) -> Tuple[List[str], str]:
+    """
+    Constructs the command-line invocation for RunMomentFit_m080200.sh.
+    """
+    m_min = cfg.analysis.mass_binning.min
+    m_max = cfg.analysis.mass_binning.max
+    n_bins = cfg.analysis.mass_binning.n_bins
+    run_dir = cfg.moment_fit.get_run_dir(max_l, m_min, m_max)
+
+    cmd = [
+        "bash",
+        cfg.moment_fit.run_script,
+        "--run-dir", run_dir,
+        "--cov-dir", cfg.linear_algebra.output_base_dir,
+        "--tbin", tbin_arg,
+        "--max-l", str(max_l),
+        "--m-min", str(m_min),
+        "--m-max", str(m_max),
+        "--n-bins", str(n_bins),
+        "--init-scale", str(cfg.moment_fit.mcmc.init_scale),
+        "--step", str(cfg.moment_fit.mcmc.step),
+        "--iters", str(cfg.moment_fit.mcmc.iterations),
+        "--burn-in", str(cfg.moment_fit.mcmc.burnin),
+        "--ess-threshold", str(cfg.moment_fit.diagnostics.ess_threshold),
+        "--ess-metric", str(cfg.moment_fit.diagnostics.ess_metric),
+        "--max-parallel", str(cfg.moment_fit.max_parallel),
+        "--gibbs-block-size", str(cfg.moment_fit.mcmc.gibbs_block_size),
+        "--cold-warmup-acc", str(cfg.moment_fit.mcmc.cold_warmup_acc),
+    ]
+
+    if cfg.moment_fit.mcmc.apply_mc_variance:
+        cmd.append("--mc-variance")
+    else:
+        cmd.append("--no-mc-variance")
+
+    if cfg.moment_fit.mcmc.allow_negative_pdf:
+        cmd.append("--negative-pdf")
+    else:
+        cmd.append("--no-negative-pdf")
+
+    if cfg.moment_fit.mcmc.use_tuning:
+        cmd.append("--tuning")
+    else:
+        cmd.append("--no-tuning")
+
+    if cfg.moment_fit.diagnostics.auto_retry:
+        cmd.append("--auto-retry")
+        cmd.extend(["--max-retries", str(cfg.moment_fit.diagnostics.max_retries)])
+
+    if cfg.moment_fit.overwrite:
+        cmd.append("--overwrite")
+
+    # Pass configured input data directory and patterns if available
+    if hasattr(cfg.moment_fit, "data"):
+        data_cfg = cfg.moment_fit.data
+        if data_cfg.base_dir:
+            cmd.extend(["--data-dir", data_cfg.base_dir])
+        if data_cfg.data:
+            cmd.extend(["--data-pattern", data_cfg.data])
+        if data_cfg.mcrecon:
+            cmd.extend(["--mcrecon-pattern", data_cfg.mcrecon])
+        if data_cfg.mcgen:
+            cmd.extend(["--mcgen-pattern", data_cfg.mcgen])
+        if data_cfg.weight:
+            cmd.extend(["--weight-pattern", data_cfg.weight])
+
+    return cmd, run_dir
+
+
+def check_stage3_data_files(
+    cfg: PipelineConfig,
+    tbins: List[str],
+) -> List[str]:
+    """
+    Checks that required input data, MC, and weight files exist for Stage 3.
+    """
+    missing = []
+    if not hasattr(cfg.moment_fit, "data"):
+        return missing
+    data_cfg = cfg.moment_fit.data
+    for tbin in tbins:
+        data_f = data_cfg.get_data_path(tbin)
+        recon_f = data_cfg.get_mcrecon_path(tbin)
+        weight_f = data_cfg.get_weight_path(tbin)
+        if not os.path.isfile(data_f):
+            missing.append(data_f)
+        if not os.path.isfile(recon_f):
+            missing.append(recon_f)
+        if not os.path.isfile(weight_f):
+            missing.append(weight_f)
+        if data_cfg.use_generated_mc:
+            gen_f = data_cfg.get_mcgen_path(tbin)
+            if not os.path.isfile(gen_f):
+                missing.append(gen_f)
+    return missing
+
+
+def check_stage2_prerequisites(
+    cfg: PipelineConfig,
+    tbins: List[str],
+    max_l: int,
+) -> List[str]:
+    """
+    Verifies that Stage 2 exported covariance and initial value files exist.
+    """
+    missing = []
+    bin_cfg = cfg.analysis.mass_binning
+    for tbin in tbins:
+        out_dir = cfg.linear_algebra.get_output_dir(tbin, max_l, cfg.analysis.beam_pol_label)
+        for bin_idx in range(bin_cfg.n_bins):
+            center = bin_cfg.get_bin_center(bin_idx)
+            lbl = f"{bin_cfg.variable}_{center:.{bin_cfg.digits}f}"
+            cov_f = os.path.join(out_dir, f"BruCovMatrix_{lbl}.root")
+            init_f = os.path.join(out_dir, f"covariance_matrix_{lbl}.root")
+            if not os.path.isfile(cov_f):
+                missing.append(cov_f)
+            if not os.path.isfile(init_f):
+                missing.append(init_f)
+    return missing
+
+
+def run_stage3(
+    cfg: PipelineConfig,
+    tbins_filter: Optional[List[str]] = None,
+    max_l_filter: Optional[List[int]] = None,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Executes Stage 3: MomentFit MCMC with BruFit across target t-bins and max_l multipoles.
+    """
+    tbins = tbins_filter if tbins_filter is not None else cfg.analysis.tbins
+    max_ls = max_l_filter if max_l_filter is not None else cfg.analysis.max_l
+
+    print("\n" + "=" * 70)
+    print(" STAGE 3: MomentFit with BruFit MCMC (Fixed Linear Algebra Covariance)")
+    print("=" * 70)
+    print(f" Target t-bins:      {', '.join(tbins)}")
+    print(f" Multipoles Max L:   {max_ls}")
+    print(f" MCMC Iterations:    {cfg.moment_fit.mcmc.iterations} (burn-in: {cfg.moment_fit.mcmc.burnin})")
+    print(f" Init Scale / Step:  {cfg.moment_fit.mcmc.init_scale} / {cfg.moment_fit.mcmc.step}")
+    print(f" Tuning / Neg PDF:   {cfg.moment_fit.mcmc.use_tuning} / {cfg.moment_fit.mcmc.allow_negative_pdf}")
+    print(f" Auto-Retry Loop:    {cfg.moment_fit.diagnostics.auto_retry} (ESS >= {cfg.moment_fit.diagnostics.ess_threshold})")
+    print(f" Script:             {cfg.moment_fit.run_script}")
+    print("=" * 70 + "\n")
+
+    # Map t-bins to argument format for RunMomentFit_m080200.sh
+    if set(tbins) == set(TBIN_INDEX_MAP.keys()):
+        tbin_arg = "all"
+    elif len(tbins) == 1 and tbins[0] in TBIN_INDEX_MAP:
+        tbin_arg = str(TBIN_INDEX_MAP[tbins[0]])
+    else:
+        # Pass mapped numeric indices joined by space or names
+        indices = [str(TBIN_INDEX_MAP[t]) for t in tbins if t in TBIN_INDEX_MAP]
+        tbin_arg = " ".join(indices) if indices else "all"
+
+    all_success = True
+
+    for l in max_ls:
+        cmd, run_dir = build_moment_fit_command(cfg, l, tbin_arg)
+
+        print(f"\n[EXECUTION PLAN] MomentFit for Max L = {l}:")
+        print(f"  Run Directory: {run_dir}")
+        print(f"  Command:       {' '.join(cmd)}")
+
+        # Verify Stage 2 prerequisites
+        if not dry_run:
+            missing = check_stage2_prerequisites(cfg, tbins, l)
+            if missing:
+                print(f"❌ Error: Missing {len(missing)} covariance prerequisite files for Max L = {l}:")
+                for m in missing[:5]:
+                    print(f"  - {m}")
+                if len(missing) > 5:
+                    print(f"  ... and {len(missing) - 5} more.")
+                print("  Please run Stage 1 and Stage 2 first!")
+                all_success = False
+                continue
+
+            # Verify Stage 3 input data files
+            missing_data = check_stage3_data_files(cfg, tbins)
+            if missing_data:
+                print(f"⚠️  Warning: {len(missing_data)} input data/MC file(s) for Stage 3 were not found on disk:")
+                for m in missing_data[:5]:
+                    print(f"  - {m}")
+                if len(missing_data) > 5:
+                    print(f"  ... and {len(missing_data) - 5} more.")
+
+        if dry_run:
+            print("[DRY-RUN] Skipping actual fit execution.")
+            continue
+
+        print(f"\n--- Launching RunMomentFit_m080200.sh for Max L = {l} ---")
+        start_time = time.time()
+
+        # Run with environment from set_ana_env.sh
+        env = os.environ.copy()
+        if "BRUFIT" not in env:
+            env["BRUFIT"] = cfg.environment.brufit_dir
+
+        ret = subprocess.run(cmd, env=env)
+        elapsed = time.time() - start_time
+
+        if ret.returncode != 0:
+            print(f"❌ MomentFit failed for Max L = {l} (exit code: {ret.returncode}, elapsed: {elapsed:.1f}s)")
+            all_success = False
+        else:
+            print(f"✅ MomentFit completed successfully for Max L = {l} (elapsed: {elapsed:.1f}s)")
+
+    print("\n" + "-" * 70)
+    if all_success:
+        print("✅ Stage 3 completed successfully for all multipoles!")
+    else:
+        print("❌ Stage 3 encountered failures.")
+    return all_success
