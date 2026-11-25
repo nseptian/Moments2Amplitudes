@@ -43,7 +43,11 @@ logs_*/
 *.tmp
 *.swp
 *~
+*.bak
+*.ps
 .env
+.cache/
+scratch/
 
 # Jupyter notebooks
 *.ipynb

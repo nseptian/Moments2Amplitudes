@@ -2014,6 +2014,92 @@ def parse_single_log_status(fpath: str, active_timeout_min: float = 30.0) -> dic
     }
 
 
+def check_projection_scaling(root_fpath: str, tolerance: float = 0.30) -> tuple[bool, float | None, str]:
+    """
+    Checks whether the RooPlot projection curve in ResultsBruMcmc*.root matches
+    the data events normalization.
+    
+    When allow_negative_pdf=True and sampling wanders into negative-intensity
+    phase space, BruComponentsPDF's quadratic penalty guard inflates the analytical
+    normalization integral (denominator), while the 1D projection numerator is not
+    inflated, causing the projection curve to be depressed by 8x-18x (Data/Curve >> 1.0).
+    
+    Returns:
+        (is_valid: bool, ratio: float | None, message: str)
+        where ratio = sum(data_points) / sum(curve_evals).
+        A healthy physical fit has (1.0 - tolerance) <= ratio <= (1.0 + tolerance), typically ~1.00.
+    """
+    if ROOT is None or not os.path.exists(root_fpath):
+        return True, None, "File missing or ROOT unavailable"
+
+    try:
+        f = ROOT.TFile.Open(root_fpath, "READ")
+        if not f or f.IsZombie():
+            if f:
+                f.Close()
+            return False, None, "File is zombie or cannot be opened"
+
+        canvas = None
+        for k in f.GetListOfKeys():
+            name = k.GetName()
+            if "__Phi" in name or "__Theta" in name or "phi_eta_gj" in name or "cosTheta_eta_gj" in name:
+                obj = f.Get(name)
+                if obj and (obj.InheritsFrom("TCanvas") or obj.InheritsFrom("RooPlot")):
+                    canvas = obj
+                    break
+
+        if not canvas:
+            f.Close()
+            return True, None, "No projection canvas found in file"
+
+        pad = canvas.GetPad(1) if hasattr(canvas, "GetPad") and canvas.GetPad(1) else canvas
+        h_data = None
+        curve = None
+
+        if hasattr(pad, "GetListOfPrimitives"):
+            for obj in pad.GetListOfPrimitives():
+                if obj.InheritsFrom("RooHist") or "h_Data" in obj.GetName():
+                    h_data = obj
+                elif obj.InheritsFrom("RooCurve") and "paramBox" not in obj.GetName():
+                    curve = obj
+        elif hasattr(canvas, "getHist") and hasattr(canvas, "getCurve"):
+            h_data = canvas.getHist()
+            curve = canvas.getCurve()
+
+        if not h_data or not curve:
+            f.Close()
+            return True, None, "Could not locate both data hist and curve in projection canvas"
+
+        n_pts = h_data.GetN()
+        if n_pts == 0:
+            f.Close()
+            return True, None, "Empty data histogram"
+
+        s_data = sum(h_data.GetPointY(i) for i in range(n_pts))
+        s_curve = sum(curve.Eval(h_data.GetPointX(i)) for i in range(n_pts))
+        f.Close()
+
+        if s_curve <= 0:
+            return False, 999.0, "Projection curve integral is zero or negative"
+
+        ratio = s_data / s_curve
+        min_allowed = 1.0 - tolerance
+        max_allowed = 1.0 + tolerance
+
+        if ratio < min_allowed or ratio > max_allowed:
+            msg = (
+                f"Negative-PDF scaling distortion detected! Data/Curve ratio is {ratio:.2f} "
+                f"(expected ~1.00, allowed [{min_allowed:.2f}, {max_allowed:.2f}]). "
+                f"The negative PDF penalty guard inflated the normalization integral, "
+                f"indicating walker trapped in unphysical negative-intensity phase space."
+            )
+            return False, ratio, msg
+
+        return True, ratio, f"Normal projection curve scaling (Data/Curve = {ratio:.2f})"
+    except Exception as e:
+        return True, None, f"Error inspecting curve scaling: {e}"
+
+
 def compute_chain_diagnostics_from_root(root_fpath: str, burn_in: int = 2000, tree_name: str = "MCMCTree") -> dict | None:
     """
     Load an MCMCTree from a ROOT file and calculate integrated autocorrelation time and ESS.
@@ -2126,7 +2212,7 @@ def get_fit_status(
         r['ess_mean'] = None
         r['n_eff'] = None
 
-        if compute_diagnostics and r['status'] == 'SUCCESS':
+        if compute_diagnostics and r['status'] in ('SUCCESS', 'RUNNING', 'STALLED'):
             if mcmc is not None:
                 b_idx = r['bin']
                 if b_idx is not None and 0 <= b_idx < mcmc.get_N_rdf() and mcmc.get_rdf(b_idx) is not None:
@@ -2167,20 +2253,28 @@ def get_fit_status(
                         break
 
                 if found_root:
-                    diag = compute_chain_diagnostics_from_root(found_root, burn_in=burn_in)
-                    if diag:
-                        r['tau_mean'] = diag['tau_mean']
-                        r['tau_max'] = diag['tau_max']
-                        r['ess_min'] = diag['ess_min']
-                        r['ess_mean'] = diag['ess_mean']
-                        r['n_eff'] = diag['n_eff']
-                        r['diagnostics'] = diag
+                    scale_ok, scale_ratio, scale_msg = check_projection_scaling(found_root)
+                    r['scale_ratio'] = scale_ratio
+                    r['scale_ok'] = scale_ok
+                    if not scale_ok:
+                        r['status'] = 'SCALE_MISMATCH'
+                        r['details'] = f"Negative-PDF scaling mismatch (ratio {scale_ratio:.2f} != 1.0)"
+                    elif r['status'] == 'SUCCESS':
+                        diag = compute_chain_diagnostics_from_root(found_root, burn_in=burn_in)
+                        if diag:
+                            r['tau_mean'] = diag['tau_mean']
+                            r['tau_max'] = diag['tau_max']
+                            r['ess_min'] = diag['ess_min']
+                            r['ess_mean'] = diag['ess_mean']
+                            r['n_eff'] = diag['n_eff']
+                            r['diagnostics'] = diag
 
     summary = {}
     for r in bin_results:
         summary[r['status']] = summary.get(r['status'], 0) + 1
 
     failed_bins = [r['bin'] for r in bin_results if r['status'] == 'FAILED']
+    scale_mismatch_bins = [r['bin'] for r in bin_results if r['status'] == 'SCALE_MISMATCH']
     success_bins = [r['bin'] for r in bin_results if r['status'] == 'SUCCESS']
     running_bins = [r['bin'] for r in bin_results if r['status'] == 'RUNNING']
     stalled_bins = [r['bin'] for r in bin_results if r['status'] == 'STALLED']
@@ -2190,6 +2284,7 @@ def get_fit_status(
         'summary': summary,
         'bins': bin_results,
         'failed_bins': failed_bins,
+        'scale_mismatch_bins': scale_mismatch_bins,
         'success_bins': success_bins,
         'running_bins': running_bins,
         'stalled_bins': stalled_bins,
@@ -2244,6 +2339,8 @@ def print_fit_status(
     print("=" * 118)
     summary_str = " | ".join(f"{k}: {v}" for k, v in sorted(status_info['summary'].items()))
     print(f"Total Bins: {len(status_info['bins'])} | {summary_str}")
+    if status_info.get('scale_mismatch_bins'):
+        print(f"⚠️  Negative-PDF Scaling Mismatch Bins ({len(status_info['scale_mismatch_bins'])}): {status_info['scale_mismatch_bins']}")
     if status_info['failed_bins']:
         print(f"Failed Bins ({len(status_info['failed_bins'])}): {status_info['failed_bins']}")
     if status_info['running_bins']:
