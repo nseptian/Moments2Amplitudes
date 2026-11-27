@@ -1,0 +1,184 @@
+# ==============================================================================
+# MomentFit Analysis Workflow Configuration
+#
+# Executes the 3 core analysis stages in order:
+#   1. linear_algebra:   Moments calculation and acceptance correction (Moments.Main)
+#   2. export_covariance: Extract moments, normalize, regularize SPD covariance matrix
+#   3. moment_fit:       BruFit MCMC fit with fixed linear algebra covariance
+# ==============================================================================
+
+# Active stages to run (in sequential order)
+stages:
+  - linear_algebra
+  - export_covariance
+  - moment_fit
+  - plot
+
+# ------------------------------------------------------------------------------
+# Environment & Library Paths
+# ------------------------------------------------------------------------------
+environment:
+  pixi_manifest: "/d/home/septian/Moments2Amplitudes/pixi.toml"
+  moments_main_dir: "/d/grid17/septian/Moments-dev/Moments.Main"
+  mom2amp_dir: "/d/home/septian/Moments2Amplitudes"
+  etapi0_dir: "/d/home/septian/EtaPi0Analysis"
+  brufit_dir: "/d/grid17/septian/brufit_dev/brufit_negative"
+  root_sh: "/d/grid17/septian/root_v6-36-08_cuda_install/bin/thisroot.sh"
+  python_bin: "/d/home/septian/Moments2Amplitudes/.pixi/envs/default/bin/python"
+
+# ------------------------------------------------------------------------------
+# Core Analysis & Kinematic Binning Configuration
+# ------------------------------------------------------------------------------
+analysis:
+  subsystem: "EtaPi0"
+  frame: "GJ"                     # "GJ" (Gottfried-Jackson) or "HF" (Helicity)
+  data_period: "merged"
+  beam_pol_label: "All"
+  polarization: "Pol"             # Column name for photon beam polarization in tree
+  tbins:
+    - "t010020"
+    - "t020032"
+    - "t032050"
+    - "t050075"
+    - "t075100"
+  max_l:                          # L_max multipoles to analyze
+    - 4
+    - 6
+    - 8
+  mass_binning:
+    variable: "Mpi0eta"
+    label: "#it{m}_{#it{#eta}#it{#pi}^{0}}"
+    unit: "GeV/#it{c}^{2}"
+    min: 1.04
+    max: 1.6
+    n_bins: 14     
+    digits: 3
+
+# ------------------------------------------------------------------------------
+# Input Dataset Configuration
+# ------------------------------------------------------------------------------
+input_data:
+  base_dir: "/d/home/septian/Moments2Amplitudes/data/nominal"
+  tree_name: "kin"
+  data_file_pattern: "{data_dir}/{tbin}/data_flat_All.root"
+  ps_acc_file_pattern: "{data_dir}/{tbin}/phaseSpace_acc_flat_All.root"
+  ps_gen_file_pattern: "{data_dir}/{tbin}/phaseSpace_gen_flat_All.root"
+  weight_branch: "weightASBS"     # Weight branch in ROOT tree for event weights
+  columns:
+    # Expressions to define decay angles expected by Moments.Main
+    theta: "std::acos(cosTheta_eta_gj)"
+    phi: "phi_eta_gj"
+    Phi: "Phi"
+  additional_cuts: []
+
+# ------------------------------------------------------------------------------
+# Stage 1: Linear Algebra Moments Calculation (using Moments.Main)
+# ------------------------------------------------------------------------------
+linear_algebra:
+  output_base_dir: "/d/home/septian/Moments2Amplitudes/Moments.out/test"
+  method: "LIN_ALG_BG_SUBTR_NEG_WEIGHTS"
+  weight_branch: "weightASBS"     # Weight branch name for event weights
+  normalize_moments: false        # Keep unnormalized for covariance export
+  bootstrap_samples: 0            # 0 disables bootstrapping
+  force_integral_matrix: true     # Recalculate integral matrices
+  calc_acc_ps_moments: false      # Calculate moments for phase space MC
+  openmp_threads: 4               # OpenMP threads per worker process
+  max_parallel_workers: 50         # Concurrent (tbin, maxL) worker processes
+
+# ------------------------------------------------------------------------------
+# Stage 2: Export Moments Value and Covariance Matrix (SPD Regularization)
+# ------------------------------------------------------------------------------
+export_covariance:
+  # Output files generated per mass bin:
+  #   - covariance_matrix_Mpi0eta_%.3f.root (initial values & raw scaled covariance)
+  #   - BruCovMatrix_Mpi0eta_%.3f.root     (SPD regularized covariance for BruFit MCMC)
+  scale_physics_moments: 2.0      # Physical moment convention scaling (bar{H} = 2 * H)
+  min_eigen_floor: 1.0e-4         # Eigenvalue floor for correlation spectral projection
+  yield_variance_floor: 10000.0   # Decoupled yield variance floor
+  add_cholesky_jitter: true       # Diagonal jitter fallback to guarantee positive-definiteness
+  macro_path: "/d/home/septian/Moments2Amplitudes/macros/ExportCovarianceC.C"
+
+# ------------------------------------------------------------------------------
+# Stage 3: MomentFit with BruFit MCMC
+# ------------------------------------------------------------------------------
+moment_fit:
+  macro_path: "/d/home/septian/Moments2Amplitudes/macros/MomentFit.C"
+  run_script: "/d/home/septian/Moments2Amplitudes/macros/RunMomentFit.sh"
+  monitor_script: "/d/home/septian/Moments2Amplitudes/macros/MonitorMomentFit.py"
+  collector_script: "/d/home/septian/Moments2Amplitudes/macros/MomentFitCollector.py"
+  calculate_acceptance: "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance.C"
+  skip_acceptance: false
+  force_acceptance: false
+  output_dir_template: "/d/home/septian/Moments2Amplitudes/run/MomentFit_m{tag_min:03d}{tag_max:03d}_FixedCov_Lmax{maxL}_InitValueScale{init_scale:.1f}_step{step:.1f}/"
+  data:
+    base_dir: "/d/home/septian/Moments2Amplitudes/data/data/nominal_tbins"
+    data: "{data_dir}/data_merged_{tbin}.root"
+    mcrecon: "{data_dir}/reconmc_merged_{tbin}.root"
+    mcgen: "{data_dir}/genmc_merged_{tbin}.root"
+    weight: "{data_dir}/weights_data_merged_{tbin}.root"
+    tree_name: "kin"
+    weight_species: "Acc"
+    weight_name: "weight"
+    use_generated_mc: true
+  mcmc:
+    init_scale: 1.0               # Initial value scale from linear algebra moments
+    step: 1.0                     # MCMC proposal step size
+    iterations: 100000            # Total MCMC sampling iterations
+    burnin: 2000                  # Initial burn-in samples to discard
+    apply_mc_variance: false      # Enable MC variance scaling
+    allow_negative_pdf: true      # Allow negative PDF / negative intensities
+    use_tuning: true              # Activate MCMC covariance tuning engine
+    gibbs_block_size: 0           # Default Gibbs block size (0 = full-vector proposal)
+    gibbs_block_size_by_max_l: {} # Optional per-maxL Gibbs block overrides (e.g. {4: 0, 6: 12, 8: 16})
+    cold_warmup_acc: 0.15         # Cold warm-up acceptance rate target
+    min_acceptance: 0.05          # Minimum acceptance bound for MCMC tuning
+    max_acceptance: 0.15          # Maximum acceptance bound for MCMC tuning
+    target_acceptance: null       # Target acceptance rate (null = midpoint of [min, max])
+    tune_mode: "MappedRhat"       # BruFit tuning mode: "MappedRhat" or "Acceptance"
+    rhat_window: 1000             # Window size for MappedRhat diagnostic tuning
+    rhat_target: 1.05             # Target R-hat threshold during adaptive tuning
+    ess_fraction: 0.02            # Minimum ESS fraction during MappedRhat tuning
+    rhat_max_retries: 5           # Maximum adaptive R-hat tuning retries
+    bailout_threshold: 10000      # Proposals before checking low-acceptance bailout
+    bailout_min_acceptance: 0.0001 # Minimum acceptance required past bailout_threshold
+    mc_integration_bins: 50       # Angular grid bins for RooFit MC integration
+    fixed_covariance: true        # Use fixed Stage 2 linear-algebra covariance (false = BruMcmcCovariance)
+    use_covariance: true          # Use covariance proposal matrix (false = diagonal Gaussian proposal)
+    set_init_value: true          # Initialize moments from Stage 2 linear-algebra values
+    use_gj_frame: true            # Decay angles frame (true = Gottfried-Jackson, false = Helicity)
+    num_cpu: 1                    # RooFit likelihood evaluation CPUs per job
+    seed: 111                     # gRandom RNG seed for MomentFit
+  diagnostics:
+    ess_threshold: 20.0           # Effective Sample Size threshold
+    ess_metric: "mean"            # Metric to evaluate against threshold ("mean" or "min")
+    min_ess_threshold: 10.0       # Safety floor on worst-moment ESS (even when ess_metric="mean")
+    auto_retry: false             # Auto-retry bins not meeting ESS threshold
+    max_retries: 2                # Max retry rounds for bad bins
+    max_retry_iters: 200000       # Maximum MCMC iteration cap for retry escalation
+    burnin_fraction: 0.10         # Retry burn-in fraction of retry iterations (0.0 disables scaling)
+    low_acceptance_threshold: 0.03 # Low-acceptance threshold for full-vector proposals (gibbs=0)
+    gibbs_low_acceptance_threshold: 0.12 # Low-acceptance threshold for blocked Gibbs proposals (gibbs>0)
+    high_acceptance_threshold: 0.35 # High-acceptance threshold (triggers step increase)
+    gibbs_activation_acceptance: 0.05 # Enable blocked Gibbs on maxL>=6 retries below this acceptance
+    recondition_covariance: false # Opt-in: empirical posterior covariance blend on LOW_ESS retries (default: false)
+    recondition_shrinkage: 0.2    # Shrinkage weight toward Stage 2 linear-algebra prior (when enabled)
+    recondition_min_eigen_floor: 1.0e-4 # SPD correlation-space eigenvalue floor for reconditioning
+  max_parallel: 2                 # Concurrent t-bin fit jobs
+  overwrite: false                # Overwrite existing fit logs and results without prompt
+
+# ------------------------------------------------------------------------------
+# Stage 4: Plotting Unnormalized Moments vs Mass
+# ------------------------------------------------------------------------------
+plotting:
+  enabled: true                   # Enable plotting in workflow
+  plot_linear_algebra: true       # Plot unnormalized moments vs mass for linear algebra
+  plot_mcmc: true                 # Plot unnormalized moments vs mass for BruFit MCMC
+  plot_overlay: true              # Overlay linear algebra and MCMC on top of each other
+  moments:                        # Moments to plot: ["all"] or list of moment names (e.g. ["H_0_0_0", "H_0_2_0"])
+    - "all"
+  output_dir: "/d/home/septian/Moments2Amplitudes/plots/momentfit"
+  formats:                        # Image formats to generate
+    - "pdf"
+    - "png"
+  grid: true                      # Generate multi-panel overview grids (H0, H1, H2)
+  style: "default"

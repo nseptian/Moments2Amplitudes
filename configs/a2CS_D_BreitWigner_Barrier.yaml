@@ -1,0 +1,85 @@
+# Moments2Amplitudes Configuration: Relativistic D-wave Resonance Fit with Blatt-Weisskopf Barrier Factor
+# Model: D-wave Breit-Wigner a2(1320) with centrifugal Blatt-Weisskopf barrier factors (L=2) and kinematic factor sqrt(rho_etapi)
+# Formalism:
+#   A(m) = sqrt(rho_etapi(m)) * [ k * B_L(q, R) / B_L(q0, R) ] / [ M^2 - s - i * M * Gamma_L(m) ]
+#   where Gamma_L(m) = width * (M / m) * (q / q0) * [ B_L(q, R) / B_L(q0, R) ]^2
+
+project:
+  name: "a2CS_DBreitWigner_Barrier"
+  description: "Fit D-wave a2(1320) with Blatt-Weisskopf barrier factor (L=2) and kinematic factor (JPAC PRD 100, 054017)"
+
+dataset:
+  moments_dir: "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200_FixedCov_Lmax4_InitValueScale1.0_step0.8"
+  tbins: ["t010020", "t020032", "t032050", "t050075", "t075100"]
+  results_filename: "ResultsBruMcmcFixedCovariance.root"
+  bin_prefix: "Mpi0eta"
+  var_bin_prefix: ""
+  mass_bins:
+    min: 1.06
+    max: 1.58
+    step: 0.04
+  use_covariance: true
+
+chi2:
+  included_L: [4]
+  max_l: 4
+
+waves:
+  # L = 2: D-wave Breit-Wigner with Blatt-Weisskopf barrier factor (L=2)
+  - l: 2
+    name: "D-wave"
+    type: "mass_dependent"
+    model: "barrier_breit_wigner"
+    barrier: true
+    barrier_l: 2
+    barrier_radius: 5.0677
+    formula: "sqrt(rho_etapi) * barrier_bw_etapi(k, M, width, 2)"
+    parameters: ["k", "M", "width"]
+    poly_order: -1
+    resonances:
+      - name: "a2_1320"
+        mass: 1.318
+        width: 0.107
+        mass_fixed: false
+        width_fixed: false
+        mass_limits: [1.20, 1.45]
+        width_limits: [0.05, 0.25]
+    init:
+      strategy: "random"
+
+minimizer:
+  algorithm: "Minuit2"
+  strategy: 1
+  tolerance: 1.0e-2
+  max_calls: 1000000
+  print_level: 0
+
+multi_start:
+  enabled: true
+  n_starts: 100
+  n_threads: 100
+  n_tbin_workers: 5
+  output_dir: "logs_a2CS_dbw_barrier"
+
+mcmc_propagation:
+  enabled: true
+  n_samples: 50000
+  burn_in: 5000
+  stride: 5
+  output_dir: "logs_a2CS_dbw_barrier"
+
+cross_section:
+  enabled: true
+  resonance: "a2_1320"
+  branching_ratio: 0.0565
+  luminosity: 257.4
+  luminosity_unit: "pb^-1"
+  has_kinematic: true
+  has_barrier: true
+  barrier_l: 2
+  barrier_radius: 5.0677
+  propagate_mcmc: true
+
+plotting:
+  enabled: true
+  output_dir: "plots_a2CS_dbw_barrier"

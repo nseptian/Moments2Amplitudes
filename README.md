@@ -63,7 +63,7 @@ pixi run cs configs/s_piecewise_d_bw.yaml
 pixi run propagate configs/s_piecewise_d_bw.yaml
 ```
 
-See **[`docs/CONFIG_FRAMEWORK.md`](docs/CONFIG_FRAMEWORK.md)** for complete configuration options, two-stage fit workflows, and schema specifications.
+See **[`docs/CONFIG_FRAMEWORK.md`](docs/CONFIG_FRAMEWORK.md)** for complete configuration options, two-stage fit workflows, and schema specifications, and **[`docs/MOMENTFIT.md`](docs/MOMENTFIT.md)** for the end-to-end linear algebra -> SPD covariance export -> BruFit MCMC (`pixi run momentfit`) workflow.
 
 ---
 
@@ -109,13 +109,15 @@ Moments2Amplitudes/
 │
 ├── python/                           # Python analysis tools, driver, CLI, and post-processing
 │   ├── moments2amplitudes/           # Modular package
-│   │   ├── cli.py                    # Unified CLI (`mom2amp validate/fit/summary/plot/propagate`)
+│   │   ├── cli.py                    # Unified CLI (`mom2amp validate/fit/summary/plot/propagate/momentfit`)
 │   │   ├── driver.py                 # Macro generation, worker dispatching, and run orchestration
+│   │   ├── momentfit/                # End-to-end MomentFit workflow (linear algebra, cov export, BruFit MCMC, diagnostics)
 │   │   ├── summary.py                # Formatted ASCII and Markdown physics summary tables
 │   │   ├── plotter.py                # Chi2 distribution and diagnostic plotting
 │   │   ├── config.py                 # Configuration loader and parser
 │   │   ├── schema.py                 # Pydantic schema validation
 │   │   └── rundir.py                 # Standardized run directory hierarchy manager
+│   ├── BruFitResults.py              # BruFit fit-status verification and bounded-memory MCMC chain diagnostics
 │   ├── moments_to_amplitudes.py      # Core Moments2Amplitudes analysis class
 │   └── MomentsToAmplitudes.py        # Module alias / backwards-compatibility wrapper
 │

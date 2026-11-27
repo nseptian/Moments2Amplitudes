@@ -308,6 +308,8 @@ namespace m2pw {
             }
         }
         
+        lastMomentsChi2_ = total_chi2;
+        lastConstraintPenalty_ = 0.0;
         lastChi2_ = total_chi2;
         return total_chi2;
     }
@@ -505,7 +507,48 @@ namespace m2pw {
                         const TString reflTag = ReflectivityTagFromParameterName(baseName);
                         bool includeGlobalPhase = false;
 
-                        if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial) || funcType == 4) {
+                        if (funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBreitWignerPlusPolynomial) || funcType == 3 ||
+                            funcType == static_cast<int>(MassDependenceConfig::ModelType::TwoBarrierBreitWignerPlusPolynomial) || funcType == 7) {
+                            int phase1Idx = -1;
+                            int phase2Idx = -1;
+                            bool foundAny = false;
+
+                            auto p1It = massDepParIndices.find(GlobalPhaseComponentKeyForWave(waveName, reflTag, "globalphase1"));
+                            if (p1It == massDepParIndices.end() && reflTag.Length() > 0) {
+                                p1It = massDepParIndices.find(GlobalPhaseComponentKeyForWave(waveName, "globalphase1"));
+                            }
+                            if (p1It != massDepParIndices.end() && !p1It->second.empty()) {
+                                phase1Idx = p1It->second[0];
+                                foundAny = true;
+                            }
+
+                            auto p2It = massDepParIndices.find(GlobalPhaseComponentKeyForWave(waveName, reflTag, "globalphase2"));
+                            if (p2It == massDepParIndices.end() && reflTag.Length() > 0) {
+                                p2It = massDepParIndices.find(GlobalPhaseComponentKeyForWave(waveName, "globalphase2"));
+                            }
+                            if (p2It != massDepParIndices.end() && !p2It->second.empty()) {
+                                phase2Idx = p2It->second[0];
+                                foundAny = true;
+                            }
+
+                            // Backward compatibility: fallback to legacy single globalphase rotating resonance 2
+                            if (!foundAny) {
+                                auto phaseIt = massDepParIndices.find(GlobalPhaseKeyForWave(waveName, reflTag));
+                                if (phaseIt == massDepParIndices.end() && reflTag.Length() > 0) {
+                                    phaseIt = massDepParIndices.find(GlobalPhaseKeyForWave(waveName));
+                                }
+                                if (phaseIt != massDepParIndices.end() && !phaseIt->second.empty()) {
+                                    phase2Idx = phaseIt->second[0];
+                                    foundAny = true;
+                                }
+                            }
+
+                            includeGlobalPhase = foundAny;
+                            if (includeGlobalPhase) {
+                                minuitIndices.push_back(phase1Idx);
+                                minuitIndices.push_back(phase2Idx);
+                            }
+                        } else if (funcType == static_cast<int>(MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial) || funcType == 4) {
                             int phaseFlatteIdx = -1;
                             int phaseBWIdx = -1;
                             bool foundAny = false;
@@ -727,7 +770,9 @@ namespace m2pw {
             }
         }
 
-        fitter_.lastChi2_ = total_chi2;
+        fitter_.lastMomentsChi2_ = total_chi2;
+        fitter_.lastConstraintPenalty_ = penalty;
+        fitter_.lastChi2_ = total_chi2 + penalty;
         return total_chi2 + penalty;
     }
 
@@ -753,6 +798,9 @@ namespace m2pw {
             }
         }
 
+        fitter_.lastMomentsChi2_ = chi2;
+        fitter_.lastConstraintPenalty_ = penalty;
+        fitter_.lastChi2_ = chi2 + penalty;
         return chi2 + penalty;
     }
 
@@ -802,6 +850,8 @@ namespace m2pw {
             LogFitInfo("CHI2", Form("mass_bin=%g chi2=%g", mass_bin, chi2_for_bin));
         }
         
+        lastMomentsChi2_ = total_chi2;
+        lastConstraintPenalty_ = 0.0;
         lastChi2_ = total_chi2;
         LogFitInfo("CHI2", Form("total=%g", total_chi2));
         return total_chi2;

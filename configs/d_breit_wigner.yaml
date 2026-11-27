@@ -18,8 +18,7 @@ dataset:
   use_covariance: true
 
 chi2:
-  included_l: [4]
-  excluded_l: []
+  included_L: [4]
   max_l: 4
 
 waves:

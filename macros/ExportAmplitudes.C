@@ -88,6 +88,26 @@ void ExportAmplitudes(
             nominalValues[name].push_back(branchBuffers[name]);
         }
     }
+
+    std::map<std::string, double> nominalParams;
+    TTree* t_md_nom = dynamic_cast<TTree*>(f_nom->Get("mass_dependent_params"));
+    if (t_md_nom && t_md_nom->GetEntries() > 0) {
+        TObjArray* mdBranches = t_md_nom->GetListOfBranches();
+        std::map<std::string, double> mdBufs;
+        for (int i = 0; i < mdBranches->GetEntries(); ++i) {
+            TBranch* br = dynamic_cast<TBranch*>(mdBranches->At(i));
+            if (!br) continue;
+            TString bName = br->GetName();
+            std::string pStr = bName.Data();
+            mdBufs[pStr] = 0.0;
+            t_md_nom->SetBranchAddress(bName, &mdBufs[pStr]);
+        }
+        t_md_nom->GetEntry(0);
+        for (const auto& [k, v] : mdBufs) {
+            nominalParams[k] = v;
+        }
+    }
+
     f_nom->Close();
 
     // Start JSON output
@@ -112,6 +132,15 @@ void ExportAmplitudes(
     }
     out << "  },\n";
 
+    out << "  \"nominal_params\": {\n";
+    size_t npCount = 0;
+    for (const auto& [k, v] : nominalParams) {
+        if (npCount > 0) out << ",\n";
+        out << "    \"" << k << "\": " << std::setprecision(6) << v;
+        npCount++;
+    }
+    out << "\n  },\n";
+
     // MCMC samples if available
     out << "  \"mcmc\": {\n";
     if (mcmcRootFile && std::string(mcmcRootFile) != "" && std::string(mcmcRootFile) != "none") {
@@ -127,19 +156,23 @@ void ExportAmplitudes(
                 Long64_t m_entry = 0;
                 int m_status = 0;
                 bool m_valid = true;
+                bool m_at_limit = false;
                 bool has_entry_b = (t_conv_check->GetBranch("mcmc_entry") != nullptr);
                 bool has_status_b = (t_conv_check->GetBranch("Status") != nullptr);
                 bool has_valid_b = (t_conv_check->GetBranch("isValid") != nullptr);
+                bool has_limit_b = (t_conv_check->GetBranch("atLimit") != nullptr);
 
                 if (has_entry_b) t_conv_check->SetBranchAddress("mcmc_entry", &m_entry);
                 if (has_status_b) t_conv_check->SetBranchAddress("Status", &m_status);
                 if (has_valid_b) t_conv_check->SetBranchAddress("isValid", &m_valid);
+                if (has_limit_b) t_conv_check->SetBranchAddress("atLimit", &m_at_limit);
 
                 for (Long64_t e = 0; e < t_conv_check->GetEntries(); ++e) {
                     t_conv_check->GetEntry(e);
                     bool ok = true;
                     if (has_status_b && m_status != 0) ok = false;
                     if (has_valid_b && !m_valid) ok = false;
+                    if (has_limit_b && m_at_limit) ok = false;
                     if (ok) {
                         convergedEntries.insert(has_entry_b ? m_entry : e);
                     }
@@ -245,7 +278,7 @@ void ExportAmplitudes(
                     TBranch* br = dynamic_cast<TBranch*>(pBranches->At(i));
                     if (!br) continue;
                     TString bName = br->GetName();
-                    if (bName == "mcmc_entry" || bName == "Status" || bName == "isValid" || bName == "isValidError") continue;
+                    if (bName == "mcmc_entry" || bName == "Status" || bName == "isValid" || bName == "isValidError" || bName == "atLimit") continue;
                     std::string pStr = bName.Data();
                     paramNames.push_back(pStr);
                     pBuffers[pStr] = 0.0;
@@ -255,13 +288,16 @@ void ExportAmplitudes(
                 Long64_t par_entry = 0;
                 int par_status = 0;
                 bool par_valid = true;
+                bool par_at_limit = false;
                 bool has_par_entry = (t_params->GetBranch("mcmc_entry") != nullptr);
                 bool has_par_status = (t_params->GetBranch("Status") != nullptr);
                 bool has_par_valid = (t_params->GetBranch("isValid") != nullptr);
+                bool has_par_limit = (t_params->GetBranch("atLimit") != nullptr);
 
                 if (has_par_entry) t_params->SetBranchAddress("mcmc_entry", &par_entry);
                 if (has_par_status) t_params->SetBranchAddress("Status", &par_status);
                 if (has_par_valid) t_params->SetBranchAddress("isValid", &par_valid);
+                if (has_par_limit) t_params->SetBranchAddress("atLimit", &par_at_limit);
 
                 std::map<std::string, std::vector<double>> paramVals;
                 const Long64_t nParEntries = t_params->GetEntries();
@@ -270,6 +306,7 @@ void ExportAmplitudes(
                     bool ok = true;
                     if (has_par_status && par_status != 0) ok = false;
                     if (has_par_valid && !par_valid) ok = false;
+                    if (has_par_limit && par_at_limit) ok = false;
                     if (!ok) continue; // Only include converged fits!
 
                     for (const auto& p : paramNames) {

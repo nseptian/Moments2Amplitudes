@@ -222,8 +222,12 @@ def get_root_subprocess_env(config: Optional[Any] = None) -> Dict[str, str]:
 def init_environment() -> None:
     """
     Configure the current process environment to prioritize ROOT 6.36 and BruFit.
-    Called automatically on package import.
+    Called automatically on package import in Python 3.12+.
     """
+    if sys.version_info < (3, 10):
+        # Python 3.9 is strictly for linear algebra & ROOT 6.28; do not inject ROOT 6.36
+        return
+
     rootsys = resolve_rootsys()
     brufit = resolve_brufit()
     repo_root = get_repo_root()

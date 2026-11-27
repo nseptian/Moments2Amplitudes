@@ -12,6 +12,11 @@ import json
 import gc
 from datetime import datetime
 
+try:
+    import uproot
+except ImportError:
+    uproot = None
+
 
 def _compute_autocorrelation_fft(data: np.ndarray, max_lag: int | None = None) -> np.ndarray:
     """
@@ -64,6 +69,7 @@ class MomentsMCMC:
         self.__rdf = []
         self._moment_names = None
         self._bin_data_cache = {}
+        self._diagnostics_cache = {}
         self.costheta_gj_canvas = []
         self.phi_gj_canvas = []
         self.acceptance_filename = "acceptance.root"
@@ -816,7 +822,8 @@ class MomentsMCMC:
         self,
         output_file: str,
         ess_threshold: float = 100.0,
-        burn_in: int = None
+        burn_in: int = None,
+        cached_diagnostics: dict = None
     ):
         """
         Print unnormalized moments vs mass to a multi-page PDF, distinguishing marker color by ESS:
@@ -829,7 +836,7 @@ class MomentsMCMC:
             return
 
         # Precompute diagnostics once for efficiency
-        diags = self.get_all_mcmc_diagnostics(burn_in=burn_in)
+        diags = cached_diagnostics if cached_diagnostics is not None else self.get_all_mcmc_diagnostics(burn_in=burn_in)
 
         plots_per_page = 3
         n_pages = (len(moment_name_lists) + plots_per_page - 1) // plots_per_page
@@ -920,7 +927,8 @@ class MomentsMCMC:
         self,
         output_file: str,
         ess_threshold: float = 100.0,
-        burn_in: int = None
+        burn_in: int = None,
+        cached_diagnostics: dict = None
     ):
         """
         Save unnormalized moments graphs vs mass categorized by ESS to a ROOT file.
@@ -934,7 +942,7 @@ class MomentsMCMC:
             raise IOError(f"Cannot create file {output_file}")
 
         f.cd()
-        diags = self.get_all_mcmc_diagnostics(burn_in=burn_in)
+        diags = cached_diagnostics if cached_diagnostics is not None else self.get_all_mcmc_diagnostics(burn_in=burn_in)
         moment_name_lists = self.get_moment_name_list()
         all_moments = list(moment_name_lists)
         if "H_0_0_0" not in all_moments:
@@ -1525,7 +1533,7 @@ class MomentsMCMC:
     def get_mcmc_diagnostics(self, fit_bin_index: int, max_lag: int = None, burn_in: int = None) -> dict:
         """
         Fast vectorized MCMC diagnostics across all moments in a mass bin (loads all columns once).
-        Uses sample weights if present.
+        Uses sample weights if present and caches computed results per (bin, burn_in, max_lag).
 
         Args:
             fit_bin_index: Mass bin index.
@@ -1543,81 +1551,61 @@ class MomentsMCMC:
                 - 'mean_ess', 'min_ess', 'max_ess'
                 - 'per_moment': dict mapping moment -> {'tau': tau, 'ess': ess}
         """
-        rdf = self.get_rdf(fit_bin_index)
-        if rdf is None:
-            raise ValueError(f"RDF not loaded for mass bin index {fit_bin_index} (fit may have failed).")
+        eff_burn_in = self.burn_in if burn_in is None else burn_in
+        cache_key = (fit_bin_index, eff_burn_in, max_lag)
+        if cache_key in self._diagnostics_cache:
+            return self._diagnostics_cache[cache_key]
 
-        col_all = [str(c) for c in rdf.GetColumnNames()]
-        has_wt = "weight" in col_all
+        all_data = self._get_bin_numpy_data(fit_bin_index)
+        if all_data is None:
+            raise ValueError(f"RDF not loaded for mass bin index {fit_bin_index} (fit may have failed).")
 
         moment_name_lists = self.get_moment_name_list()
         if not moment_name_lists:
             raise ValueError("No moments found in RDF.")
 
-        cols_to_load = list(moment_name_lists)
-        if has_wt and "weight" not in cols_to_load:
-            cols_to_load.append("weight")
-
-        all_data = rdf.AsNumpy(cols_to_load)
-        if has_wt:
-            w_arr = np.asarray(all_data["weight"], dtype=np.float64)
-            int_w = np.maximum(1, np.round(w_arr)).astype(int)
-            n_raw = int(np.sum(int_w))
-        else:
-            int_w = None
-            n_raw = rdf.Count().GetValue()
-
-        eff_burn_in = self.burn_in if burn_in is None else burn_in
-        if eff_burn_in >= n_raw - 50:
-            eff_burn_in = min(eff_burn_in, n_raw // 2)
-        n_eff = n_raw - eff_burn_in
-
-        taus = []
-        esses = []
-        per_moment = {}
-
-        calc_max_lag = (n_eff // 2) if max_lag is None else min(max_lag, n_eff // 2)
-
-        for var_name in moment_name_lists:
-            raw_v = all_data[var_name]
-            data = np.repeat(raw_v, int_w) if int_w is not None else raw_v
-            if eff_burn_in > 0:
-                data = data[eff_burn_in:]
-
-            n_samples = len(data)
-            if n_samples <= 1:
-                tau = 0.5
-                ess = float(n_eff)
-            else:
-                acf = _compute_autocorrelation_fft(data, max_lag=calc_max_lag)
-                tau = 0.5
-                for lag in range(1, len(acf)):
-                    if acf[lag] <= 0:
-                        break
-                    tau += acf[lag]
-                ess = (n_eff / (2.0 * tau)) if tau > 0 else float(n_eff)
-                ess = min(float(n_eff), float(ess))
-
-            taus.append(tau)
-            esses.append(ess)
-            per_moment[var_name] = {'tau': float(tau), 'ess': float(ess)}
-
+        batch = compute_batch_chain_diagnostics(
+            all_data,
+            moment_name_lists,
+            burn_in=eff_burn_in,
+            max_lag=max_lag,
+        )
         mass_val = self.fit_bin[fit_bin_index] if fit_bin_index < len(self.fit_bin) else None
+        if batch is None:
+            n_tree = len(all_data[moment_name_lists[0]])
+            per_moment = {name: {'tau': 0.5, 'ess': float(n_tree)} for name in moment_name_lists}
+            result = {
+                'bin': fit_bin_index,
+                'mass': mass_val,
+                'n_raw': int(n_tree),
+                'burn_in': int(min(eff_burn_in, n_tree // 2)),
+                'n_samples': int(n_tree),
+                'mean_tau': 0.5,
+                'min_tau': 0.5,
+                'max_tau': 0.5,
+                'mean_ess': float(n_tree),
+                'min_ess': float(n_tree),
+                'max_ess': float(n_tree),
+                'per_moment': per_moment,
+            }
+        else:
+            result = {
+                'bin': fit_bin_index,
+                'mass': mass_val,
+                'n_raw': batch['n_raw'],
+                'burn_in': batch['burn_in'],
+                'n_samples': batch['n_samples'],
+                'mean_tau': batch['tau_mean'],
+                'min_tau': batch['tau_min'],
+                'max_tau': batch['tau_max'],
+                'mean_ess': batch['ess_mean'],
+                'min_ess': batch['ess_min'],
+                'max_ess': batch['ess_max'],
+                'per_moment': batch['per_moment'],
+            }
 
-        return {
-            'bin': fit_bin_index,
-            'mass': mass_val,
-            'n_raw': int(n_raw),
-            'burn_in': int(eff_burn_in),
-            'n_samples': int(n_eff),
-            'mean_tau': float(np.mean(taus)) if taus else 0.0,
-            'min_tau': float(np.min(taus)) if taus else 0.0,
-            'max_tau': float(np.max(taus)) if taus else 0.0,
-            'mean_ess': float(np.mean(esses)) if esses else 0.0,
-            'min_ess': float(np.min(esses)) if esses else 0.0,
-            'max_ess': float(np.max(esses)) if esses else 0.0,
-            'per_moment': per_moment
-        }
+        self._diagnostics_cache[cache_key] = result
+        return result
 
     def get_all_mcmc_diagnostics(self, max_lag: int = None, burn_in: int = None) -> dict:
         """Compute MCMC diagnostics for all successfully loaded mass bins."""
@@ -2014,83 +2002,325 @@ def parse_single_log_status(fpath: str, active_timeout_min: float = 30.0) -> dic
     }
 
 
+def check_projection_scaling(root_fpath: str, tolerance: float = 0.30) -> tuple[bool, float | None, str]:
+    """
+    Checks whether the RooPlot projection curve in ResultsBruMcmc*.root matches
+    the data events normalization.
+    
+    When allow_negative_pdf=True and sampling wanders into negative-intensity
+    phase space, BruComponentsPDF's quadratic penalty guard inflates the analytical
+    normalization integral (denominator), while the 1D projection numerator is not
+    inflated, causing the projection curve to be depressed by 8x-18x (Data/Curve >> 1.0).
+    
+    Returns:
+        (is_valid: bool, ratio: float | None, message: str)
+        where ratio = sum(data_points) / sum(curve_evals).
+        A healthy physical fit has (1.0 - tolerance) <= ratio <= (1.0 + tolerance), typically ~1.00.
+    """
+    if ROOT is None or not os.path.exists(root_fpath):
+        return True, None, "File missing or ROOT unavailable"
+
+    try:
+        f = ROOT.TFile.Open(root_fpath, "READ")
+        if not f or f.IsZombie():
+            if f:
+                f.Close()
+            return False, None, "File is zombie or cannot be opened"
+
+        canvas = None
+        for k in f.GetListOfKeys():
+            name = k.GetName()
+            if "__Phi" in name or "__Theta" in name or "phi_eta_gj" in name or "cosTheta_eta_gj" in name:
+                obj = f.Get(name)
+                if obj and (obj.InheritsFrom("TCanvas") or obj.InheritsFrom("RooPlot")):
+                    canvas = obj
+                    break
+
+        if not canvas:
+            f.Close()
+            return True, None, "No projection canvas found in file"
+
+        pad = canvas.GetPad(1) if hasattr(canvas, "GetPad") and canvas.GetPad(1) else canvas
+        h_data = None
+        curve = None
+
+        if hasattr(pad, "GetListOfPrimitives"):
+            for obj in pad.GetListOfPrimitives():
+                if obj.InheritsFrom("RooHist") or "h_Data" in obj.GetName():
+                    h_data = obj
+                elif obj.InheritsFrom("RooCurve") and "paramBox" not in obj.GetName():
+                    curve = obj
+        elif hasattr(canvas, "getHist") and hasattr(canvas, "getCurve"):
+            h_data = canvas.getHist()
+            curve = canvas.getCurve()
+
+        if not h_data or not curve:
+            f.Close()
+            return True, None, "Could not locate both data hist and curve in projection canvas"
+
+        n_pts = h_data.GetN()
+        if n_pts == 0:
+            f.Close()
+            return True, None, "Empty data histogram"
+
+        s_data = sum(h_data.GetPointY(i) for i in range(n_pts))
+        s_curve = sum(curve.Eval(h_data.GetPointX(i)) for i in range(n_pts))
+        f.Close()
+
+        if s_curve <= 0:
+            return False, 999.0, "Projection curve integral is zero or negative"
+
+        ratio = s_data / s_curve
+        min_allowed = 1.0 - tolerance
+        max_allowed = 1.0 + tolerance
+
+        if ratio < min_allowed or ratio > max_allowed:
+            msg = (
+                f"Negative-PDF scaling distortion detected! Data/Curve ratio is {ratio:.2f} "
+                f"(expected ~1.00, allowed [{min_allowed:.2f}, {max_allowed:.2f}]). "
+                f"The negative PDF penalty guard inflated the normalization integral, "
+                f"indicating walker trapped in unphysical negative-intensity phase space."
+            )
+            return False, ratio, msg
+
+        return True, ratio, f"Normal projection curve scaling (Data/Curve = {ratio:.2f})"
+    except Exception as e:
+        return True, None, f"Error inspecting curve scaling: {e}"
+
+
+def compute_batch_chain_diagnostics(
+    all_data: dict,
+    col_names: list[str],
+    burn_in: int = 2000,
+    max_lag: int | None = None
+) -> dict | None:
+    """
+    Vectorized calculation of integrated autocorrelation time (tau_int) and ESS across all H_* moments
+    using a single index expansion and batched 2D NumPy real FFTs (Wiener-Khinchin theorem).
+    Matches BruFit's AutocorrPlot.cpp definition.
+    """
+    if not col_names:
+        return None
+
+    has_wt = "weight" in all_data
+    n_tree = len(all_data[col_names[0]])
+    if n_tree == 0:
+        return None
+
+    if has_wt:
+        w_arr = np.asarray(all_data["weight"], dtype=np.float64)
+        int_w = np.maximum(1, np.round(w_arr)).astype(np.int64)
+        n_raw = int(np.sum(int_w))
+    else:
+        int_w = None
+        n_raw = int(n_tree)
+
+    if n_raw <= 50:
+        return None
+
+    eff_burn_in = burn_in
+    if eff_burn_in >= n_raw - 50:
+        eff_burn_in = min(eff_burn_in, n_raw // 2)
+
+    n_eff = n_raw - eff_burn_in
+    if n_eff <= 1:
+        return None
+
+    if int_w is not None:
+        cum_w = np.cumsum(int_w)
+        eff_burn_entry = int(np.searchsorted(cum_w, eff_burn_in))
+        emp_acc = float(n_tree - eff_burn_entry) / float(max(1, n_eff))
+    else:
+        cum_w = None
+        arr0 = np.asarray(all_data[col_names[0]], dtype=np.float64)
+        emp_acc = float(np.mean(arr0[eff_burn_in + 1:] != arr0[eff_burn_in:-1])) if len(arr0) > eff_burn_in + 1 else None
+
+    # Bound FFT array length and column chunk size to prevent OOM on ultra-low-acceptance chains
+    max_fft_samples = 250_000
+    stride = 1 if n_eff <= max_fft_samples else ((n_eff + max_fft_samples - 1) // max_fft_samples)
+    if stride == 1:
+        if int_w is not None:
+            idx = np.repeat(np.arange(n_tree, dtype=np.int64), int_w)[eff_burn_in:]
+        else:
+            idx = slice(eff_burn_in, n_raw)
+        n_grid = n_eff
+    else:
+        sample_pos = np.arange(eff_burn_in, n_raw, stride, dtype=np.int64)
+        n_grid = len(sample_pos)
+        if cum_w is not None:
+            idx = np.minimum(np.searchsorted(cum_w, sample_pos, side="right"), n_tree - 1)
+        else:
+            idx = sample_pos
+
+    n_cols = len(col_names)
+    grid_max_lag = (n_grid // 2) if max_lag is None else min(max(1, max_lag // stride), n_grid // 2)
+    limit = min(n_grid, grid_max_lag + 1)
+    n_fft = 1 << int(np.ceil(np.log2(max(2, 2 * n_grid - 1))))
+
+    taus = np.empty(n_cols, dtype=np.float64)
+    esses = np.empty(n_cols, dtype=np.float64)
+    per_moment = {}
+    chunk_size = 16
+
+    for start in range(0, n_cols, chunk_size):
+        chunk_cols = col_names[start:start + chunk_size]
+        c_len = len(chunk_cols)
+        mat = np.empty((c_len, n_grid), dtype=np.float64)
+        for j, name in enumerate(chunk_cols):
+            mat[j] = np.asarray(all_data[name], dtype=np.float64)[idx]
+
+        means = mat.mean(axis=1, keepdims=True)
+        xm = mat - means
+        par_d = np.einsum("ij,ij->i", xm, xm)
+
+        fx = np.fft.rfft(xm, n=n_fft, axis=1)
+        rx = np.fft.irfft(fx * np.conj(fx), n=n_fft, axis=1)[:, :limit]
+
+        for j, name in enumerate(chunk_cols):
+            pd = par_d[j]
+            if pd <= 0.0:
+                tau = 0.5
+            else:
+                acf_row = rx[j] / pd
+                neg = np.flatnonzero(acf_row[1:] <= 0.0)
+                stop = (1 + int(neg[0])) if len(neg) > 0 else limit
+                tau_grid = 0.5 + float(np.sum(acf_row[1:stop]))
+                tau = tau_grid if stride == 1 else max(0.5, float(stride) * tau_grid)
+            ess = (n_eff / (2.0 * tau)) if tau > 0.0 else float(n_eff)
+            ess = min(float(n_eff), ess)
+            taus[start + j] = tau
+            esses[start + j] = ess
+            per_moment[name] = {'tau': float(tau), 'ess': float(ess)}
+
+    return {
+        'n_raw': int(n_raw),
+        'burn_in': int(eff_burn_in),
+        'n_eff': int(n_eff),
+        'n_samples': int(n_eff),
+        'tau_mean': float(np.mean(taus)),
+        'tau_max': float(np.max(taus)),
+        'tau_min': float(np.min(taus)),
+        'ess_min': float(np.min(esses)),
+        'ess_mean': float(np.mean(esses)),
+        'ess_max': float(np.max(esses)),
+        'acceptance': emp_acc,
+        'per_moment': per_moment,
+    }
+
+
 def compute_chain_diagnostics_from_root(root_fpath: str, burn_in: int = 2000, tree_name: str = "MCMCTree") -> dict | None:
     """
     Load an MCMCTree from a ROOT file and calculate integrated autocorrelation time and ESS.
-    Uses sample weights if present in the tree.
-    Returns a diagnostics dict, or None if ROOT is unavailable, file is missing, or tree cannot be read.
+    Uses uproot when available for fast direct branch extraction, falling back to ROOT.RDataFrame.
     """
-    if ROOT is None or not os.path.exists(root_fpath):
+    if not root_fpath or not os.path.exists(root_fpath):
+        return None
+
+    if uproot is not None:
+        try:
+            with uproot.open(root_fpath) as uf:
+                if tree_name in uf:
+                    tree = uf[tree_name]
+                    keys = [str(k) for k in tree.keys()]
+                    all_h = [k for k in keys if k.startswith("H_") and not k.endswith("_err")]
+                    strict_h = [k for k in all_h if len(k.split("_")) == 4]
+                    col_names = strict_h if strict_h else all_h
+                    if not col_names:
+                        return None
+                    cols_to_load = list(col_names)
+                    if "weight" in keys:
+                        cols_to_load.append("weight")
+                    all_data = tree.arrays(cols_to_load, library="np")
+                    return compute_batch_chain_diagnostics(all_data, col_names, burn_in=burn_in)
+        except Exception:
+            pass
+
+    if ROOT is None:
         return None
     try:
         rdf = ROOT.RDataFrame(tree_name, root_fpath)
-        col_names = [str(c) for c in rdf.GetColumnNames() if str(c).startswith("H_")]
+        all_cols = [str(c) for c in rdf.GetColumnNames()]
+        all_h = [c for c in all_cols if c.startswith("H_") and not c.endswith("_err")]
+        strict_h = [c for c in all_h if len(c.split("_")) == 4]
+        col_names = strict_h if strict_h else all_h
         if not col_names:
             return None
 
-        has_wt = "weight" in [str(c) for c in rdf.GetColumnNames()]
+        has_wt = "weight" in all_cols
         cols_to_load = list(col_names)
         if has_wt:
             cols_to_load.append("weight")
 
         all_data = rdf.AsNumpy(cols_to_load)
-        if has_wt:
-            w_arr = np.asarray(all_data["weight"], dtype=np.float64)
-            int_w = np.maximum(1, np.round(w_arr)).astype(int)
-            n_raw = int(np.sum(int_w))
-        else:
-            int_w = None
-            sample_data = all_data[col_names[0]]
-            n_raw = len(sample_data)
-
-        if n_raw <= 50:
-            return None
-
-        eff_burn_in = burn_in
-        if eff_burn_in >= n_raw - 50:
-            eff_burn_in = min(eff_burn_in, n_raw // 2)
-
-        n_eff = n_raw - eff_burn_in
-
-        calc_max_lag = n_eff // 2
-        taus = []
-        esses = []
-        per_moment = {}
-        for name in col_names:
-            raw_v = all_data[name]
-            d = np.repeat(raw_v, int_w) if int_w is not None else raw_v
-            d = d[eff_burn_in:]
-            if len(d) <= 1:
-                continue
-            acf = _compute_autocorrelation_fft(d, max_lag=calc_max_lag)
-            tau = 0.5
-            for lag in range(1, len(acf)):
-                if acf[lag] <= 0:
-                    break
-                tau += acf[lag]
-            ess = (len(d) / (2.0 * tau)) if tau > 0 else float(len(d))
-            ess = min(float(len(d)), ess)
-            taus.append(tau)
-            esses.append(ess)
-            per_moment[name] = {'tau': float(tau), 'ess': float(ess)}
-
-        if not taus:
-            return None
-
-        return {
-            'n_raw': int(n_raw),
-            'burn_in': int(eff_burn_in),
-            'n_eff': int(n_eff),
-            'tau_mean': float(np.mean(taus)),
-            'tau_max': float(np.max(taus)),
-            'tau_min': float(np.min(taus)),
-            'ess_min': float(np.min(esses)),
-            'ess_mean': float(np.mean(esses)),
-            'ess_max': float(np.max(esses)),
-            'per_moment': per_moment
-        }
+        return compute_batch_chain_diagnostics(all_data, col_names, burn_in=burn_in)
     except Exception:
         return None
+
+
+def _resolve_bin_result_root(log_dir: str, bin_record: dict) -> str | None:
+    """Find the MCMC result ROOT file path for a mass bin record."""
+    target_bin = bin_record.get('target_bin')
+    mass = bin_record.get('mass')
+    candidate_dirs = []
+    if target_bin:
+        candidate_dirs.append(os.path.join(log_dir, target_bin))
+    if mass is not None:
+        candidate_dirs.append(os.path.join(log_dir, f"Mpi0eta{mass:.6f}_"))
+        candidate_dirs.append(os.path.join(log_dir, f"Mpi0eta{mass:.6f}"))
+        candidate_dirs.append(os.path.join(log_dir, f"Mpi0eta{mass:.4f}"))
+
+    root_candidates = [
+        "ResultsBruMcmcFixedCovariance.root",
+        "ResultsBruMcmcCovariance.root",
+        "ResultsBruMcmc.root",
+    ]
+    for cdir in candidate_dirs:
+        for rname in root_candidates:
+            p = os.path.join(cdir, rname)
+            if os.path.isfile(p):
+                return p
+    return None
+
+
+def _check_mcmc_root_valid(root_fpath: str, tree_name: str = "MCMCTree") -> tuple[bool, int]:
+    """Return (has_valid_tree, n_entries) for an MCMC ROOT output file."""
+    if not os.path.isfile(root_fpath) or os.path.getsize(root_fpath) == 0:
+        return False, 0
+    try:
+        with open(root_fpath, "rb") as fb:
+            if fb.read(4) != b"root":
+                return False, 0
+    except OSError:
+        return False, 0
+
+    if uproot is not None:
+        try:
+            with uproot.open(root_fpath) as uf:
+                if len(uf.keys()) == 0 or tree_name not in uf:
+                    return False, 0
+                n_entries = int(uf[tree_name].num_entries)
+                return (n_entries > 0), n_entries
+        except Exception:
+            return False, 0
+
+    if ROOT is not None:
+        try:
+            f = ROOT.TFile.Open(root_fpath, "READ")
+            if not f or f.IsZombie() or f.GetNkeys() == 0 or f.TestBit(ROOT.TFile.kRecovered):
+                if f:
+                    f.Close()
+                return False, 0
+            tree = f.Get(tree_name)
+            if not tree:
+                f.Close()
+                return False, 0
+            n_entries = int(tree.GetEntries())
+            f.Close()
+            return (n_entries > 0), n_entries
+        except Exception:
+            return False, 0
+
+    return True, 1
 
 
 def get_fit_status(
@@ -2126,7 +2356,15 @@ def get_fit_status(
         r['ess_mean'] = None
         r['n_eff'] = None
 
-        if compute_diagnostics and r['status'] == 'SUCCESS':
+        found_root = _resolve_bin_result_root(os.path.dirname(r['path']), r)
+        if found_root and r['status'] in ('RUNNING', 'STALLED', 'MISSING', 'EMPTY'):
+            has_tree, n_entries = _check_mcmc_root_valid(found_root)
+            if has_tree and n_entries > 0:
+                r['status'] = 'SUCCESS'
+                r['last_step'] = 'Done'
+                r['details'] = f'MCMCTree verified ({n_entries} entries)'
+
+        if compute_diagnostics and r['status'] in ('SUCCESS', 'RUNNING', 'STALLED'):
             if mcmc is not None:
                 b_idx = r['bin']
                 if b_idx is not None and 0 <= b_idx < mcmc.get_N_rdf() and mcmc.get_rdf(b_idx) is not None:
@@ -2140,33 +2378,15 @@ def get_fit_status(
                         r['diagnostics'] = diag
                     except Exception:
                         pass
-            elif ROOT is not None:
-                log_dir = os.path.dirname(r['path'])
-                target_bin = r.get('target_bin')
-                candidate_dirs = []
-                if target_bin:
-                    candidate_dirs.append(os.path.join(log_dir, target_bin))
-                if r['mass'] is not None:
-                    candidate_dirs.append(os.path.join(log_dir, f"Mpi0eta{r['mass']:.4f}"))
-                    candidate_dirs.append(os.path.join(log_dir, f"Mpi0eta{r['mass']:.6f}_"))
-
-                root_candidates = [
-                    "ResultsBruMcmcFixedCovariance.root",
-                    "ResultsBruMcmcCovariance.root",
-                    "ResultsBruMcmc.root"
-                ]
-
-                found_root = None
-                for cdir in candidate_dirs:
-                    for rname in root_candidates:
-                        p = os.path.join(cdir, rname)
-                        if os.path.exists(p):
-                            found_root = p
-                            break
-                    if found_root:
-                        break
-
-                if found_root:
+            elif found_root:
+                if ROOT is not None:
+                    scale_ok, scale_ratio, scale_msg = check_projection_scaling(found_root)
+                    r['scale_ratio'] = scale_ratio
+                    r['scale_ok'] = scale_ok
+                    if not scale_ok:
+                        r['status'] = 'SCALE_MISMATCH'
+                        r['details'] = f"Negative-PDF scaling mismatch (ratio {scale_ratio:.2f} != 1.0)"
+                if r['status'] == 'SUCCESS':
                     diag = compute_chain_diagnostics_from_root(found_root, burn_in=burn_in)
                     if diag:
                         r['tau_mean'] = diag['tau_mean']
@@ -2181,6 +2401,7 @@ def get_fit_status(
         summary[r['status']] = summary.get(r['status'], 0) + 1
 
     failed_bins = [r['bin'] for r in bin_results if r['status'] == 'FAILED']
+    scale_mismatch_bins = [r['bin'] for r in bin_results if r['status'] == 'SCALE_MISMATCH']
     success_bins = [r['bin'] for r in bin_results if r['status'] == 'SUCCESS']
     running_bins = [r['bin'] for r in bin_results if r['status'] == 'RUNNING']
     stalled_bins = [r['bin'] for r in bin_results if r['status'] == 'STALLED']
@@ -2190,6 +2411,7 @@ def get_fit_status(
         'summary': summary,
         'bins': bin_results,
         'failed_bins': failed_bins,
+        'scale_mismatch_bins': scale_mismatch_bins,
         'success_bins': success_bins,
         'running_bins': running_bins,
         'stalled_bins': stalled_bins,
@@ -2244,6 +2466,8 @@ def print_fit_status(
     print("=" * 118)
     summary_str = " | ".join(f"{k}: {v}" for k, v in sorted(status_info['summary'].items()))
     print(f"Total Bins: {len(status_info['bins'])} | {summary_str}")
+    if status_info.get('scale_mismatch_bins'):
+        print(f"⚠️  Negative-PDF Scaling Mismatch Bins ({len(status_info['scale_mismatch_bins'])}): {status_info['scale_mismatch_bins']}")
     if status_info['failed_bins']:
         print(f"Failed Bins ({len(status_info['failed_bins'])}): {status_info['failed_bins']}")
     if status_info['running_bins']:

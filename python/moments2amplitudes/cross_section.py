@@ -120,6 +120,9 @@ class CrossSectionResult:
     pos_refl_fraction_mcmc_mean: float = 0.0
     pos_refl_fraction_mcmc_median: float = 0.0
     has_kinematic: bool = False
+    has_barrier: bool = False
+    barrier_l: int = 2
+    barrier_radius: float = 5.0677
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -166,6 +169,72 @@ def parse_t_bin_from_string(text: str) -> Optional[Tuple[float, float]]:
     return None
 
 
+def blatt_weisskopf_sq(l: int, q: float, r: float = 5.0677) -> float:
+    """Evaluate squared Blatt-Weisskopf centrifugal barrier factor B_L^2(q, R)."""
+    if q <= 0.0:
+        return 1.0 if l == 0 else 0.0
+    z = (q * r) * (q * r)
+    if l == 0:
+        return 1.0
+    elif l == 1:
+        return (2.0 * z) / (1.0 + z)
+    elif l == 2:
+        return (13.0 * z * z) / (z * z + 3.0 * z + 9.0)
+    elif l == 3:
+        return (277.0 * z * z * z) / (z * z * z + 6.0 * z * z + 45.0 * z + 225.0)
+    elif l == 4:
+        z2 = z * z
+        z3 = z2 * z
+        z4 = z2 * z2
+        return (12746.0 * z4) / (z4 + 10.0 * z3 + 135.0 * z2 + 1575.0 * z + 11025.0)
+    return 1.0
+
+
+def breakup_momentum(m: float, m1: float = 0.547853, m2: float = 0.13957) -> float:
+    """Calculate breakup momentum q(m) for two-body decay into m1, m2."""
+    th = m1 + m2
+    diff = abs(m1 - m2)
+    if m <= th:
+        return 0.0
+    return math.sqrt(max(0.0, (m * m - th * th) * (m * m - diff * diff))) / (2.0 * m)
+
+
+def dynamic_breit_wigner_width(
+    m: float, m0: float, width0: float, l: int = 2, m1: float = 0.547853, m2: float = 0.13957, r: float = 5.0677
+) -> float:
+    """Energy-dependent dynamic decay width Gamma_L(m)."""
+    th = m1 + m2
+    if m <= th or m0 <= th or width0 <= 0.0:
+        return 0.0
+    q = breakup_momentum(m, m1, m2)
+    q0 = breakup_momentum(m0, m1, m2)
+    if q0 <= 0.0:
+        return 0.0
+    b_sq = blatt_weisskopf_sq(l, q, r)
+    b0_sq = blatt_weisskopf_sq(l, q0, r)
+    if b0_sq <= 0.0:
+        return 0.0
+    return width0 * (m0 / m) * (q / q0) * (b_sq / b0_sq)
+
+
+def blatt_weisskopf_barrier_ratio(
+    m: float, m0: float, l: int = 2, m1: float = 0.547853, m2: float = 0.13957, r: float = 5.0677
+) -> float:
+    """Normalized Blatt-Weisskopf centrifugal barrier factor ratio B_L(q(m), R) / B_L(q0, R)."""
+    th = m1 + m2
+    if m <= th or m0 <= th:
+        return 0.0
+    q = breakup_momentum(m, m1, m2)
+    q0 = breakup_momentum(m0, m1, m2)
+    if q0 <= 0.0:
+        return 0.0
+    b_sq = blatt_weisskopf_sq(l, q, r)
+    b0_sq = blatt_weisskopf_sq(l, q0, r)
+    if b0_sq <= 0.0:
+        return 0.0
+    return math.sqrt(max(0.0, b_sq / b0_sq))
+
+
 def compute_bw_integral(
     coupling: float,
     mass: float,
@@ -176,16 +245,24 @@ def compute_bw_integral(
     has_kinematic: bool = False,
     m_d1: float = 0.547853,
     m_d2: float = 0.13957,
+    has_barrier: bool = False,
+    barrier_l: int = 2,
+    barrier_radius: float = 5.0677,
+    constant_width: bool = False,
+    peak_normalized: bool = False,
 ) -> float:
     """
     Evaluate Breit-Wigner line-shape integral normalized by mass bin width:
-    Y = (1 / bin_width) * int_{m_min}^{m_max} [ rho(m) * k^2 / ((m^2 - M^2)^2 + (M*Gamma)^2) ] dm
+    Y = (1 / bin_width) * int_{m_min}^{m_max} |A(m)|^2 dm
+    Supports standard BW, kinematic phase-space factor sqrt(rho), Blatt-Weisskopf barrier factors,
+    constant-width denominator mode, and M0*Gamma0 peak-normalization.
     """
     if mass <= 0 or width <= 0 or coupling == 0:
         return 0.0
 
     m_th = m_d1 + m_d2
     m_diff = abs(m_d1 - m_d2)
+    numer_scale = (mass * width) if peak_normalized else 1.0
 
     def phase_space(m: float) -> float:
         if m <= m_th:
@@ -198,17 +275,36 @@ def compute_bw_integral(
         from scipy.integrate import quad
         def bw(m: float) -> float:
             factor = phase_space(m) if has_kinematic else 1.0
-            den = ((m * m - mass * mass) ** 2) + ((mass * width) ** 2)
-            return factor * (coupling * coupling) / den
+            if has_barrier:
+                b_ratio = blatt_weisskopf_barrier_ratio(m, mass, barrier_l, m_d1, m_d2, barrier_radius)
+                gamma_m = width if constant_width else dynamic_breit_wigner_width(m, mass, width, barrier_l, m_d1, m_d2, barrier_radius)
+                den = ((m * m - mass * mass) ** 2) + ((mass * gamma_m) ** 2)
+                c = coupling * numer_scale * b_ratio
+                return factor * (c * c) / den if den > 0 else 0.0
+            else:
+                den = ((m * m - mass * mass) ** 2) + ((mass * width) ** 2)
+                c = coupling * numer_scale
+                return factor * (c * c) / den
         val, _ = quad(bw, m_min, m_max, limit=100)
         return val / bin_width
     except Exception:
         # High-precision Simpson integration fallback (N=5000)
         import numpy as np
         m_pts = np.linspace(m_min, m_max, 5001)
-        den = ((m_pts * m_pts - mass * mass) ** 2) + ((mass * width) ** 2)
-        factors = np.array([phase_space(float(m)) for m in m_pts]) if has_kinematic else 1.0
-        y_pts = factors * (coupling * coupling) / den
+        if has_barrier:
+            y_pts = np.zeros_like(m_pts)
+            for i_pt, m_val in enumerate(m_pts):
+                f_val = phase_space(float(m_val)) if has_kinematic else 1.0
+                b_r = blatt_weisskopf_barrier_ratio(float(m_val), mass, barrier_l, m_d1, m_d2, barrier_radius)
+                g_m = width if constant_width else dynamic_breit_wigner_width(float(m_val), mass, width, barrier_l, m_d1, m_d2, barrier_radius)
+                d_val = ((m_val * m_val - mass * mass) ** 2) + ((mass * g_m) ** 2)
+                c_val = coupling * numer_scale * b_r
+                y_pts[i_pt] = f_val * (c_val * c_val) / d_val if d_val > 0 else 0.0
+        else:
+            den = ((m_pts * m_pts - mass * mass) ** 2) + ((mass * width) ** 2)
+            factors = np.array([phase_space(float(m)) for m in m_pts]) if has_kinematic else 1.0
+            c_val = coupling * numer_scale
+            y_pts = factors * (c_val * c_val) / den
         integral = np.trapz(y_pts, m_pts)
         return float(integral / bin_width)
 
@@ -354,6 +450,9 @@ def propagate_mcmc_cross_section(
     filter_valid: bool = True,
     mcmc_file_path: Optional[str] = None,
     has_kinematic: bool = False,
+    has_barrier: bool = False,
+    barrier_l: int = 2,
+    barrier_radius: float = 5.0677,
 ) -> CrossSectionResult:
     """
     Propagate MCMC sample couplings into reflectivity-separated yields and cross section.
@@ -408,11 +507,13 @@ def propagate_mcmc_cross_section(
     # Evaluate Breit-Wigner integral factor I0 per entry
     is_const_mw = np.allclose(val_masses, val_masses[0]) and np.allclose(val_widths, val_widths[0])
     if is_const_mw:
-        i0 = compute_bw_integral(1.0, float(val_masses[0]), float(val_widths[0]), m_lims[0], m_lims[1], b_w, has_kinematic=has_kinematic)
+        i0 = compute_bw_integral(1.0, float(val_masses[0]), float(val_widths[0]), m_lims[0], m_lims[1], b_w,
+                                 has_kinematic=has_kinematic, has_barrier=has_barrier, barrier_l=barrier_l, barrier_radius=barrier_radius)
         i0_arr = np.full(n_valid, i0)
     else:
         i0_arr = np.array([
-            compute_bw_integral(1.0, float(val_masses[i]), float(val_widths[i]), m_lims[0], m_lims[1], b_w, has_kinematic=has_kinematic)
+            compute_bw_integral(1.0, float(val_masses[i]), float(val_widths[i]), m_lims[0], m_lims[1], b_w,
+                                 has_kinematic=has_kinematic, has_barrier=has_barrier, barrier_l=barrier_l, barrier_radius=barrier_radius)
             for i in range(n_valid)
         ])
 
@@ -638,7 +739,7 @@ def calculate_resonance_cross_section(
             matches_res = False
             if getattr(w, "resonances", None):
                 for r in w.resonances:
-                    if r.name == target_res:
+                    if r.name == target_res or target_res in r.name:
                         matches_res = True
             elif target_res in getattr(w, "name", ""):
                 matches_res = True
@@ -646,6 +747,34 @@ def calculate_resonance_cross_section(
             if matches_res and getattr(w, "formula", None) and ("rho_etapi" in w.formula or "rho" in w.formula):
                 has_kinematic = True
                 break
+
+    # Detect whether barrier factor is used in the model
+    has_barrier = False
+    barrier_l = 2
+    barrier_radius = 5.0677
+    if getattr(cs_cfg, "has_barrier", None) is not None:
+        has_barrier = bool(cs_cfg.has_barrier)
+        barrier_l = getattr(cs_cfg, "barrier_l", 2)
+        barrier_radius = getattr(cs_cfg, "barrier_radius", 5.0677)
+    elif config and getattr(config, "waves", None):
+        for w in config.waves:
+            matches_res = False
+            if getattr(w, "resonances", None):
+                for r in w.resonances:
+                    if r.name == target_res or target_res in r.name:
+                        matches_res = True
+            elif target_res in getattr(w, "name", ""):
+                matches_res = True
+
+            if matches_res:
+                w_model_str = str(getattr(w, "model", "")).lower()
+                w_formula = str(getattr(w, "formula", "") or "")
+                w_barrier = bool(getattr(w, "barrier", False))
+                if w_barrier or "barrier" in w_model_str or "barrier" in w_formula or "dynamic_width" in w_formula:
+                    has_barrier = True
+                    barrier_l = getattr(w, "barrier_l", getattr(w, "l", 2))
+                    barrier_radius = getattr(w, "barrier_radius", 5.0677)
+                    break
 
     # Compute yields per wave
     wave_yields: Dict[str, WaveResonanceYield] = {}
@@ -660,7 +789,9 @@ def calculate_resonance_cross_section(
         refl = int(c_info.get("reflectivity", 1 if w_name.startswith("a_") else -1))
 
         # Y_w = Integral(BW) / bin_width
-        y_val = compute_bw_integral(k, mass, width, m_lims[0], m_lims[1], bin_width, has_kinematic=has_kinematic)
+        y_val = compute_bw_integral(k, mass, width, m_lims[0], m_lims[1], bin_width,
+                                    has_kinematic=has_kinematic, has_barrier=has_barrier,
+                                    barrier_l=barrier_l, barrier_radius=barrier_radius)
         # dY / dk = 2 * Y / k  ==>  sigma(Y) = 2 * (Y / |k|) * sigma(k)
         if abs(k) > 1e-9:
             y_err = abs(2.0 * (y_val / k) * k_err)
@@ -732,6 +863,9 @@ def calculate_resonance_cross_section(
         wave_yields=wave_yields,
         run_dir=str(rundir.root),
         has_kinematic=has_kinematic,
+        has_barrier=has_barrier,
+        barrier_l=barrier_l,
+        barrier_radius=barrier_radius,
     )
 
     # Propagate MCMC uncertainties if requested
@@ -748,6 +882,9 @@ def calculate_resonance_cross_section(
                     bin_width=bin_width,
                     mcmc_file_path=str(mcmc_target),
                     has_kinematic=has_kinematic,
+                    has_barrier=has_barrier,
+                    barrier_l=barrier_l,
+                    barrier_radius=barrier_radius,
                 )
                 print(f"[OK] Propagated MCMC statistical uncertainty from: {mcmc_target} ({res.mcmc_samples_count} converged samples)")
             except Exception as e:
@@ -765,6 +902,7 @@ def format_cross_section_table(res: CrossSectionResult) -> str:
         f" Resonance Mass:       {res.mass:.4f} ± {res.mass_error:.4f} GeV",
         f" Resonance Width:      {res.width:.4f} ± {res.width_error:.4f} GeV",
         f" Kinematic Factor:     {'sqrt(rho_etapi) enabled' if res.has_kinematic else 'None (Standard Breit-Wigner)'}",
+        f" Barrier Factor:       {'Blatt-Weisskopf (L=' + str(res.barrier_l) + ') enabled' if res.has_barrier else 'None'}",
         f" -t Binning:           {res.t_min:.3f} < -t < {res.t_max:.3f} GeV^2  (Delta t = {res.delta_t:.3f}, Center = {res.t_center:.4f})",
         f" Integrated Lumi:      {res.luminosity:.2f} pb^-1  (factor: {res.den_factor:.0e} to mub^-1)",
         f" Branching Fraction:   {res.branching_ratio:.4e}",

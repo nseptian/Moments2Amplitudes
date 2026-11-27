@@ -22,9 +22,11 @@ from .schema import (
     WaveType,
     ModelType,
     InitStrategy,
+    get_two_bw_wave_name,
+    resolve_gaussian_constraint_param,
 )
 from .rundir import RunDirectory, get_run_directory, resolve_init_file_for_tbin
-from .plotter import plot_multistart_landscape, plot_amplitudes_and_bands, run_all_diagnostics_and_plots
+from .plotter import plot_multistart_landscape, plot_multistart_landscape_all_tbins, plot_amplitudes_and_bands, run_all_diagnostics_and_plots
 from .summary import FitSummary
 from .environment import (
     get_root_binary,
@@ -50,6 +52,19 @@ def resolve_mcmc_tree_path(raw_path: str, t_bin: Optional[str] = None) -> str:
     return raw_path
 
 
+_BARRIER_BW_VARIANT_MAP = {
+    "": "BarrierBreitWigner",
+    "peak_": "PeakNormalizedBarrierBreitWigner",
+    "const_": "ConstantWidthBarrierBreitWigner",
+    "peak_const_": "PeakNormalizedConstantWidthBarrierBreitWigner",
+    "const_peak_": "PeakNormalizedConstantWidthBarrierBreitWigner",
+}
+
+
+def _barrier_bw_cpp_fn(variant: Optional[str]) -> str:
+    return _BARRIER_BW_VARIANT_MAP.get(variant or "", "BarrierBreitWigner")
+
+
 def _translate_subexpr(expr: str) -> str:
     res = expr.strip()
     # Power replacement: X^2 -> (X * X)
@@ -60,6 +75,49 @@ def _translate_subexpr(expr: str) -> str:
     res = res.replace("rho_etapi", "m2pw::MassDependentFunction::PhaseSpaceFactor(mass, 0.547853, 0.13957)")
     res = res.replace("rho_KK", "m2pw::MassDependentFunction::PhaseSpaceFactor(mass, 0.493677, 0.493677)")
     res = res.replace("rho_etaprimepi", "m2pw::MassDependentFunction::PhaseSpaceFactor(mass, 0.95778, 0.13957)")
+    res = res.replace("q_etapi", "m2pw::MassDependentFunction::BreakupMomentum(mass, 0.547853, 0.13957)")
+
+    # Barrier Breit-Wigner helper calls:
+    # (peak_const_|const_peak_|const_|peak_)?barrier_bw(?:_etapi)?(k, M, width[, L])
+    res = re.sub(
+        r'\b(?P<var>peak_const_|const_peak_|const_|peak_)?barrier_bw(?:_etapi)?\s*\(\s*([^,\s)]+)\s*,\s*([^,\s)]+)\s*,\s*([^,\s)]+)\s*,\s*([^,\s)]+)\s*\)',
+        lambda m: f"m2pw::MassDependentFunction::{_barrier_bw_cpp_fn(m.group('var'))}(mass, {m.group(2)}, {m.group(3)}, {m.group(4)}, {m.group(5)})",
+        res,
+    )
+    res = re.sub(
+        r'\b(?P<var>peak_const_|const_peak_|const_|peak_)?barrier_bw(?:_etapi)?\s*\(\s*([^,\s)]+)\s*,\s*([^,\s)]+)\s*,\s*([^,\s)]+)\s*\)',
+        lambda m: f"m2pw::MassDependentFunction::{_barrier_bw_cpp_fn(m.group('var'))}(mass, {m.group(2)}, {m.group(3)}, {m.group(4)}, 2)",
+        res,
+    )
+
+    # barrier_ratio_etapi(M, L) or barrier_ratio_etapi(M) or barrier_ratio(M, L)
+    res = re.sub(
+        r'\bbarrier_ratio(?:_etapi)?\s*\(\s*([^,\s)]+)\s*,\s*([^,\s)]+)\s*\)',
+        r'm2pw::MassDependentFunction::BlattWeisskopfBarrierRatio(mass, \1, \2)',
+        res
+    )
+    res = re.sub(
+        r'\bbarrier_ratio(?:_etapi)?\s*\(\s*([^,\s)]+)\s*\)',
+        r'm2pw::MassDependentFunction::BlattWeisskopfBarrierRatio(mass, \1, 2)',
+        res
+    )
+
+    # dynamic_width_etapi(M, width, L) or dynamic_width(M, width, L)
+    res = re.sub(
+        r'\bdynamic_width(?:_etapi)?\s*\(\s*([^,\s)]+)\s*,\s*([^,\s)]+)\s*,\s*([^,\s)]+)\s*\)',
+        r'm2pw::MassDependentFunction::DynamicBreitWignerWidth(mass, \1, \2, \3)',
+        res
+    )
+    res = re.sub(
+        r'\bdynamic_width(?:_etapi)?\s*\(\s*([^,\s)]+)\s*,\s*([^,\s)]+)\s*\)',
+        r'm2pw::MassDependentFunction::DynamicBreitWignerWidth(mass, \1, \2, 2)',
+        res
+    )
+
+    # BlattWeisskopfBarrier / BreakupMomentum direct calls
+    res = re.sub(r'\bBlattWeisskopfBarrierSq\(', 'm2pw::MassDependentFunction::BlattWeisskopfBarrierSq(', res)
+    res = re.sub(r'\bBlattWeisskopfBarrier\(', 'm2pw::MassDependentFunction::BlattWeisskopfBarrier(', res)
+    res = re.sub(r'\bBreakupMomentum\(', 'm2pw::MassDependentFunction::BreakupMomentum(', res)
 
     # Complex imaginary unit replacements
     res = re.sub(r'\bi\s*\*\s*', 'std::complex<double>(0.0, 1.0) * ', res)
@@ -77,6 +135,79 @@ def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[
     param_lines = ["const double s = mass * mass;"]
     for i, p in enumerate(parameters):
         param_lines.append(f"const double {p} = (p.size() > {i}) ? p[{i}] : 0.0;")
+
+    # Check if formula matches Two Barrier Breit-Wigner form (allowing dynamic/constant/peak-normalized variants)
+    two_barrier_bw_regex = re.compile(
+        r'^\s*(?:(?P<prefix>.+?)\s*\*\s*)?(?:\(\s*)?'
+        r'(?P<v1>peak_const_|const_peak_|const_|peak_)?barrier_bw(?:_etapi)?\s*\(\s*(?P<k1>[A-Za-z0-9_]+)\s*,\s*(?P<m1>[A-Za-z0-9_]+)\s*,\s*(?P<w1>[A-Za-z0-9_]+)(?:\s*,\s*(?P<l1>[0-9]+))?\s*\)'
+        r'(?:\s*\*\s*exp\(\s*i\s*\*\s*(?P<phase1>[A-Za-z0-9_]+)\s*\))?\s*\+\s*'
+        r'(?:\(\s*)?(?P<v2>peak_const_|const_peak_|const_|peak_)?barrier_bw(?:_etapi)?\s*\(\s*(?P<k2>[A-Za-z0-9_]+)\s*,\s*(?P<m2>[A-Za-z0-9_]+)\s*,\s*(?P<w2>[A-Za-z0-9_]+)(?:\s*,\s*(?P<l2>[0-9]+))?\s*\)'
+        r'(?:\s*\*\s*exp\(\s*i\s*\*\s*(?P<phase2>[A-Za-z0-9_]+)\s*\))?'
+        r'(?:\s*\))?\s*$'
+    )
+    two_bbw_m = two_barrier_bw_regex.match(formula)
+    if two_bbw_m:
+        prefix = two_bbw_m.group("prefix")
+        cpp_fn1 = _barrier_bw_cpp_fn(two_bbw_m.group("v1"))
+        k1 = two_bbw_m.group("k1")
+        m1 = two_bbw_m.group("m1")
+        w1 = two_bbw_m.group("w1")
+        l1 = two_bbw_m.group("l1") or "2"
+        cpp_fn2 = _barrier_bw_cpp_fn(two_bbw_m.group("v2"))
+        k2 = two_bbw_m.group("k2")
+        m2_var = two_bbw_m.group("m2")
+        w2 = two_bbw_m.group("w2")
+        l2 = two_bbw_m.group("l2") or "2"
+        phase1_var = two_bbw_m.group("phase1")
+        phase2_var = two_bbw_m.group("phase2")
+        if phase1_var and phase2_var and "phase1" in parameters and "phase2" in parameters:
+            param_lines = [
+                "const double s = mass * mass;",
+                f"const double {k1} = (p.size() > 0) ? p[0] : 0.0;",
+                f"const double {m1} = (p.size() > 1) ? p[1] : 0.0;",
+                f"const double {w1} = (p.size() > 2) ? p[2] : 0.0;",
+                f"const double {k2} = (p.size() > 3) ? p[3] : 0.0;",
+                f"const double {m2_var} = (p.size() > 4) ? p[4] : 0.0;",
+                f"const double {w2} = (p.size() > 5) ? p[5] : 0.0;",
+                f"const double {phase1_var} = (p.size() > 7) ? p[6] : 0.0; // Reference phase (fixed to 0)",
+                f"const double {phase2_var} = (p.size() > 7) ? p[7] : ((p.size() > 6) ? p[6] : 0.0); // Relative phase",
+            ]
+
+        bw1_str = f"m2pw::MassDependentFunction::{cpp_fn1}(mass, {k1}, {m1}, {w1}, {l1})"
+        if phase1_var:
+            bw1_str = f"({bw1_str} * std::polar(1.0, {phase1_var}))"
+        bw2_str = f"m2pw::MassDependentFunction::{cpp_fn2}(mass, {k2}, {m2_var}, {w2}, {l2})"
+        if phase2_var:
+            bw2_str = f"({bw2_str} * std::polar(1.0, {phase2_var}))"
+        core_expr = f"{bw1_str} + {bw2_str}"
+        if prefix:
+            trans_prefix = _translate_subexpr(prefix)
+            return param_lines, f"{trans_prefix} * ({core_expr})"
+        return param_lines, core_expr
+
+    # Check if formula matches single Barrier Breit-Wigner form
+    barrier_bw_regex = re.compile(
+        r'^\s*(?:(?P<prefix>.+?)\s*\*\s*)?(?:\(\s*)?'
+        r'(?P<v>peak_const_|const_peak_|const_|peak_)?barrier_bw(?:_etapi)?\s*\(\s*(?P<k>[A-Za-z0-9_]+)\s*,\s*(?P<m>[A-Za-z0-9_]+)\s*,\s*(?P<w>[A-Za-z0-9_]+)(?:\s*,\s*(?P<l>[0-9]+))?\s*\)'
+        r'(?:\s*\*\s*exp\(\s*i\s*\*\s*(?P<phase>[A-Za-z0-9_]+)\s*\))?'
+        r'(?:\s*\))?\s*$'
+    )
+    bbw_m = barrier_bw_regex.match(formula)
+    if bbw_m:
+        prefix = bbw_m.group("prefix")
+        cpp_fn = _barrier_bw_cpp_fn(bbw_m.group("v"))
+        k_var = bbw_m.group("k")
+        m_var = bbw_m.group("m")
+        w_var = bbw_m.group("w")
+        l_val = bbw_m.group("l") or "2"
+        phase_var = bbw_m.group("phase")
+        bw_str = f"m2pw::MassDependentFunction::{cpp_fn}(mass, {k_var}, {m_var}, {w_var}, {l_val})"
+        if phase_var:
+            bw_str = f"({bw_str} * std::polar(1.0, {phase_var}))"
+        if prefix:
+            trans_prefix = _translate_subexpr(prefix)
+            return param_lines, f"{trans_prefix} * ({bw_str})"
+        return param_lines, bw_str
 
     # Check if formula matches Two Breit-Wigner form (with optional prefix, e.g. sqrt(rho_etapi) * (...))
     two_bw_regex = re.compile(
@@ -107,10 +238,10 @@ def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[
                 f"const double {k1} = (p.size() > 0) ? p[0] : 0.0;",
                 f"const double {m1} = (p.size() > 1) ? p[1] : 0.0;",
                 f"const double {w1} = (p.size() > 2) ? p[2] : 0.0;",
-                f"const double {phase1_var} = (p.size() > 7) ? p[3] : 0.0; // Reference phase (fixed to 0)",
-                f"const double {k2} = (p.size() > 7) ? p[4] : ((p.size() > 3) ? p[3] : 0.0);",
-                f"const double {m2_var} = (p.size() > 7) ? p[5] : ((p.size() > 4) ? p[4] : 0.0);",
-                f"const double {w2} = (p.size() > 7) ? p[6] : ((p.size() > 5) ? p[5] : 0.0);",
+                f"const double {k2} = (p.size() > 3) ? p[3] : 0.0;",
+                f"const double {m2_var} = (p.size() > 4) ? p[4] : 0.0;",
+                f"const double {w2} = (p.size() > 5) ? p[5] : 0.0;",
+                f"const double {phase1_var} = (p.size() > 7) ? p[6] : 0.0; // Reference phase (fixed to 0)",
                 f"const double {phase2_var} = (p.size() > 7) ? p[7] : ((p.size() > 6) ? p[6] : 0.0); // Relative phase",
             ]
 
@@ -131,8 +262,9 @@ def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[
     # Check if formula matches canonical Breit-Wigner form (with optional prefix, e.g. sqrt(rho_etapi) * k / ...)
     bw_regex = re.compile(
         r'^\s*(?:(?P<prefix>.+?)\s*\*\s*)?(?:\(\s*)?'
-        r'(?P<k>[A-Za-z0-9_]+)\s*/\s*\(\s*(?P<m>[A-Za-z0-9_]+)(?:\^2|\s*\*\s*(?P=m))\s*-\s*s\s*-\s*i\s*\*\s*(?:(?P=m)\s*\*\s*(?P<w>[A-Za-z0-9_]+)|(?P<w_b>[A-Za-z0-9_]+)\s*\*\s*(?P=m))\s*\)'
-        r'(?:\s*\))?\s*$'
+        r'(?P<k>[A-Za-z0-9_]+)\s*/\s*\(\s*(?P<m>[A-Za-z0-9_]+)(?:\^2|\s*\*\s*(?P=m))\s*-\s*s\s*-\s*i\s*\*\s*(?:(?P=m)\s*\*\s*(?P<w>[A-Za-z0-9_]+)|(?P<w_b>[A-Za-z0-9_]+)\s*\*\s*(?P=m))\s*\)(?:\s*\))?'
+        r'(?:\s*\*\s*exp\(\s*i\s*\*\s*(?P<phase>[A-Za-z0-9_]+)\s*\))?'
+        r'\s*$'
     )
     bw_m = bw_regex.match(formula)
     if bw_m:
@@ -140,16 +272,20 @@ def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[
         k_var = bw_m.group("k")
         m_var = bw_m.group("m")
         w_var = bw_m.group("w") or bw_m.group("w_b")
+        phase_var = bw_m.group("phase")
         bw_str = f"{k_var} / std::complex<double>(({m_var} * {m_var}) - s, -{m_var} * {w_var})"
+        if phase_var:
+            bw_str = f"({bw_str} * std::polar(1.0, {phase_var}))"
         if prefix:
             trans_prefix = _translate_subexpr(prefix)
             return param_lines, f"{trans_prefix} * ({bw_str})"
         return param_lines, bw_str
 
     # Check if formula matches canonical Flatte form: k / (M0^2 - s - i * (g_etapi^2 * rho_etapi + ...))
-    if "flatte" in formula.lower() or ("g_etapi" in formula and "rho" in formula):
+    if "flatte" in formula.lower() or ("g_etapi" in formula and "rho" in formula) or ("g_s" in formula and "rho" in formula):
+        gs_param = "g_s" if ("g_s" in parameters or "g_s" in formula) else "g_etapi"
         param_lines.extend([
-            "const double g_etapi_sqr = g_etapi * g_etapi;",
+            f"const double g_etapi_sqr = {gs_param} * {gs_param};",
             "const double g_KK_sqr = (g_KK < 0.0) ? (g_etapi_sqr * 1.05) : (g_KK * g_KK);",
             "const double g_etaprimepi_sqr = (g_etaprimepi < 0.0) ? (g_etapi_sqr * 0.772) : (g_etaprimepi * g_etaprimepi);",
             "const double rho_etapi = m2pw::MassDependentFunction::PhaseSpaceFactor(mass, 0.547853, 0.13957);",
@@ -160,6 +296,10 @@ def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[
         mass_param = "Mass" if "Mass" in parameters else ("M0" if "M0" in parameters else "M")
         k_param = "k" if "k" in parameters else "k_fl"
         flatte_str = f"{k_param} / std::complex<double>(({mass_param} * {mass_param}) - s, -gamma_total)"
+        phase_m = re.search(r'exp\(\s*i\s*\*\s*([A-Za-z0-9_]+)\s*\)', formula)
+        if phase_m:
+            phase_var = phase_m.group(1)
+            flatte_str = f"({flatte_str} * std::polar(1.0, {phase_var}))"
         prefix_m = re.match(r'^\s*(?P<prefix>.+?)\s*\*\s*(?:\(\s*)?[A-Za-z0-9_]+\s*/\s*\(', formula)
         if prefix_m:
             trans_prefix = _translate_subexpr(prefix_m.group("prefix"))
@@ -169,20 +309,40 @@ def translate_formula_to_cpp(formula: str, parameters: List[str]) -> Tuple[List[
     return param_lines, _translate_subexpr(formula)
 
 
-def _get_two_bw_wave_name(w: WaveConfig) -> str:
-    """Derive canonical wave name for a TwoBreitWigner wave (e.g. 'a2_1320_1700')."""
-    if w.name and "_" in w.name and not w.name.lower().endswith("wave"):
-        return w.name
-    if len(w.resonances) >= 2:
-        r1, r2 = w.resonances[0].name, w.resonances[1].name
-        parts1 = r1.split("_", 1)
-        parts2 = r2.split("_", 1)
-        if len(parts1) == 2 and len(parts2) == 2 and parts1[0] == parts2[0]:
-            return f"{r1}_{parts2[1]}"
-        return f"{r1}_{r2}"
-    elif len(w.resonances) == 1:
-        return w.resonances[0].name
-    return f"wave_{w.l}"
+_resolve_gaussian_constraint_param = resolve_gaussian_constraint_param
+_get_two_bw_wave_name = get_two_bw_wave_name
+
+
+def _append_gaussian_constraints(
+    lines: List[str],
+    res: Any,
+    wave_name: Optional[str] = None,
+    res_idx: Optional[int] = None,
+    gs_key: str = "g_etapi",
+    model: Optional[ModelType] = None,
+) -> None:
+    """Append checked SetGaussianConstraint C++ calls for a resonance."""
+    if not getattr(res, "gaussian_constraints", None):
+        return
+    for par_key, constr in res.gaussian_constraints.items():
+        if isinstance(constr, dict) and "mean" in constr and "sigma" in constr:
+            mean_v, sigma_v = constr["mean"], constr["sigma"]
+        elif isinstance(constr, (list, tuple)) and len(constr) == 2:
+            mean_v, sigma_v = constr[0], constr[1]
+        else:
+            continue
+        resolved_par = resolve_gaussian_constraint_param(
+            par_key,
+            res.name,
+            wave_name=wave_name,
+            res_idx=res_idx,
+            gs_key=gs_key,
+            model=model,
+        )
+        lines.append(
+            f'    if (!paramManager.SetGaussianConstraint("{resolved_par}", {mean_v}, {sigma_v})) {{ '
+            f'throw std::runtime_error("Failed to apply Gaussian constraint for parameter: {resolved_par}"); }}'
+        )
 
 
 def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
@@ -198,8 +358,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
     mass_bins_str = ", ".join(f"{b:.6f}" for b in mass_bins)
 
     # Moments config
-    inc_l_str = ", ".join(str(l) for l in config.chi2.included_l)
-    exc_l_str = ", ".join(str(l) for l in config.chi2.excluded_l)
+    inc_L_str = ", ".join(str(L) for L in config.chi2.included_L)
 
     # Classify waves into mass-dependent and piecewise
     md_waves = [w for w in config.waves if w.type == WaveType.MASS_DEPENDENT]
@@ -225,7 +384,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         param_lines, expr = translate_formula_to_cpp(w.formula, w.parameters)
         param_code = "\n    ".join(param_lines)
 
-        if w.model == ModelType.TWO_BREIT_WIGNER:
+        if w.model in (ModelType.TWO_BREIT_WIGNER, ModelType.BARRIER_TWO_BREIT_WIGNER):
             wave_name = _get_two_bw_wave_name(w)
             safe_name = f"{w.l}_{wave_name.replace('-', '_')}"
             func_name = f"eval_formula_{safe_name}"
@@ -266,6 +425,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         "// Auto-generated ROOT driver macro by Moments2Amplitudes",
         f"// Project: {config.project.name}",
         "#include <iostream>",
+        "#include <stdexcept>",
         "#include <vector>",
         "#include <map>",
         "#include <TString.h>",
@@ -297,7 +457,12 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
 
     lines.extend(formula_functions)
 
-    no_use_items = getattr(config.chi2, "no_use", None) or ["H_3"]
+    if getattr(config.chi2, "no_use", None) is not None:
+        no_use_items = config.chi2.no_use
+    elif 3 in config.chi2.included_L:
+        no_use_items = []
+    else:
+        no_use_items = ["H_3"]
     no_use_str = ", ".join(f'"{x}"' for x in no_use_items)
 
     lines.extend([
@@ -331,21 +496,26 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
     for w in md_waves:
         if w.model == ModelType.CUSTOM:
             m_type = "MassDependentFitter::MassDependenceConfig::ModelType::CustomFormula"
-        elif w.model == ModelType.TWO_BREIT_WIGNER:
-            m_type = "MassDependentFitter::MassDependenceConfig::ModelType::TwoBreitWignerPlusPolynomial"
+        elif w.model in (ModelType.TWO_BREIT_WIGNER, ModelType.BARRIER_TWO_BREIT_WIGNER):
+            if w.model == ModelType.BARRIER_TWO_BREIT_WIGNER:
+                m_type = "MassDependentFitter::MassDependenceConfig::ModelType::TwoBarrierBreitWignerPlusPolynomial"
+            else:
+                m_type = "MassDependentFitter::MassDependenceConfig::ModelType::TwoBreitWignerPlusPolynomial"
         elif w.model == ModelType.FLATTE_BREIT_WIGNER:
             m_type = "MassDependentFitter::MassDependenceConfig::ModelType::FlatteBreitWignerPlusPolynomial"
         elif w.model == ModelType.FLATTE:
             m_type = "MassDependentFitter::MassDependenceConfig::ModelType::FlattePlusPolynomial"
         elif w.model == ModelType.POLYNOMIAL:
             m_type = "MassDependentFitter::MassDependenceConfig::ModelType::Polynomial"
+        elif w.model == ModelType.BARRIER_BREIT_WIGNER:
+            m_type = "MassDependentFitter::MassDependenceConfig::ModelType::BarrierBreitWignerPlusPolynomial"
         else:
             m_type = "MassDependentFitter::MassDependenceConfig::ModelType::BreitWignerPlusPolynomial"
 
         form_str = (w.formula or "").replace('"', '\\"')
         param_list_str = ", ".join(f'"{p}"' for p in w.parameters) if w.parameters else ""
 
-        if w.model == ModelType.TWO_BREIT_WIGNER:
+        if w.model in (ModelType.TWO_BREIT_WIGNER, ModelType.BARRIER_TWO_BREIT_WIGNER):
             wave_name = _get_two_bw_wave_name(w)
             lines.append(f'    massDepConfig.massDependentWaves[{w.l}].push_back({{"{wave_name}", {m_type}, {w.poly_order}, "{form_str}", {{{param_list_str}}}}});')
         else:
@@ -359,8 +529,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         "",
         "    MassDependentFitter::MomentsConfig momentsConfig;",
         f"    momentsConfig.includeAll = {str(config.chi2.include_all).lower()};",
-        f"    momentsConfig.includedL = {{{inc_l_str}}};",
-        f"    momentsConfig.excludedL = {{{exc_l_str}}};",
+        f"    momentsConfig.includedL = {{{inc_L_str}}};",
         "",
         "    // Create fitter instance with configured partial wave setup",
         f"    auto& fitSetup = ConfigureAmpsNoValues({max_wave_l}, {max_wave_l}, 2);",
@@ -371,6 +540,8 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         f"    fitter.SetMaxIterations({config.minimizer.max_iterations});",
         f"    fitter.SetMinimizerTolerance({config.minimizer.tolerance});",
         f"    fitter.SetMinimizerStrategy({config.minimizer.strategy});",
+        f"    fitter.SetRejectBoundaryLimits({str(getattr(config.minimizer, 'reject_at_limit', True)).lower()});",
+        f"    fitter.SetBoundaryLimitTolerance({getattr(config.minimizer, 'limit_tolerance', 1e-5)});",
         "    fitter.SetEquationValues(moms);",
     ])
 
@@ -385,12 +556,46 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
 
     # Wave initialization rules for piecewise waves
     for w in mi_waves:
+        eff_rel_spread = (
+            w.init.magnitude_spread
+            if w.init.magnitude_spread is not None
+            else (
+                w.init.magnitude.spread
+                if w.init.magnitude.spread is not None
+                else (w.init.spread if w.init.spread is not None else 0.0)
+            )
+        )
+        eff_phase_spread = (
+            w.init.phase_spread
+            if w.init.phase_spread is not None
+            else (
+                w.init.phase.spread
+                if w.init.phase.spread is not None
+                else (min(float(np.pi), w.init.spread * float(np.pi)) if (w.init.spread and w.init.spread > 0) else 0.0)
+            )
+        )
         if w.init.fixed_zero:
             lines.append(f"    paramManager.SetWaveInitRule({w.l}, MassDependentFitter::WaveInitRule(MassDependentFitter::WaveInitRule::Strategy::FixedZero, 0.0, 0.0, 0.0, true));")
         elif w.init.strategy == InitStrategy.FIXED_VALUE:
             lines.append(f"    paramManager.SetWaveInitRule({w.l}, MassDependentFitter::WaveInitRule(MassDependentFitter::WaveInitRule::Strategy::FixedValue, 0.0, 0.0, {w.init.magnitude.value}, true));")
-        elif w.init.strategy == InitStrategy.RANDOM or w.init.magnitude.strategy == InitStrategy.RANDOM:
-            lines.append(f"    paramManager.SetWaveInitRule({w.l}, MassDependentFitter::WaveInitRule(MassDependentFitter::WaveInitRule::Strategy::RandomPositiveMagnitudeZeroPhase, {w.init.magnitude.min_val}, {w.init.magnitude.max_val}, 0.0, false));")
+        else:
+            phase_is_fixed = bool(w.init.phase.is_fixed or w.phase_fixed)
+            if w.init.phase.strategy == InitStrategy.RANDOM and not phase_is_fixed:
+                lines.append(
+                    f"    paramManager.SetWaveInitRule({w.l}, MassDependentFitter::WaveInitRule("
+                    f"MassDependentFitter::WaveInitRule::Strategy::RandomFullPhase, "
+                    f"{w.init.magnitude.min_val}, {w.init.magnitude.max_val}, 0.0, false, "
+                    f"{w.init.phase.min_val}, {w.init.phase.max_val}, "
+                    f"{eff_rel_spread}, {w.init.abs_floor}, {eff_phase_spread}));"
+                )
+            else:
+                lines.append(
+                    f"    paramManager.SetWaveInitRule({w.l}, MassDependentFitter::WaveInitRule("
+                    f"MassDependentFitter::WaveInitRule::Strategy::RandomPositiveMagnitudeZeroPhase, "
+                    f"{w.init.magnitude.min_val}, {w.init.magnitude.max_val}, {w.init.phase.value}, false, "
+                    f"{w.init.phase.min_val}, {w.init.phase.max_val}, "
+                    f"{eff_rel_spread}, {w.init.abs_floor}, {0.0 if phase_is_fixed else eff_phase_spread}));"
+                )
 
     # Add piecewise parameters
     mi_from_file = [w for w in mi_waves if w.init.strategy == InitStrategy.FROM_FILE and w.init.file_path]
@@ -398,42 +603,82 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
 
     for w in mi_from_file:
         init_file = resolve_init_file_for_tbin(w.init.file_path, config.dataset.t_bin, repo_root)
-        lines.append(f'    paramManager.AddMassIndependentParameter({{{w.l}}}, "{init_file}");')
+        lines.append(f'    paramManager.AddMassIndependentParameter({{{w.l}}}, "{init_file}", seed);')
 
     if mi_random:
         rand_l_str = ", ".join(str(w.l) for w in mi_random)
         lines.append(f"    paramManager.AddMassIndependentParameter({{{rand_l_str}}}, seed);")
 
-    # Fix phase for piecewise waves if phase is fixed
+    # Fix phase for piecewise waves only when explicitly requested; never apply Minuit box limits
+    # to periodic piecewise phases so minimization has no artificial hard walls in chi2 space.
     for w in mi_waves:
         if w.init.phase.is_fixed or w.phase_fixed:
             val = w.init.phase.value if w.init.phase.is_fixed else (w.phase if w.phase is not None else 0.0)
             lines.extend([
                 f"    // Fixed phase for piecewise wave L={w.l}",
                 "    for (const double mb : massBins) {",
-                f'        TString aPhaseName = Form("MI_%1.6f_aphi_{w.l}_0", mb);',
-                f'        TString bPhaseName = Form("MI_%1.6f_bphi_{w.l}_0", mb);',
-                "        if (paramManager.HasParameter(aPhaseName)) {",
-                f"            paramManager.SetParameterInitialValue(aPhaseName, {val});",
-                "            paramManager.FixParameter(aPhaseName);",
-                "        }",
-                "        if (paramManager.HasParameter(bPhaseName)) {",
-                f"            paramManager.SetParameterInitialValue(bPhaseName, {val});",
-                "            paramManager.FixParameter(bPhaseName);",
+                f"        for (int m = -{w.l}; m <= {w.l}; ++m) {{",
+                f'            TString aPhaseName = Form("MI_%1.6f_aphi_{w.l}_%d", mb, m);',
+                f'            TString bPhaseName = Form("MI_%1.6f_bphi_{w.l}_%d", mb, m);',
+                "            if (paramManager.HasParameter(aPhaseName)) {",
+                f"                paramManager.SetParameterInitialValue(aPhaseName, {val});",
+                "                paramManager.FixParameter(aPhaseName);",
+                "            }",
+                "            if (paramManager.HasParameter(bPhaseName)) {",
+                f"                paramManager.SetParameterInitialValue(bPhaseName, {val});",
+                "                paramManager.FixParameter(bPhaseName);",
+                "            }",
                 "        }",
                 "    }",
             ])
 
     # Add mass-dependent parameters
     for w in md_waves:
+        eff_c_spread = (
+            w.init.coupling_spread
+            if w.init.coupling_spread is not None
+            else (
+                w.init.coupling.spread
+                if w.init.coupling.spread is not None
+                else (w.init.spread if w.init.spread is not None else 0.0)
+            )
+        )
+        eff_p_spread = (
+            w.init.phase_spread
+            if w.init.phase_spread is not None
+            else (
+                w.init.phase.spread
+                if w.init.phase.spread is not None
+                else (min(float(np.pi), w.init.spread * float(np.pi)) if (w.init.spread and w.init.spread > 0) else 0.0)
+            )
+        )
+        rand_loaded_couplings = (
+            w.init.strategy == InitStrategy.FROM_FILE and w.init.coupling.strategy == InitStrategy.RANDOM
+        )
+        rand_md_phases = (w.init.phase.strategy == InitStrategy.RANDOM)
+        lines.extend([
+            f"    MassDependentFitter::MDInitRule mdRule_{w.l};",
+            f"    mdRule_{w.l}.couplingMin = {w.init.coupling.min_val};",
+            f"    mdRule_{w.l}.couplingMax = {w.init.coupling.max_val};",
+            f"    mdRule_{w.l}.polyScale = {w.init.poly_scale};",
+            f"    mdRule_{w.l}.polyGrowth = {w.init.poly_growth};",
+            f"    mdRule_{w.l}.fileRelSpread = {eff_c_spread};",
+            f"    mdRule_{w.l}.fileCouplingFloor = {w.init.coupling_floor};",
+            f"    mdRule_{w.l}.filePhaseSpread = {eff_p_spread};",
+            f"    mdRule_{w.l}.randomizeLoadedCouplings = {str(rand_loaded_couplings).lower()};",
+            f"    mdRule_{w.l}.randomizeFloatingPhases = {str(rand_md_phases).lower()};",
+            f"    paramManager.SetMDInitRule({w.l}, mdRule_{w.l});",
+        ])
         if w.init.strategy == InitStrategy.FROM_FILE and w.init.file_path:
             init_file = resolve_init_file_for_tbin(w.init.file_path, config.dataset.t_bin, repo_root)
-            lines.append(f'    paramManager.AddMassDependentParameter({{{w.l}}}, "{init_file}", {w.init.option});')
+            lines.append(f'    paramManager.AddMassDependentParameter({{{w.l}}}, "{init_file}", {w.init.option}, seed);')
         else:
             lines.append(f"    paramManager.AddMassDependentParameter({{{w.l}}}, seed, {w.init.option});")
 
+        is_from_file = bool(w.init.strategy == InitStrategy.FROM_FILE and w.init.file_path)
+
         # Set resonance parameters defaults/limits/fixes
-        if w.model == ModelType.TWO_BREIT_WIGNER and len(w.resonances) >= 2:
+        if w.model in (ModelType.TWO_BREIT_WIGNER, ModelType.BARRIER_TWO_BREIT_WIGNER) and len(w.resonances) >= 2:
             res1 = w.resonances[0]
             res2 = w.resonances[1]
             wave_name = _get_two_bw_wave_name(w)
@@ -441,8 +686,12 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
             # Resonance 1 (e.g. a2_1320)
             res1_mass_name = f"MD_shared_{wave_name}_Mass1"
             res1_width_name = f"MD_shared_{wave_name}_Width1"
-            lines.append(f'    paramManager.SetParameterInitialValue("{res1_mass_name}", {res1.mass});')
-            lines.append(f'    paramManager.SetParameterInitialValue("{res1_width_name}", {res1.width});')
+            if is_from_file:
+                lines.append(f'    if (!paramManager.WasLoadedFromFile("{res1_mass_name}")) paramManager.SetParameterInitialValue("{res1_mass_name}", {res1.mass});')
+                lines.append(f'    if (!paramManager.WasLoadedFromFile("{res1_width_name}")) paramManager.SetParameterInitialValue("{res1_width_name}", {res1.width});')
+            else:
+                lines.append(f'    paramManager.SetParameterInitialValue("{res1_mass_name}", {res1.mass});')
+                lines.append(f'    paramManager.SetParameterInitialValue("{res1_width_name}", {res1.width});')
             if res1.mass_fixed:
                 lines.append(f'    paramManager.FixParameter("{res1_mass_name}");')
             elif res1.mass_limits and len(res1.mass_limits) == 2:
@@ -453,15 +702,17 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
             elif res1.width_limits and len(res1.width_limits) == 2:
                 lines.append(f'    paramManager.SetParameterLimits("{res1_width_name}", {res1.width_limits[0]}, {res1.width_limits[1]});')
 
-            for par_key, constr in res1.gaussian_constraints.items():
-                if len(constr) == 2:
-                    lines.append(f'    paramManager.SetGaussianConstraint("{par_key}", {constr[0]}, {constr[1]});')
+            _append_gaussian_constraints(lines, res1, wave_name=wave_name, res_idx=1, model=w.model)
 
             # Resonance 2 (e.g. a2_1700)
             res2_mass_name = f"MD_shared_{wave_name}_Mass2"
             res2_width_name = f"MD_shared_{wave_name}_Width2"
-            lines.append(f'    paramManager.SetParameterInitialValue("{res2_mass_name}", {res2.mass});')
-            lines.append(f'    paramManager.SetParameterInitialValue("{res2_width_name}", {res2.width});')
+            if is_from_file:
+                lines.append(f'    if (!paramManager.WasLoadedFromFile("{res2_mass_name}")) paramManager.SetParameterInitialValue("{res2_mass_name}", {res2.mass});')
+                lines.append(f'    if (!paramManager.WasLoadedFromFile("{res2_width_name}")) paramManager.SetParameterInitialValue("{res2_width_name}", {res2.width});')
+            else:
+                lines.append(f'    paramManager.SetParameterInitialValue("{res2_mass_name}", {res2.mass});')
+                lines.append(f'    paramManager.SetParameterInitialValue("{res2_width_name}", {res2.width});')
             if res2.mass_fixed:
                 lines.append(f'    paramManager.FixParameter("{res2_mass_name}");')
             elif res2.mass_limits and len(res2.mass_limits) == 2:
@@ -472,110 +723,199 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
             elif res2.width_limits and len(res2.width_limits) == 2:
                 lines.append(f'    paramManager.SetParameterLimits("{res2_width_name}", {res2.width_limits[0]}, {res2.width_limits[1]});')
 
-            for par_key, constr in res2.gaussian_constraints.items():
-                if len(constr) == 2:
-                    lines.append(f'    paramManager.SetGaussianConstraint("{par_key}", {constr[0]}, {constr[1]});')
+            _append_gaussian_constraints(lines, res2, wave_name=wave_name, res_idx=2, model=w.model)
 
             # Phase handling for TwoBreitWigner:
-            # Resonance 1 is the phase reference (phase fixed to 0 in built-in formula).
-            # Resonance 2 carries the relative phase (represented by wave's global phase).
-            phase_res = res2 if not res2.phase_fixed else (res1 if not res1.phase_fixed else res2)
-            res_shared_opt = 2
-            if phase_res.shared_phase is not None:
-                if isinstance(phase_res.shared_phase, bool):
-                    res_shared_opt = 2 if phase_res.shared_phase else 0
-                elif isinstance(phase_res.shared_phase, str):
-                    s = phase_res.shared_phase.strip().lower()
-                    if s in ("true", "1", "yes", "reflectivity", "by_reflectivity", "per_reflectivity"):
-                        res_shared_opt = 2
-                    elif s in ("l", "by_l", "same_l", "same-l"):
-                        res_shared_opt = 1
-                    else:
-                        res_shared_opt = 0
-                elif isinstance(phase_res.shared_phase, (int, float)):
-                    res_shared_opt = int(phase_res.shared_phase)
-            elif w.init.option > 0:
-                res_shared_opt = w.init.option
+            # Resonance 1 has globalphase1 (typically fixed to 0 as phase reference).
+            # Resonance 2 has globalphase2 (relative phase floating).
+            for res_idx, res_obj in enumerate([res1, res2], start=1):
+                p_suffix = f"globalphase{res_idx}"
+                res_shared_opt = 2
+                if res_obj.shared_phase is not None:
+                    if isinstance(res_obj.shared_phase, bool):
+                        res_shared_opt = 2 if res_obj.shared_phase else 0
+                    elif isinstance(res_obj.shared_phase, str):
+                        s = res_obj.shared_phase.strip().lower()
+                        if s in ("true", "1", "yes", "reflectivity", "by_reflectivity", "per_reflectivity"):
+                            res_shared_opt = 2
+                        elif s in ("l", "by_l", "same_l", "same-l"):
+                            res_shared_opt = 1
+                        else:
+                            res_shared_opt = 0
+                    elif isinstance(res_obj.shared_phase, (int, float)):
+                        res_shared_opt = int(res_obj.shared_phase)
+                elif w.init.option > 0:
+                    res_shared_opt = w.init.option
 
-            pnames_list: List[str] = []
-            if res_shared_opt == 2:
+                pnames_list: List[str] = []
+                if res_shared_opt == 2:
+                    pnames_list.extend([
+                        f'"MD_shareda_{wave_name}_{p_suffix}"',
+                        f'"MD_sharedb_{wave_name}_{p_suffix}"',
+                        f'"MD_shareda_{res_obj.name}_{p_suffix}"',
+                        f'"MD_sharedb_{res_obj.name}_{p_suffix}"',
+                    ])
+                    # If this is resonance 2 (relative phase) and legacy single globalphase exists:
+                    if res_idx == 2:
+                        pnames_list.extend([
+                            f'"MD_shareda_{wave_name}_globalphase"',
+                            f'"MD_sharedb_{wave_name}_globalphase"',
+                        ])
+                elif res_shared_opt == 1:
+                    pnames_list.extend([
+                        f'"MD_{wave_name}_{p_suffix}"',
+                        f'"MD_{res_obj.name}_{p_suffix}"',
+                    ])
+                    if res_idx == 2:
+                        pnames_list.extend([
+                            f'"MD_{wave_name}_globalphase"',
+                        ])
                 pnames_list.extend([
-                    f'"MD_shareda_{wave_name}_globalphase"',
-                    f'"MD_sharedb_{wave_name}_globalphase"',
-                    f'"MD_shareda_{res2.name}_globalphase"',
-                    f'"MD_sharedb_{res2.name}_globalphase"',
-                    f'"MD_shareda_{res1.name}_globalphase"',
-                    f'"MD_sharedb_{res1.name}_globalphase"',
+                    f'"MD_{res_obj.name}_phase"',
+                    f'"MD_{res_obj.name}_{p_suffix}"',
                 ])
-            elif res_shared_opt == 1:
-                pnames_list.extend([
-                    f'"MD_{wave_name}_globalphase"',
-                    f'"MD_{res2.name}_globalphase"',
-                    f'"MD_{res1.name}_globalphase"',
-                ])
-            pnames_list.extend([
-                f'"MD_{wave_name}_phase"',
-                f'"MD_{res2.name}_phase"',
-                f'"MD_{res1.name}_phase"',
-            ])
-            cand_pnames_str = ",\n        ".join(pnames_list)
+                cand_pnames_str = ",\n        ".join(pnames_list)
 
-            if phase_res.phase_fixed:
-                fix_val = phase_res.fixed_phase if phase_res.fixed_phase is not None else (phase_res.phase if phase_res.phase is not None else 0.0)
+                if res_obj.phase_fixed:
+                    fix_val = res_obj.fixed_phase if res_obj.fixed_phase is not None else (res_obj.phase if res_obj.phase is not None else 0.0)
+                    lines.extend([
+                        f'    // Fixed phase for {wave_name} {p_suffix} ({res_obj.name}, fixed to {fix_val})',
+                        f'    for (const char* pName : {{',
+                        f'        {cand_pnames_str}',
+                        f'    }}) {{',
+                        f'        if (paramManager.HasParameter(pName)) {{',
+                        f'            paramManager.SetParameterInitialValue(pName, {fix_val});',
+                        f'            paramManager.FixParameter(pName);',
+                        f'        }}',
+                        f'    }}',
+                    ])
+                elif res_obj.phase is not None and not rand_md_phases:
+                    init_val = res_obj.phase
+                    guard = " && !paramManager.WasLoadedFromFile(pName)" if is_from_file else ""
+                    lines.extend([
+                        f'    // Initial phase for {wave_name} {p_suffix} ({res_obj.name})',
+                        f'    for (const char* pName : {{',
+                        f'        {cand_pnames_str}',
+                        f'    }}) {{',
+                        f'        if (paramManager.HasParameter(pName){guard}) {{',
+                        f'            paramManager.SetParameterInitialValue(pName, {init_val});',
+                        f'        }}',
+                        f'    }}',
+                    ])
+
+                if res_obj.phase_limits and len(res_obj.phase_limits) == 2 and not res_obj.phase_fixed:
+                    lines.extend([
+                        f'    // Set phase limits for {wave_name} {p_suffix} ({res_obj.name})',
+                        f'    for (const char* pName : {{',
+                        f'        {cand_pnames_str}',
+                        f'    }}) {{',
+                        f'        if (paramManager.HasParameter(pName)) {{',
+                        f'            paramManager.SetParameterLimits(pName, {res_obj.phase_limits[0]}, {res_obj.phase_limits[1]});',
+                        f'        }}',
+                        f'    }}',
+                    ])
+
+            # Fixed zero coupling (k1, k2) for TwoBreitWigner
+            if w.init.fixed_zero or res1.fixed_zero:
                 lines.extend([
-                    f'    // Fixed relative phase for {wave_name} (fixed to {fix_val})',
-                    f'    for (const char* pName : {{',
-                    f'        {cand_pnames_str}',
-                    f'    }}) {{',
-                    f'        if (paramManager.HasParameter(pName)) {{',
-                    f'            paramManager.SetParameterInitialValue(pName, {fix_val});',
-                    f'            paramManager.FixParameter(pName);',
+                    f'    // Fixed zero coupling for {wave_name} resonance 1 ({res1.name})',
+                    f'    for (int m = -{w.l}; m <= {w.l}; ++m) {{',
+                    f'        for (const char* prefix : {{"a", "b"}}) {{',
+                    f'            TString k1Name = Form("MD_%s_%d_%d_{wave_name}_k1", prefix, {w.l}, m);',
+                    f'            if (paramManager.HasParameter(k1Name)) {{',
+                    f'                paramManager.SetParameterInitialValue(k1Name, 0.0);',
+                    f'                paramManager.FixParameter(k1Name);',
+                    f'            }}',
                     f'        }}',
                     f'    }}',
                 ])
-            elif phase_res.phase is not None:
-                init_val = phase_res.phase
+            if w.init.fixed_zero or res2.fixed_zero:
                 lines.extend([
-                    f'    // Initial relative phase for {wave_name}',
-                    f'    for (const char* pName : {{',
-                    f'        {cand_pnames_str}',
-                    f'    }}) {{',
-                    f'        if (paramManager.HasParameter(pName)) {{',
-                    f'            paramManager.SetParameterInitialValue(pName, {init_val});',
-                    f'        }}',
-                    f'    }}',
-                ])
-
-            if phase_res.phase_limits and len(phase_res.phase_limits) == 2 and not phase_res.phase_fixed:
-                lines.extend([
-                    f'    // Set relative phase limits for {wave_name}',
-                    f'    for (const char* pName : {{',
-                    f'        {cand_pnames_str}',
-                    f'    }}) {{',
-                    f'        if (paramManager.HasParameter(pName)) {{',
-                    f'            paramManager.SetParameterLimits(pName, {phase_res.phase_limits[0]}, {phase_res.phase_limits[1]});',
+                    f'    // Fixed zero coupling for {wave_name} resonance 2 ({res2.name})',
+                    f'    for (int m = -{w.l}; m <= {w.l}; ++m) {{',
+                    f'        for (const char* prefix : {{"a", "b"}}) {{',
+                    f'            TString k2Name = Form("MD_%s_%d_%d_{wave_name}_k2", prefix, {w.l}, m);',
+                    f'            if (paramManager.HasParameter(k2Name)) {{',
+                    f'                paramManager.SetParameterInitialValue(k2Name, 0.0);',
+                    f'                paramManager.FixParameter(k2Name);',
+                    f'            }}',
                     f'        }}',
                     f'    }}',
                 ])
         else:
             for res in w.resonances:
-                lines.append(f'    paramManager.ConfigureBreitWignerDefaultsForWave("{res.name}", {res.mass}, {res.width});')
-                res_mass_name = f"MD_shared_{res.name}_Mass"
-                res_width_name = f"MD_shared_{res.name}_Width"
-                if res.mass_fixed:
-                    lines.append(f'    paramManager.FixParameter("{res_mass_name}");')
-                elif res.mass_limits and len(res.mass_limits) == 2:
-                    lines.append(f'    paramManager.SetParameterLimits("{res_mass_name}", {res.mass_limits[0]}, {res.mass_limits[1]});')
+                if w.model in (ModelType.FLATTE, ModelType.FLATTE_BREIT_WIGNER) or (w.formula and "flatte" in w.formula.lower()):
+                    res_mass_name = f"MD_shared_{res.name}_Mass"
+                    if is_from_file:
+                        lines.append(f'    if (!paramManager.WasLoadedFromFile("{res_mass_name}")) paramManager.SetParameterInitialValue("{res_mass_name}", {res.mass});')
+                    else:
+                        lines.append(f'    paramManager.SetParameterInitialValue("{res_mass_name}", {res.mass});')
+                    if res.mass_fixed:
+                        lines.append(f'    paramManager.FixParameter("{res_mass_name}");')
+                    elif res.mass_limits and len(res.mass_limits) == 2:
+                        lines.append(f'    paramManager.SetParameterLimits("{res_mass_name}", {res.mass_limits[0]}, {res.mass_limits[1]});')
 
-                if res.width_fixed:
-                    lines.append(f'    paramManager.FixParameter("{res_width_name}");')
-                elif res.width_limits and len(res.width_limits) == 2:
-                    lines.append(f'    paramManager.SetParameterLimits("{res_width_name}", {res.width_limits[0]}, {res.width_limits[1]});')
+                    # Coupling g_s / g_etapi (no width parameter in Flatté)
+                    gs_key = "g_s" if (w.parameters and "g_s" in w.parameters and "g_etapi" not in w.parameters) else "g_etapi"
+                    res_gs_name = f"MD_shared_{res.name}_{gs_key}"
+                    getapi_val = res.g_etapi if res.g_etapi is not None else res.g_s
+                    getapi_fixed = res.g_etapi_fixed or res.g_s_fixed
+                    getapi_limits = res.g_etapi_limits if res.g_etapi_limits is not None else res.g_s_limits
+                    if getapi_val is not None:
+                        if is_from_file:
+                            lines.append(f'    if (!paramManager.WasLoadedFromFile("{res_gs_name}")) paramManager.SetParameterInitialValue("{res_gs_name}", {getapi_val});')
+                        else:
+                            lines.append(f'    paramManager.SetParameterInitialValue("{res_gs_name}", {getapi_val});')
+                    if getapi_fixed:
+                        lines.append(f'    paramManager.FixParameter("{res_gs_name}");')
+                    elif getapi_limits and len(getapi_limits) == 2:
+                        lines.append(f'    paramManager.SetParameterLimits("{res_gs_name}", {getapi_limits[0]}, {getapi_limits[1]});')
+
+                    # Coupling g_KK
+                    res_gkk_name = f"MD_shared_{res.name}_g_KK"
+                    if res.g_KK is not None:
+                        if is_from_file:
+                            lines.append(f'    if (!paramManager.WasLoadedFromFile("{res_gkk_name}")) paramManager.SetParameterInitialValue("{res_gkk_name}", {res.g_KK});')
+                        else:
+                            lines.append(f'    paramManager.SetParameterInitialValue("{res_gkk_name}", {res.g_KK});')
+                    if res.g_KK_fixed:
+                        lines.append(f'    paramManager.FixParameter("{res_gkk_name}");')
+                    elif res.g_KK_limits and len(res.g_KK_limits) == 2:
+                        lines.append(f'    paramManager.SetParameterLimits("{res_gkk_name}", {res.g_KK_limits[0]}, {res.g_KK_limits[1]});')
+
+                    # Coupling g_etaprimepi
+                    res_getaprimepi_name = f"MD_shared_{res.name}_g_etaprimepi"
+                    if res.g_etaprimepi is not None:
+                        if is_from_file:
+                            lines.append(f'    if (!paramManager.WasLoadedFromFile("{res_getaprimepi_name}")) paramManager.SetParameterInitialValue("{res_getaprimepi_name}", {res.g_etaprimepi});')
+                        else:
+                            lines.append(f'    paramManager.SetParameterInitialValue("{res_getaprimepi_name}", {res.g_etaprimepi});')
+                    if res.g_etaprimepi_fixed:
+                        lines.append(f'    paramManager.FixParameter("{res_getaprimepi_name}");')
+                    elif res.g_etaprimepi_limits and len(res.g_etaprimepi_limits) == 2:
+                        lines.append(f'    paramManager.SetParameterLimits("{res_getaprimepi_name}", {res.g_etaprimepi_limits[0]}, {res.g_etaprimepi_limits[1]});')
+                else:
+                    res_w = res.width if res.width is not None else 0.105
+                    res_mass_name = f"MD_shared_{res.name}_Mass"
+                    res_width_name = f"MD_shared_{res.name}_Width"
+                    if is_from_file:
+                        lines.append(f'    if (!paramManager.WasLoadedFromFile("{res_mass_name}")) paramManager.SetParameterInitialValue("{res_mass_name}", {res.mass});')
+                        lines.append(f'    if (!paramManager.WasLoadedFromFile("{res_width_name}")) paramManager.SetParameterInitialValue("{res_width_name}", {res_w});')
+                    else:
+                        lines.append(f'    paramManager.ConfigureBreitWignerDefaultsForWave("{res.name}", {res.mass}, {res_w});')
+                    if res.mass_fixed:
+                        lines.append(f'    paramManager.FixParameter("{res_mass_name}");')
+                    elif res.mass_limits and len(res.mass_limits) == 2:
+                        lines.append(f'    paramManager.SetParameterLimits("{res_mass_name}", {res.mass_limits[0]}, {res.mass_limits[1]});')
+
+                    if res.width_fixed:
+                        lines.append(f'    paramManager.FixParameter("{res_width_name}");')
+                    elif res.width_limits and len(res.width_limits) == 2:
+                        lines.append(f'    paramManager.SetParameterLimits("{res_width_name}", {res.width_limits[0]}, {res.width_limits[1]});')
 
                 # Gaussian constraints
-                for par_key, constr in res.gaussian_constraints.items():
-                    if len(constr) == 2:
-                        lines.append(f'    paramManager.SetGaussianConstraint("{par_key}", {constr[0]}, {constr[1]});')
+                gs_key_val = "g_s" if (w.parameters and "g_s" in w.parameters and "g_etapi" not in w.parameters) else "g_etapi"
+                _append_gaussian_constraints(lines, res, gs_key=gs_key_val, model=w.model)
 
                 # Phase handling for resonance
                 res_shared_opt = 2
@@ -637,14 +977,15 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                         f'        }}',
                         f'    }}',
                     ])
-                elif res.phase is not None:
+                elif res.phase is not None and not rand_md_phases:
                     init_val = res.phase
+                    guard = " && !paramManager.WasLoadedFromFile(pName)" if is_from_file else ""
                     lines.extend([
                         f'    // Initial phase for resonance {res.name}',
                         f'    for (const char* pName : {{',
                         f'        {cand_pnames_str}',
                         f'    }}) {{',
-                        f'        if (paramManager.HasParameter(pName)) {{',
+                        f'        if (paramManager.HasParameter(pName){guard}) {{',
                         f'            paramManager.SetParameterInitialValue(pName, {init_val});',
                         f'        }}',
                         f'    }}',
@@ -661,6 +1002,36 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
                         f'        }}',
                         f'    }}',
                     ])
+
+                # Fixed zero coupling (k) for resonance
+                res_fixed_zero = w.init.fixed_zero or (res is not None and res.fixed_zero)
+                if res_fixed_zero:
+                    lines.extend([
+                        f'    // Fixed zero coupling for mass-dependent wave L={w.l} ({res.name})',
+                        f'    for (int m = -{w.l}; m <= {w.l}; ++m) {{',
+                        f'        for (const char* prefix : {{"a", "b"}}) {{',
+                        f'            TString kName = Form("MD_%s_%d_%d_{res.name}_k", prefix, {w.l}, m);',
+                        f'            if (paramManager.HasParameter(kName)) {{',
+                        f'                paramManager.SetParameterInitialValue(kName, 0.0);',
+                        f'                paramManager.FixParameter(kName);',
+                        f'            }}',
+                        f'        }}',
+                        f'    }}',
+                    ])
+
+            if not w.resonances and w.init.fixed_zero:
+                lines.extend([
+                    f'    // Fixed zero coupling for mass-dependent wave L={w.l}',
+                    f'    for (int m = -{w.l}; m <= {w.l}; ++m) {{',
+                    f'        for (const char* prefix : {{"a", "b"}}) {{',
+                    f'            TString kName = Form("MD_%s_%d_%d_wave_{w.l}_k", prefix, {w.l}, m);',
+                    f'            if (paramManager.HasParameter(kName)) {{',
+                    f'                paramManager.SetParameterInitialValue(kName, 0.0);',
+                    f'                paramManager.FixParameter(kName);',
+                    f'            }}',
+                    f'        }}',
+                    f'    }}',
+                ])
 
     # Determine burn-in and target draws for MCMC propagation in C++
     mcmc_burn_in = getattr(config.mcmc_propagation, "burn_in", 0) if config.mcmc_propagation else 0
@@ -699,6 +1070,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         "",
         "        const double chi2 = fitter.GetLastChi2();",
         "        const bool isValid = fitter.IsMinimizerValid();",
+        "        const bool atLimit = fitter.HasMinimizerHitLimit();",
         "        const int status = fitter.GetMinimizerStatus();",
         "",
         '        TString outFile = Form("%s/MassDependentResults_%d.root", outDir, seed);',
@@ -707,6 +1079,7 @@ def generate_root_macro(config: FitConfig, output_macro_path: Path) -> Path:
         '        std::cout << "[RESULT] SEED=" << seed',
         '                  << " CHI2=" << Form("%.4f", chi2)',
         '                  << " VALID=" << (isValid ? 1 : 0)',
+        '                  << " AT_LIMIT=" << (atLimit ? 1 : 0)',
         '                  << " STATUS=" << status',
         '                  << " TIME=" << Form("%.2f", timer.RealTime())',
         '                  << " OUT=" << outFile << std::endl;',
@@ -825,6 +1198,10 @@ def execute_root_command(
 def run_multi_start(
     config: FitConfig,
     n_starts: Optional[int] = None,
+    seed_start: Optional[int] = None,
+    seed_end: Optional[int] = None,
+    seed_range: Optional[Union[List[int], Tuple[int, int], str]] = None,
+    skip_existing: Optional[bool] = None,
     n_threads: Optional[int] = None,
     output_dir: Optional[str] = None,
     config_source_path: Optional[Path | str] = None,
@@ -850,27 +1227,37 @@ def run_multi_start(
             init_file = resolve_init_file_for_tbin(w.init.file_path, config.dataset.t_bin, repo_root)
             w.init.file_path = str(init_file)
 
+    if seed_range is not None:
+        config.multi_start.seed_range = seed_range
+    if seed_start is not None:
+        config.multi_start.seed_start = seed_start
+    if seed_end is not None:
+        config.multi_start.seed_end = seed_end
+    if skip_existing is not None:
+        config.multi_start.skip_existing = skip_existing
+
     half_cpus = get_default_max_workers()
-    starts = n_starts if n_starts is not None else config.multi_start.n_starts
-    threads = n_threads if n_threads is not None else (config.multi_start.n_threads or half_cpus)
-    if n_threads is None:
-        threads = min(threads, half_cpus)
+    seeds = config.multi_start.get_seeds(n_starts_override=n_starts)
+    starts = len(seeds)
+    threads = n_threads if n_threads is not None else config.multi_start.n_threads
+    if threads is None:
+        threads = half_cpus
 
     macro_path = rundir.worker_macro
     generate_root_macro(config, macro_path)
 
+    seed_desc = f"{seeds[0]}-{seeds[-1]}" if seeds else "none"
     header_tag = f" {tag}" if tag else ""
     print(f"\n=======================================================")
     print(f" Moments2Amplitudes Multi-Start Fit{header_tag}")
     print(f" Project:      {config.project.name}")
     if config.dataset.t_bin:
         print(f" t-Bin:        {config.dataset.t_bin}")
-    print(f" Total Trials: {starts}")
+    print(f" Total Trials: {starts} (Seed range: {seed_desc})")
     print(f" Threads:      {threads}")
     print(f" Run Dir:      {rundir.root}")
     print(f"=======================================================\n")
 
-    seeds = [config.multi_start.seed_offset + i for i in range(starts)]
     results: List[Dict[str, Any]] = []
 
     # Parallel execution using concurrent.futures
@@ -878,6 +1265,32 @@ def run_multi_start(
 
     def run_seed_task(seed_val: int) -> Dict[str, Any]:
         log_f = rundir.get_seed_log_file(seed_val)
+        out_root = str(rundir.fit_starts_dir / f"MassDependentResults_{seed_val}.root")
+
+        # Skip existing converged fit if skip_existing is active
+        if config.multi_start.skip_existing and log_f.is_file() and Path(out_root).is_file():
+            try:
+                with open(log_f, "r") as lf:
+                    content = lf.read()
+                for line in content.splitlines():
+                    if "[RESULT]" in line and f"SEED={seed_val}" in line:
+                        toks = dict(part.split("=") for part in line.strip().split() if "=" in part)
+                        at_limit_cached = (toks.get("AT_LIMIT") == "1")
+                        if toks.get("VALID") == "1" and toks.get("STATUS") == "0" and not at_limit_cached:
+                            return {
+                                "seed": seed_val,
+                                "chi2": float(toks.get("CHI2", 1e9)),
+                                "is_valid": True,
+                                "at_limit": False,
+                                "status": 0,
+                                "ret_code": 0,
+                                "root_file": out_root,
+                                "log_file": str(log_f),
+                                "skipped": True,
+                            }
+            except Exception:
+                pass
+
         seed_timeout = getattr(config.minimizer, "timeout", None) if config and hasattr(config, "minimizer") else None
         if seed_timeout is None:
             seed_timeout = 600
@@ -892,6 +1305,7 @@ def run_multi_start(
         # Parse [RESULT] line
         chi2 = 1e9
         is_valid = False
+        at_limit = False
         status = -1
         out_root = str(rundir.fit_starts_dir / f"MassDependentResults_{seed_val}.root")
 
@@ -905,6 +1319,8 @@ def run_multi_start(
                             pass
                     elif token.startswith("VALID="):
                         is_valid = token.split("=")[1] == "1"
+                    elif token.startswith("AT_LIMIT="):
+                        at_limit = token.split("=")[1] == "1"
                     elif token.startswith("STATUS="):
                         try:
                             status = int(token.split("=")[1])
@@ -913,10 +1329,14 @@ def run_multi_start(
                     elif token.startswith("OUT="):
                         out_root = token.split("=")[1]
 
+        if at_limit and getattr(config.minimizer, "reject_at_limit", True):
+            is_valid = False
+
         return {
             "seed": seed_val,
             "chi2": chi2,
             "is_valid": is_valid,
+            "at_limit": at_limit,
             "status": status,
             "ret_code": ret_code,
             "root_file": out_root,
@@ -932,7 +1352,14 @@ def run_multi_start(
             res = future.result()
             results.append(res)
             completed += 1
-            status_tag = "CONVERGED" if res["is_valid"] and res["status"] == 0 else "FAIL"
+            if res.get("skipped"):
+                status_tag = "CACHED"
+            elif res.get("at_limit") and not res["is_valid"]:
+                status_tag = "FAIL (AT_LIMIT)"
+            elif res["is_valid"] and res["status"] == 0:
+                status_tag = "CONVERGED"
+            else:
+                status_tag = "FAIL"
             prefix = f"{tag} " if tag else ""
             print(
                 f"{prefix}[{completed:3d}/{starts:3d}] Seed {res['seed']:4d} | "
@@ -940,12 +1367,63 @@ def run_multi_start(
             )
 
     elapsed = time.time() - start_time
-    valid_results = [r for r in results if r["is_valid"] and r["status"] == 0 and r["chi2"] < 1e8]
+    current_valid = [r for r in results if r["is_valid"] and not r.get("at_limit", False) and r["status"] == 0 and r["chi2"] < 1e8]
+
+    # Map from seed -> result dict to deduplicate and aggregate
+    all_seeds_map: Dict[int, Dict[str, Any]] = {r["seed"]: r for r in results}
+
+    # Discover any previous completed runs in fit_starts_dir to evaluate global landscape & plateau
+    if rundir.fit_starts_dir.is_dir():
+        for log_f in rundir.fit_starts_dir.glob("fit_seed_*.log"):
+            try:
+                seed_str = log_f.stem.replace("fit_seed_", "")
+                if not seed_str.isdigit():
+                    continue
+                s_val = int(seed_str)
+                if s_val in all_seeds_map:
+                    continue
+                root_cand = rundir.fit_starts_dir / f"MassDependentResults_{s_val}.root"
+                if not root_cand.is_file():
+                    continue
+                with open(log_f, "r") as lf:
+                    for line in lf:
+                        if "[RESULT]" in line and f"SEED={s_val}" in line:
+                            toks = dict(p.split("=") for p in line.strip().split() if "=" in p)
+                            if "CHI2" in toks and "VALID" in toks and "STATUS" in toks:
+                                is_v = (toks["VALID"] == "1")
+                                at_lim = (toks.get("AT_LIMIT") == "1")
+                                if at_lim and getattr(config.minimizer, "reject_at_limit", True):
+                                    is_v = False
+                                st = int(toks["STATUS"])
+                                ch = float(toks["CHI2"])
+                                if is_v and st == 0 and ch < 1e8:
+                                    all_seeds_map[s_val] = {
+                                        "seed": s_val,
+                                        "chi2": ch,
+                                        "is_valid": is_v,
+                                        "at_limit": at_lim,
+                                        "status": st,
+                                        "ret_code": 0,
+                                        "root_file": str(root_cand),
+                                        "log_file": str(log_f),
+                                    }
+                            break
+            except Exception:
+                pass
+
+    all_results = list(all_seeds_map.values())
+    valid_results = [r for r in all_results if r["is_valid"] and not r.get("at_limit", False) and r["status"] == 0 and r["chi2"] < 1e8]
     valid_results.sort(key=lambda x: x["chi2"])
 
+    n_at_limit = sum(1 for r in all_results if r.get("at_limit", False))
     summary_tag = f" {tag}" if tag else ""
     print("\n-------------------------------------------------------")
-    print(f" Multi-Start Summary{summary_tag}: {len(valid_results)}/{starts} converged in {elapsed:.1f}s")
+    if len(all_results) > len(results):
+        print(f" Multi-Start Summary{summary_tag}: {len(current_valid)}/{starts} converged in current run ({len(valid_results)}/{len(all_results)} total converged in directory) in {elapsed:.1f}s")
+    else:
+        print(f" Multi-Start Summary{summary_tag}: {len(valid_results)}/{starts} converged in {elapsed:.1f}s")
+    if n_at_limit > 0:
+        print(f" Boundary Limit Rejections{summary_tag}: {n_at_limit} start(s) terminated at parameter limits (marked not converged)")
 
     if not valid_results:
         print(f"[ERROR]{summary_tag} No fits converged cleanly. Check logs in:", rundir.fit_starts_dir)
@@ -990,6 +1468,8 @@ def run_multi_start(
             output_dir=rundir.plots_dir,
             project_name=config.project.name,
             plateau_delta=config.multi_start.plateau_delta_chi2,
+            show_grid=getattr(config.plotting, "show_grid", False) if getattr(config, "plotting", None) else False,
+            bins=getattr(config.plotting, "chi2_landscape_bins", None) if getattr(config, "plotting", None) else None,
         )
     except Exception as e:
         print(f"[WARNING]{summary_tag} Could not generate multi-start plot: {e}")
@@ -999,8 +1479,9 @@ def run_multi_start(
     summary.chi2 = min_chi2
     summary.status = valid_results[0]["status"]
     summary.is_valid = valid_results[0]["is_valid"]
+    summary.at_limit = valid_results[0].get("at_limit", False)
     summary.best_seed = best_seed
-    summary.total_starts = starts
+    summary.total_starts = len(all_results)
     summary.converged_starts = len(valid_results)
     summary.plateau_count = len(plateau_fits)
     summary.elapsed_seconds = elapsed
@@ -1021,6 +1502,7 @@ def run_multi_start(
         "markdown_report": str(md_rep),
         "valid_count": len(valid_results),
         "rundir": rundir,
+        "results": valid_results,
     }
 
 
@@ -1028,6 +1510,10 @@ def run_multi_start_tbins(
     config: FitConfig,
     tbins: Optional[List[str]] = None,
     n_starts: Optional[int] = None,
+    seed_start: Optional[int] = None,
+    seed_end: Optional[int] = None,
+    seed_range: Optional[Union[List[int], Tuple[int, int], str]] = None,
+    skip_existing: Optional[bool] = None,
     n_threads: Optional[int] = None,
     n_tbin_workers: Optional[int] = None,
     output_dir: Optional[str] = None,
@@ -1056,6 +1542,10 @@ def run_multi_start_tbins(
         return run_multi_start(
             single_cfg,
             n_starts=n_starts,
+            seed_start=seed_start,
+            seed_end=seed_end,
+            seed_range=seed_range,
+            skip_existing=skip_existing,
             n_threads=n_threads,
             output_dir=resolved_out,
             config_source_path=config_source_path,
@@ -1073,16 +1563,28 @@ def run_multi_start_tbins(
     )
     max_tbin_workers = max(1, min(len(tbins_list), max_tbin_workers, half_cpus))
 
-    starts = n_starts if n_starts is not None else config.multi_start.n_starts
-    threads = n_threads if n_threads is not None else (config.multi_start.n_threads or half_cpus)
-    if n_threads is None:
-        threads = min(threads, max(1, half_cpus // max_tbin_workers))
+    sample_cfg = copy.deepcopy(config)
+    if seed_range is not None:
+        sample_cfg.multi_start.seed_range = seed_range
+    if seed_start is not None:
+        sample_cfg.multi_start.seed_start = seed_start
+    if seed_end is not None:
+        sample_cfg.multi_start.seed_end = seed_end
+    if skip_existing is not None:
+        sample_cfg.multi_start.skip_existing = skip_existing
+    sample_seeds = sample_cfg.multi_start.get_seeds(n_starts_override=n_starts)
+    starts = len(sample_seeds)
+    seed_desc = f"{sample_seeds[0]}-{sample_seeds[-1]}" if sample_seeds else "none"
+
+    threads = n_threads if n_threads is not None else config.multi_start.n_threads
+    if threads is None:
+        threads = max(1, half_cpus // max_tbin_workers)
 
     print(f"\n=======================================================")
     print(f" Moments2Amplitudes Parallel t-Bins Execution")
     print(f" Project:           {config.project.name}")
     print(f" t-Bins ({len(tbins_list)}):     {', '.join(tbins_list)}")
-    print(f" Starts per t-bin:  {starts}")
+    print(f" Starts per t-bin:  {starts} (Seed range: {seed_desc})")
     print(f" Threads per fit:   {threads}")
     print(f" Concurrent t-Bins: {max_tbin_workers}")
     print(f"=======================================================\n")
@@ -1120,6 +1622,10 @@ def run_multi_start_tbins(
         res = run_multi_start(
             cfg_t,
             n_starts=n_starts,
+            seed_start=seed_start,
+            seed_end=seed_end,
+            seed_range=seed_range,
+            skip_existing=skip_existing,
             n_threads=threads,
             output_dir=t_out,
             config_source_path=config_source_path,
@@ -1163,6 +1669,24 @@ def run_multi_start_tbins(
         plat_str = f"{plateau_count}/{valid_count}" if plateau_count != "-" else "-"
         print(f" {t_name:<10} {chi2_str:<12} {best_seed_str:<12} {plat_str:<14} {status_str:<12} {r_dir_str}")
     print(f"=========================================================================================\n")
+
+    # Generate combined multi-start landscape plot across all t-bins in one figure
+    if len(tbins_list) >= 1:
+        parent_out = Path(output_dir) if output_dir else Path(config.multi_start.output_dir if config.multi_start.output_dir else "runs")
+        plots_out = parent_out / "plots" if (parent_out / "plots").is_dir() else parent_out
+        try:
+            ms_combined_plots = plot_multistart_landscape_all_tbins(
+                results_by_tbin,
+                output_dir=plots_out,
+                project_name=config.project.name,
+                plateau_delta=config.multi_start.plateau_delta_chi2,
+                show_grid=getattr(config.plotting, "show_grid", False) if getattr(config, "plotting", None) else False,
+                bins=getattr(config.plotting, "chi2_landscape_bins", None) if getattr(config, "plotting", None) else None,
+            )
+            if ms_combined_plots:
+                print(f"[OK] Generated combined multi-start landscape plot across {len(tbins_list)} t-bins: {ms_combined_plots[0]}")
+        except Exception as e:
+            print(f"[WARNING] Could not generate combined multi-start plot across t-bins: {e}")
 
     return {
         "converged": all_converged,

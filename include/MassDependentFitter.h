@@ -41,7 +41,9 @@ namespace m2pw {
                 BreitWignerPlusPolynomial = 2,
                 TwoBreitWignerPlusPolynomial = 3,
                 FlatteBreitWignerPlusPolynomial = 4,
-                CustomFormula = 5
+                CustomFormula = 5,
+                BarrierBreitWignerPlusPolynomial = 6,
+                TwoBarrierBreitWignerPlusPolynomial = 7
             };
 
             struct WaveModelConfig {
@@ -204,6 +206,8 @@ namespace m2pw {
         // Getters
         const std::vector<double>& GetMassBins() const { return massBins_; }
         double GetLastChi2() const { return lastChi2_; }
+        double GetLastMomentsChi2() const { return lastMomentsChi2_; }
+        double GetLastConstraintPenalty() const { return lastConstraintPenalty_; }
         
         // Method to set/update configuration
         void SetMassDependenceConfig(const MassDependenceConfig& config);
@@ -333,7 +337,15 @@ namespace m2pw {
         int GetMinimizerPrintLevel() const { return minimizerPrintLevel_; }
         bool IsMinimizerValid() const { return minimizerIsValid_; }
         bool HasValidErrors() const { return minimizerHasValidErrors_; }
+        bool HasMinimizerHitLimit() const { return minimizerHitLimit_; }
+        const std::vector<TString>& GetLimitHitParameters() const { return limitHitParams_; }
         int GetMinimizerStatus() const { return minimizerStatus_; }
+        void SetRejectBoundaryLimits(bool reject) { rejectBoundaryLimits_ = reject; }
+        bool GetRejectBoundaryLimits() const { return rejectBoundaryLimits_; }
+        void SetBoundaryLimitTolerance(double relTol) {
+            if (relTol > 0.0) boundaryLimitRelTol_ = relTol;
+        }
+        double GetBoundaryLimitTolerance() const { return boundaryLimitRelTol_; }
 
         // Static factory methods for common configurations
         static MassDependenceConfig CreateDefaultConfig() {
@@ -378,24 +390,62 @@ namespace m2pw {
          */
         struct WaveInitRule {
             enum class Strategy {
-                Default,                          // S-wave: positive mag [0, 200], phase 0; P-wave: fixed 0; others: random
+                Default,                          // S-wave: positive mag [0, 350], phase 0; P-wave: fixed 0; others: random
                 FixedZero,                        // Fixed to 0.0
                 FixedValue,                       // Fixed to fixedValue
-                RandomPositiveMagnitudeZeroPhase, // Magnitudes ~ Uniform(minVal, maxVal), phases = 0.0
-                RandomFullPhase,                 // Magnitudes ~ Uniform(minVal, maxVal), phases ~ Uniform(-pi, pi)
+                RandomPositiveMagnitudeZeroPhase, // Magnitudes ~ Uniform(minVal, maxVal), phases = fixedValue (default 0.0)
+                RandomFullPhase,                 // Magnitudes ~ Uniform(minVal, maxVal), phases ~ Uniform(phaseMinVal, phaseMaxVal)
                 FromFile                          // Loaded from result tree file
             };
 
             Strategy strategy = Strategy::Default;
             double minVal = 0.0;
-            double maxVal = 200.0;
+            double maxVal = 350.0;
             double fixedValue = 0.0;
             bool isFixed = false;
+            double phaseMinVal = -TMath::Pi();
+            double phaseMaxVal = TMath::Pi();
+            double relSpread = 0.0;   // Optional relative perturbation around file_path magnitudes
+            double absFloor = 10.0;   // Minimum additive jitter floor when perturbing near-zero magnitudes
+            double phaseSpread = 0.0; // Optional additive perturbation around file_path phases (unbounded)
             TString filePath = "";
 
             WaveInitRule() = default;
-            WaveInitRule(Strategy strat, double minV = 0.0, double maxV = 200.0, double fixedV = 0.0, bool fix = false)
-                : strategy(strat), minVal(minV), maxVal(maxV), fixedValue(fixedV), isFixed(fix) {}
+            WaveInitRule(Strategy strat,
+                         double minV = 0.0,
+                         double maxV = 350.0,
+                         double fixedV = 0.0,
+                         bool fix = false,
+                         double phaseMin = -TMath::Pi(),
+                         double phaseMax = TMath::Pi(),
+                         double relSp = 0.0,
+                         double absFl = 10.0,
+                         double phaseSp = 0.0)
+                : strategy(strat),
+                  minVal(minV),
+                  maxVal(maxV),
+                  fixedValue(fixedV),
+                  isFixed(fix),
+                  phaseMinVal(phaseMin),
+                  phaseMaxVal(phaseMax),
+                  relSpread(relSp),
+                  absFloor(absFl),
+                  phaseSpread(phaseSp) {}
+        };
+
+        /**
+         * @brief Random initialization controls for mass-dependent wave couplings and polynomials per L
+         */
+        struct MDInitRule {
+            double couplingMin = -80.0;          // Covers fitted couplings up to |k| ~ 77 in S+P+D best fits
+            double couplingMax = 80.0;
+            double polyScale = 250.0;            // Calibrated conformal poly scale (~250 * 3.8^deg for best fits)
+            double polyGrowth = 3.8;
+            double fileRelSpread = 0.0;          // Relative perturbation around best-fit couplings loaded from file
+            double fileCouplingFloor = 5.0;      // Minimum additive jitter floor for near-zero couplings
+            double filePhaseSpread = 0.0;        // Additive perturbation around floating file phases (rad)
+            bool randomizeLoadedCouplings = false; // Keep resonance shapes from file while randomizing couplings
+            bool randomizeFloatingPhases = false;  // Draw unconstrained initial globalphase in [-pi, pi] when random
         };
 
         // Parameter management and minimization
@@ -414,6 +464,8 @@ namespace m2pw {
 
             // Per-L wave initialization rules (e.g. 0 -> S-wave, 1 -> P-wave)
             std::map<int, WaveInitRule> waveInitRules;
+            std::map<int, MDInitRule> mdInitRules;
+            std::set<TString> loadedFromFileParams;
 
             // Constructor
             ParameterManager(MassDependentFitter& f) : fitter(f) {}
@@ -421,33 +473,55 @@ namespace m2pw {
             // Set wave initialization rules
             void SetWaveInitRule(int ell, const WaveInitRule& rule) { waveInitRules[ell] = rule; }
             void SetWaveInitRules(const std::map<int, WaveInitRule>& rules) { waveInitRules = rules; }
+            void SetMDInitRule(int ell, const MDInitRule& rule) { mdInitRules[ell] = rule; }
+
+            // Helper to resolve parameter name aliases (e.g. _g_s <-> _g_etapi)
+            TString ResolveParName(const TString& parName) const {
+                if (parsList.find(parName) != parsList.end()) return parName;
+                if (parName.EndsWith("_g_s")) {
+                    TString alt = parName;
+                    alt.ReplaceAll("_g_s", "_g_etapi");
+                    if (parsList.find(alt) != parsList.end()) return alt;
+                } else if (parName.EndsWith("_g_etapi")) {
+                    TString alt = parName;
+                    alt.ReplaceAll("_g_etapi", "_g_s");
+                    if (parsList.find(alt) != parsList.end()) return alt;
+                }
+                return parName;
+            }
 
             // Accessor helpers
             bool HasParameter(const TString& parName) const {
-                return parsList.find(parName) != parsList.end();
+                return parsList.find(ResolveParName(parName)) != parsList.end();
+            }
+            bool WasLoadedFromFile(const TString& parName) const {
+                return loadedFromFileParams.find(ResolveParName(parName)) != loadedFromFileParams.end();
             }
             double GetValue(const TString& parName) const {
-                auto it = parsList.find(parName);
+                auto it = parsList.find(ResolveParName(parName));
                 if (it != parsList.end()) return it->second;
                 return 0.0;
             }
             double GetError(const TString& parName) const {
-                auto it = nameToIndex.find(parName);
+                auto it = nameToIndex.find(ResolveParName(parName));
                 if (it != nameToIndex.end() && it->second >= 0 && it->second < static_cast<int>(parErrors.size())) {
                     return parErrors[it->second];
                 }
                 return 0.0;
             }
             bool IsFixed(const TString& parName) const {
-                return std::find(fixedParNames.begin(), fixedParNames.end(), parName) != fixedParNames.end();
+                TString res = ResolveParName(parName);
+                return std::find(fixedParNames.begin(), fixedParNames.end(), res) != fixedParNames.end();
             }
             bool FixParameter(const TString& parName) {
-                if (parsList.find(parName) == parsList.end()) return false;
-                if (!IsFixed(parName)) fixedParNames.push_back(parName);
+                TString res = ResolveParName(parName);
+                if (parsList.find(res) == parsList.end()) return false;
+                if (!IsFixed(res)) fixedParNames.push_back(res);
                 return true;
             }
             bool FreeParameter(const TString& parName) {
-                auto it = std::find(fixedParNames.begin(), fixedParNames.end(), parName);
+                TString res = ResolveParName(parName);
+                auto it = std::find(fixedParNames.begin(), fixedParNames.end(), res);
                 if (it != fixedParNames.end()) {
                     fixedParNames.erase(it);
                     return true;
@@ -459,9 +533,11 @@ namespace m2pw {
             void AddMassIndependentParameter(const std::vector<int>& targetELL,
                                             const int seed);
 
-            // Add mass-independent parameters for selected L values initialized from a result tree.
+            // Add mass-independent parameters for selected L values initialized from a result tree,
+            // with optional seed-based perturbation and fallback initialization for missing bins.
             void AddMassIndependentParameter(const std::vector<int>& targetELL,
-                                            const TString filePath);
+                                            const TString filePath,
+                                            const int seed = 0);
 
             // Add mass dependent parameters for specific waves with random initialization, options:
             // option = 0: add coupling + shared resonance mass/width parameters (default)
@@ -472,7 +548,8 @@ namespace m2pw {
                                           const int seed,
                                           const int option);
 
-            // Add mass dependent parameters for specific waves with initialization from result tree, options:
+            // Add mass dependent parameters for specific waves with initialization from result tree
+            // (with optional seed-based perturbation around best fit and randomized missing fallback), options:
             // option = 0: add coupling + shared resonance mass/width parameters (default)
             // option = 1: option 0 + add shared global phase for all waves in the same L (e.g., "2+")
             // option = 2: option 0 + add shared global phase for all waves in the same L with the same reflectivity
@@ -480,7 +557,8 @@ namespace m2pw {
     
             void AddMassDependentParameter(const std::vector<int>& targetELL,
                                           const TString filePath,
-                                          const int option);
+                                          const int option,
+                                          const int seed = 0);
 
             // Build list of parameter type names for a given function type/index
             std::vector<TString> BuildParamTypesForWave(int funcType, int funcIndex) const;
@@ -613,12 +691,18 @@ private:
 
     // Caching for performance
     mutable double lastChi2_ = 0.0;
+    mutable double lastMomentsChi2_ = 0.0;
+    mutable double lastConstraintPenalty_ = 0.0;
     mutable std::vector<double> cachedParams_;
     mutable bool cacheValid_ = false;
 
     // Minimizer status and validity
     bool minimizerIsValid_ = false;
     bool minimizerHasValidErrors_ = false;
+    bool minimizerHitLimit_ = false;
+    std::vector<TString> limitHitParams_;
+    bool rejectBoundaryLimits_ = true;
+    double boundaryLimitRelTol_ = 1e-5;
     int minimizerStatus_ = -1;
     int minimizerPrintLevel_ = 0;
     int maxFunctionCalls_ = 1000000;

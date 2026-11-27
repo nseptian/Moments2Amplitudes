@@ -182,13 +182,13 @@ In photoproduction of two pseudoscalar mesons (e.g. \(\gamma p \to \eta\pi^0 p\)
 ```
 
 ### Stage 1: D-Wave Breit-Wigner Fit (`configs/d_breit_wigner.yaml`)
-Fits only \(H_4\) moments (`included_l: [4]`) with \(L=2\) Breit-Wigner and `poly_order: -1` (disabling polynomial background):
+Fits only \(H_4\) moments (`included_L: [4]`) with \(L=2\) Breit-Wigner and `poly_order: -1` (disabling polynomial background):
 ```bash
 pixi run fit configs/d_breit_wigner.yaml
 ```
 
 ### Stage 2: S-Piecewise + D-Breit-Wigner Fit (`configs/s_piecewise_d_bw.yaml`)
-Fits \(H_0, H_2, H_4\) moments (`included_l: [0, 2, 4]`). The \(D\)-wave resonance parameters are initialized directly from Stage 1:
+Fits \(H_0, H_2, H_4\) moments (`included_L: [0, 2, 4]`). The \(D\)-wave resonance parameters are initialized directly from Stage 1:
 ```yaml
   - l: 2
     name: "D-wave"
@@ -240,8 +240,7 @@ dataset:
 
 # Moments included in chi2 calculation
 chi2:
-  included_l: [0, 2, 4]  # H0, H2, H4 moments
-  excluded_l: []
+  included_L: [0, 2, 4]  # H0, H2, H4 moments
   max_l: 4
 
 # Wavesets and parameter initialization
@@ -255,10 +254,12 @@ waves:
       magnitude:
         strategy: "random"
         min: 0.0
-        max: 200.0
+        max: 350.0           # Calibrated above S-wave a0(980) peak (~314)
       phase:
-        strategy: "fixed"
-        value: 0.0
+        strategy: "random"   # Initial draw in [-pi, pi], kept unbounded in Minuit (no hard wall)
+        min: -3.14159265
+        max: 3.14159265
+        fixed: false
 
   # L=1: P-wave fixed to 0
   - l: 1
@@ -286,6 +287,11 @@ waves:
     init:
       strategy: "from_file"
       file_path: "logs_dbw/fit/nominal_best.root"
+      spread: 0.25           # Perturb loaded couplings/phases across multi-start seeds (optional)
+      coupling:
+        strategy: "random"   # Defaults for random/missing couplings: [-80, 80] (or poly_scale/poly_growth)
+        min: -80.0
+        max: 80.0
       option: 0
 
 # Numerical Minimizer Settings (Minuit2)
@@ -295,11 +301,17 @@ minimizer:
   tolerance: 1.0e-3
   max_calls: 1000000
   print_level: 0
+  reject_at_limit: true      # Mark fit as not converged if any free parameter stops at its limit
+  limit_tolerance: 1.0e-5    # Relative distance to [lower, upper] considered "at limit"
 
 # Multi-Start Randomized Central Minimum Search
 multi_start:
   enabled: true
-  n_starts: 100
+  n_starts: 100              # Total trials (used if seed_range not set)
+  seed_range: [1, 100]       # Optional explicit [start, end] seed range (e.g. [5001, 10000] or "5001:10000")
+  seed_start: 1              # Or specify starting seed (1-based, inclusive)
+  seed_end: 100              # Or specify ending seed (inclusive)
+  skip_existing: false       # Skip seeds whose fit output already exists in fit/starts/
   n_threads: 8
   output_dir: "logs_spiecewise"
   plateau_delta_chi2: 0.05
@@ -314,6 +326,13 @@ plotting:
   unnormalized_moments_file: "/path/to/UnnormalizedMoments_vs_Mass.root" # (optional, auto-detected)
   moments: ["all"]          # "all", "L=2", "L=4", or list: ["H_0_0_0", "H_0_2_0"]
   formats: ["png", "pdf"]
+  moments_vs_t: true        # Side-by-side 1 x N_tbins moment comparison plots
+  moments_vs_t_sharey: false
+  amplitudes_vs_t: true     # Side-by-side 1 x N_tbins partial wave intensity & phase comparison plots
+  amplitudes_vs_t_sharey: false
+  distributions: true       # 1D posterior distributions of MCMC parameters and yields
+  distribution_bins: 50     # Histogram bins for 1D MCMC posterior distributions
+  chi2_landscape_bins: 60   # Histogram bins for multi-start Chi2 landscape plots
 
 # Reflectivity-Separated Resonance Cross-Section Settings
 cross_section:
@@ -399,6 +418,31 @@ The framework allows physicists to define the **explicit mathematical formula** 
   parameters: ["k", "M", "width"]
   ```
   *(Available in `configs/a2CS_D_BreitWigner_Kinematic.yaml` and `configs/a2CS_SPiecewise_DBreitWigner_Kinematic.yaml`)*
+* **Relativistic Blatt-Weisskopf Breit-Wigner with Centrifugal Barrier Factors**:
+  Incorporates the Blatt-Weisskopf centrifugal barrier penetration factor ratio $B_L(q, R)/B_L(q_0, R)$ in the numerator and the energy-dependent dynamic width $\Gamma_L(m) = \Gamma_0 (M_0/m)(q/q_0)[B_L(q, R)/B_L(q_0, R)]^2$ in the denominator:
+  ```yaml
+  model: "barrier_breit_wigner"
+  barrier: true
+  barrier_l: 2
+  barrier_radius: 5.0677
+  formula: "sqrt(rho_etapi) * barrier_bw_etapi(k, M, width, 2)"
+  parameters: ["k", "M", "width"]
+  ```
+  *(Available in `configs/a2CS_D_BreitWigner_Barrier.yaml`)*
+  Additional barrier BW helper variants supported inside `formula`:
+  - `peak_barrier_bw_etapi(k, M, width, L)`: multiplies numerator by $M_0 \Gamma_0$ (peak-normalized, dynamic $\eta\pi$ width)
+  - `const_barrier_bw_etapi(k, M, width, L)`: uses constant total width $\Gamma_0$ in the denominator while keeping the $\eta\pi$ barrier ratio $B_L(q)/B_L(q_0)$ in the numerator
+  - `peak_const_barrier_bw_etapi(k, M, width, L)`: combines peak normalization ($M_0 \Gamma_0$ in numerator) with constant total width $\Gamma_0$ in the denominator and $\eta\pi$ barrier ratio $B_L(q)/B_L(q_0)$ in the numerator (used for broad multi-channel states like $a_2(1700)$ in `configs/SPiecewise_DTwoBreitWigner_FitA21700.yaml`)
+* **Coherent Sum of Two Barrier Breit-Wigners** ($a_2(1320) + a_2(1700)$):
+  ```yaml
+  model: "barrier_two_breit_wigner"
+  barrier: true
+  barrier_l: 2
+  barrier_radius: 5.0677
+  formula: "sqrt(rho_etapi) * (barrier_bw_etapi(k1, Mass1, Width1, 2) * exp(i * phase1) + barrier_bw_etapi(k2, Mass2, Width2, 2) * exp(i * phase2))"
+  parameters: ["k1", "Mass1", "Width1", "phase1", "k2", "Mass2", "Width2", "phase2"]
+  ```
+  *(Available in `configs/a2CS_published_model_Barrier.yaml`)*
 * **Coherent Sum of Two Breit-Wigners**:
   Available in `configs/d_two_breit_wigner.yaml` (and with kinematic factor in `configs/a2CS_D_TwoBreitWigner_Kinematic.yaml`):
   ```yaml
@@ -432,6 +476,39 @@ waves:
         mass_limits: [1.20, 1.45]
         width_limits: [0.05, 0.25]
 ```
+
+### Gaussian Parameter Constraints (`gaussian_constraints`)
+You can apply Gaussian priors on any resonance mass, width, coupling, or global phase directly under a `resonances:` entry in YAML. When constrained with `(mean, sigma)`, the minimizer adds $(\theta - \mu)^2 / \sigma^2$ to total $\chi^2$.
+
+Make sure the parameter is floated (`*_fixed: false`) so Minuit can vary it under the constraint:
+```yaml
+waves:
+  - l: 2
+    name: "D-wave"
+    type: "mass_dependent"
+    model: "barrier_two_breit_wigner"
+    resonances:
+      - name: "a2_1320"
+        mass: 1.3182
+        mass_fixed: false
+        mass_limits: [1.20, 1.45]
+        width: 0.107
+        width_fixed: false
+        width_limits: [0.05, 0.20]
+        gaussian_constraints:
+          mass: [1.3182, 0.0006]       # [mean, sigma] in GeV
+          width: {mean: 0.107, sigma: 0.005}
+      - name: "a2_1700"
+        mass: 1.706
+        width: 0.38
+        gaussian_constraints:
+          mass: [1.706, 0.020]
+          width: [0.380, 0.050]
+```
+Supported keys in `gaussian_constraints`:
+- Single Breit-Wigner / Flatté: `mass` (`m`), `width` (`w`), `mass_flatte`, `mass_bw`, `width_bw`, `g_s` (`g_etapi`), `g_kk`, `g_etaprimepi`
+- Two-Breit-Wigner: `mass`/`width` automatically map to `Mass1`/`Width1` (resonance index 1) or `Mass2`/`Width2` (resonance index 2), or specify `mass1`/`mass2`/`width1`/`width2` explicitly
+- Any exact internal Minuit parameter name (e.g. `MD_shared_a2_1320_Mass`, `MD_shared_a2_1320_1700_Width2`, `MD_shareda_a2_1320_1700_globalphase2`, `MD_sharedb_a2_1320_1700_globalphase2`)
 
 ---
 
@@ -490,6 +567,13 @@ Generated Figures:
    - Saved to `<output_dir>/plots/amplitudes/overview_{D_waves_positive,D_waves_negative,S_waves,all_waves}.png` and `<output_dir>/plots/amplitudes_overview_vs_mass.png`.
    - All wave intensity panels share the exact same y-axis with the background $H_0(0,0)$ data, removing redundant y-ticks and labels across columns to use space efficiently.
    - Corresponding wave phases are aligned below sharing the phase y-axis and the mass x-axis.
+6. **Multi-$t$ Resonance Parameters & $S,P,D$ Wave Intensities (Total & Reflectivity-Separated)**:
+   - Saved under `<base_dir>/plots/amplitudes_vs_t/` (when multiple `-t` bins are present):
+     - `spd_waves_refl_separated_vs_mass_all_tbins.{png,pdf}`: $2 \times N_t$ reflectivity-separated mass spectra showing natural-parity ($\epsilon = +1$: $S^+, P^+, D^+$) on top and unnatural-parity ($\epsilon = -1$: $S^-, P^-, D^-$) on bottom, overlaid with $H_0(0,0)$ data and Total $\sum |V|^2$ on a shared y-axis.
+     - `spd_waves_refl_separated_vs_t.{png,pdf}`: Integrated reflectivity-separated wave yields ($S^+, P^+, D^+$ vs $S^-, P^-, D^-$) and shares of total intensity vs $-t$.
+     - `spd_waves_total_reflectivity_vs_t.{png,pdf}`: Total $|V|^2$ across both reflectivities ($\epsilon = \pm 1$) and $M$ projections for $S$, $P$, $D$ waves plus Total $\sum |V|^2$ and $H_0(0,0)$ data vs $-t$, with fractional intensity breakdown below.
+     - `spd_waves_vs_mass_all_tbins.{png,pdf}`: Mass spectrum comparison of total-reflectivity $S$, $P$, $D$ waves across all $-t$ bins.
+     - `resonance_parameters_vs_t.{png,pdf}`, `resonance_<name>_params_vs_t.{png,pdf}`, and `parameters_vs_t/<param>_vs_t.{png,pdf}`: Fitted resonance masses, widths, couplings, and global phases as a function of $-t$ with Minuit / MCMC error bars and configured bounds/initial lines.
 
 ---
 
@@ -585,9 +669,38 @@ The core C++ engine is organized into focused, modular components:
 Non-linear partial-wave amplitude fits to angular moments possess multiple local minima and saddle points. A multi-start randomized strategy is critical to ensure discovery of the true global minimum:
 
 - The Python driver (`mom2amp fit`) automatically parallelizes the randomized starts across available CPU cores specified by `--n-threads` or `multi_start.n_threads`.
-- Each worker executes independently with an isolated random seed, saving individual fit outputs and logs to `<output_dir>/fit/starts/start_*.root`.
+- Each worker executes independently with an isolated random seed, saving individual fit outputs and logs to `<output_dir>/fit/starts/MassDependentResults_<seed>.root` and `<output_dir>/fit/starts/fit_seed_<seed>.log`.
 - The driver tracks real-time progress, aggregates results, detects the global minimum plateau (all starts within \(\Delta\chi^2 \le \text{plateau\_delta\_chi2}\)), and links/copies the best start to `<output_dir>/fit/nominal_best.root`.
 - Downstream tools (`mom2amp summary`, `mom2amp plot`, and Stage 2 fits) read `<output_dir>/fit/nominal_best.root` directly.
+
+### Continuation Fits & Seed Ranges
+
+If an initial multi-start fit (e.g. 5,000 trials) yields an inadequate plateau or poor clustering, you can continue sampling additional seeds without re-running earlier fits:
+
+1. **Via CLI flags**:
+   ```bash
+   # Continue fit from seed 5001 to 10000
+   mom2amp fit config.yaml --seed-range 5001:10000
+
+   # Or using separate start and end flags
+   mom2amp fit config.yaml --seed-start 5001 --seed-end 10000
+
+   # Skip seeds that have already completed in the output directory
+   mom2amp fit config.yaml --seed-range 1:10000 --skip-existing
+   ```
+
+2. **Via YAML configuration**:
+   ```yaml
+   multi_start:
+     seed_range: [5001, 10000]   # Or "5001:10000"
+     # seed_start: 5001
+     # seed_end: 10000
+     skip_existing: true
+   ```
+
+3. **Seamless Aggregation**:
+   When running a continuation range like `5001..10000`, the driver executes only the requested seeds, but post-fit analysis scans `<output_dir>/fit/starts/` and combines existing completed fits (e.g. seeds `1..5000`) with newly completed fits (`5001..10000`). The global minimum, plateau counts, summary reports, and \(\chi^2\) landscape plots automatically reflect the entire accumulated sample of 10,000 trials.
+
 
 
 

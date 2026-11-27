@@ -120,6 +120,7 @@ void ExportMCMCResonanceCouplings(
     }
 
     bool hasValid = (t->GetLeaf("isValid") != nullptr);
+    bool hasAtLimit = (t->GetLeaf("atLimit") != nullptr);
     bool hasStatus = (t->GetLeaf("Status") != nullptr);
     bool hasChi2 = (t->GetLeaf("chi2") != nullptr);
     bool hasEntry = (t->GetLeaf("mcmc_entry") != nullptr);
@@ -223,6 +224,8 @@ void ExportMCMCResonanceCouplings(
 
         Long64_t entryIdx = hasEntry ? (Long64_t)t->GetLeaf("mcmc_entry")->GetValue() : i;
         int isValidVal = hasValid ? (int)t->GetLeaf("isValid")->GetValue() : 1;
+        int atLimitVal = hasAtLimit ? (int)t->GetLeaf("atLimit")->GetValue() : 0;
+        if (atLimitVal != 0) isValidVal = 0;
         int statusVal = hasStatus ? (int)t->GetLeaf("Status")->GetValue() : 0;
         double chi2Val = hasChi2 ? t->GetLeaf("chi2")->GetValue() : 0.0;
         double massVal = hasMass ? t->GetLeaf(massBranch)->GetValue() : 0.0;

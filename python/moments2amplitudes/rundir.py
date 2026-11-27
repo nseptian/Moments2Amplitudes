@@ -17,6 +17,7 @@ runs/<project_name>/
 """
 
 from __future__ import annotations
+import re
 import shutil
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -93,22 +94,34 @@ def get_run_directory(config: FitConfig, run_dir_override: Optional[str] = None)
     Otherwise defaults to runs/<project_name>.
     Supports {t_bin} and {tbin} templating in output directory paths,
     and automatically nests under the t-bin subdirectory when executing for a specific t-bin.
+    Prevents erroneous nesting when target_dir already points to a t-bin directory.
     """
     t_tag = config.dataset.t_bin or ""
+    all_tbins = set(config.dataset.get_t_bins()) if hasattr(config.dataset, "get_t_bins") else set()
+
+    def _is_tbin_name(name: str) -> bool:
+        return bool(re.match(r"^t\d{6}$", name)) or (name in all_tbins)
+
+    def _resolve_target_dir(base_raw: str, has_tmpl: bool) -> Path:
+        target = Path(base_raw)
+        if t_tag and not has_tmpl:
+            if _is_tbin_name(target.name):
+                if target.name != t_tag:
+                    target = target.parent / t_tag
+            else:
+                target = target / t_tag
+        return target
+
     if run_dir_override:
         override_str = str(run_dir_override)
         has_template = "{t_bin}" in override_str or "{tbin}" in override_str
         raw = override_str.replace("{t_bin}", t_tag).replace("{tbin}", t_tag)
-        target_dir = Path(raw)
-        if t_tag and not has_template and target_dir.name != t_tag:
-            target_dir = target_dir / t_tag
+        target_dir = _resolve_target_dir(raw, has_template)
     elif config.multi_start.output_dir and config.multi_start.output_dir not in ("logs", "run/central_fits", ""):
         raw_out = config.multi_start.output_dir
         has_template = "{t_bin}" in raw_out or "{tbin}" in raw_out
         raw = raw_out.replace("{t_bin}", t_tag).replace("{tbin}", t_tag)
-        target_dir = Path(raw)
-        if t_tag and not has_template and target_dir.name != t_tag:
-            target_dir = target_dir / t_tag
+        target_dir = _resolve_target_dir(raw, has_template)
     else:
         proj_name = config.project.name or "fit_run"
         if t_tag:

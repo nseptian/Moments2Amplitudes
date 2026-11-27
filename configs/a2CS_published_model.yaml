@@ -21,8 +21,7 @@ dataset:
   use_covariance: true
 
 chi2:
-  included_l: [0, 2, 4]
-  excluded_l: []
+  included_L: [0, 2, 4]
   max_l: 4
 
 waves:
@@ -89,11 +88,11 @@ minimizer:
 
 multi_start:
   enabled: true
-  n_starts: 100
-  n_threads: 20
+  n_starts: 5000
+  n_threads: 50
   n_tbin_workers: 5
   output_dir: "logs_a2CS_published_model"
-  plateau_delta_chi2: 0.05
+  plateau_delta_chi2: 0.1
   seed_offset: 1
 
 mcmc_propagation:

@@ -98,6 +98,56 @@ class TestSummary(unittest.TestCase):
         self.assertTrue(txt_file.is_file())
         self.assertTrue(md_file.is_file())
 
+    def test_summary_seed_range_and_plateau(self):
+        cfg = FitConfig()
+        cfg.project.name = "seed_range_summary_proj"
+        cfg.multi_start.seed_range = [5001, 10000]
+        rundir = RunDirectory(self.temp_dir / "seed_summary_run").ensure_directories()
+
+        summary = FitSummary(cfg, rundir)
+        summary.chi2 = 85.2
+        summary.total_starts = 10000
+        summary.converged_starts = 9800
+        summary.plateau_count = 450
+        summary.status = 0
+        summary.is_valid = True
+
+        ascii_out = summary.generate_ascii_table()
+        self.assertIn("10000", ascii_out)
+        self.assertIn("450", ascii_out)
+
+        md_out = summary.generate_markdown_report()
+        self.assertIn("10000", md_out)
+        self.assertIn("450", md_out)
+
+    def test_summary_at_limit_marked_not_converged(self):
+        cfg = FitConfig()
+        cfg.project.name = "limit_summary_proj"
+        rundir = RunDirectory(self.temp_dir / "limit_summary_run").ensure_directories()
+
+        summary = FitSummary(cfg, rundir)
+        summary.chi2 = 250.0
+        summary.status = 0
+        summary.is_valid = False
+        summary.at_limit = True
+
+        ascii_out = summary.generate_ascii_table()
+        self.assertIn("NOT CONVERGED (AT LIMIT, Status 0)", ascii_out)
+
+        md_out = summary.generate_markdown_report()
+        self.assertIn("Failed (Hit Limit, Status 0)", md_out)
+
+        # Verify load_from_log marks at_limit=1 as invalid even if is_valid=1 appeared
+        log_file = self.temp_dir / "fit_seed_1.log"
+        log_file.write_text(
+            "[FIT][MIN] seed=1 is_valid=1 is_valid_error=0 status=0 at_limit=1\n"
+            "[FIT][RESULT] param=MD_shared_a2_1320_Width value=0.25 error=0.01\n"
+        )
+        summary2 = FitSummary(cfg, rundir)
+        self.assertTrue(summary2.load_from_log(log_file))
+        self.assertTrue(summary2.at_limit)
+        self.assertFalse(summary2.is_valid)
+
 
 if __name__ == "__main__":
     unittest.main()

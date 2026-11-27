@@ -1,0 +1,150 @@
+# Moments2Amplitudes Configuration: S-Piecewise + D-TwoBreitWigner (Fit a2(1700))
+# Physics:
+#   - Kinematic phase-space factor sqrt(rho_etapi) and Blatt-Weisskopf barrier factors.
+#   - L = 0 (S-wave): Piecewise amplitude (random magnitude in [0, 350], random unbounded phase).
+#   - L = 1 (P-wave): Fixed to zero.
+#   - L = 2 (D-wave): a2(1320) + a2(1700) Two Breit-Wigners:
+#     * a2(1320): relativistic BW with L=2 eta-pi barrier & dynamic width
+#     * a2(1700): peak-normalized BW with constant total width + L=2 eta-pi barrier in numerator
+#     Both a2(1320) and a2(1700) mass/width float; a2(1700) is stabilized with PDG Gaussian constraints
+#     and an extended upper mass window (up to 1.94 GeV).
+#   - Global phase gauge: a2(1320) phase anchored to 0.0; S-wave and a2(1700) phases float freely.
+#   - Included moments: even moments only, L in [0, 2, 4].
+
+project:
+  name: "SPiecewise_DTwoBreitWigner_FitA21700"
+  tag: "spiecewise_dtwobreitwigner_fita21700"
+  description: "Even-moment (L=0,2,4) fit with S-wave piecewise, P-wave fixed to zero, and D-wave a2(1320) + Gaussian-constrained a2(1700) up to 1.94 GeV"
+
+dataset:
+  moments_dir: "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200_FixedCov_Lmax4_InitValueScale1.0_step0.8"
+  tbins: ["t010020", "t020032", "t032050", "t050075", "t075100"]  # Runnable in parallel across t-bins
+  results_filename: "ResultsBruMcmcFixedCovariance.root"
+  bin_prefix: "Mpi0eta"
+  var_bin_prefix: ""
+  mass_bins:
+    min: 0.86
+    max: 1.94
+    step: 0.04
+  use_covariance: true
+
+chi2:
+  included_L: [0, 2, 4]  # Even moments only (S and D self + S-D interference)
+  max_l: 4
+
+waves:
+  # L = 0: Piecewise S-wave (random magnitude covering peak ~314 in [0, 350], random unbounded phase)
+  - l: 0
+    name: "S-wave"
+    type: "piecewise"
+    init:
+      strategy: "random"
+      magnitude:
+        strategy: "random"
+        min: 0.0
+        max: 350.0
+      phase:
+        strategy: "random"
+        min: -3.14159265
+        max: 3.14159265
+        fixed: false
+
+  # L = 1: P-wave fixed to zero
+  - l: 1
+    name: "P-wave"
+    type: "piecewise"
+    init:
+      fixed_zero: true
+
+  # L = 2: D-wave two Breit-Wigners: a2(1320) + a2(1700) with L=2 barrier factors and kinematic factor
+  - l: 2
+    name: "D-wave"
+    type: "mass_dependent"
+    model: "barrier_two_breit_wigner"
+    barrier_l: 2
+    barrier_radius: 5.0677
+    formula: "sqrt(rho_etapi) * (barrier_bw_etapi(k1, Mass1, Width1, 2) * exp(i * phase1) + peak_const_barrier_bw_etapi(k2, Mass2, Width2, 2) * exp(i * phase2))"
+    parameters: ["k1", "Mass1", "Width1", "phase1", "k2", "Mass2", "Width2", "phase2"]
+    poly_order: -1
+    resonances:
+      - name: "a2_1320"
+        mass: 1.318
+        width: 0.107
+        mass_fixed: false
+        width_fixed: false
+        mass_limits: [1.20, 1.50]
+        width_limits: [0.05, 0.25]
+        phase: 0.0
+        phase_fixed: true      # General phase reference fixed to 0.0
+        shared_phase: true     # Shared phase among waves in the same reflectivity
+      - name: "a2_1700"
+        mass: 1.706
+        width: 0.380
+        mass_fixed: false
+        width_fixed: false
+        mass_limits: [1.45, 1.95]
+        width_limits: [0.10, 0.80]
+        gaussian_constraints:
+          mass: [1.706, 0.014]   # PDG: 1706 +- 14 MeV
+          width: [0.380, 0.055]  # PDG: 380 +60/-50 MeV (symmetrized)
+        phase: 0.0
+        phase_fixed: false     # Floating relative phase
+        shared_phase: true     # Shared phase among waves in the same reflectivity
+    init:
+      strategy: "random"
+      coupling:
+        strategy: "random"
+        min: -120.0
+        max: 120.0
+      phase:
+        strategy: "random"
+        fixed: false
+
+minimizer:
+  algorithm: "Minuit2"
+  strategy: 1
+  tolerance: 1.0e-3
+  max_calls: 1000000
+  print_level: 0
+
+multi_start:
+  enabled: true
+  n_starts: 10000
+  # seed_range: [5001, 10000]
+  skip_existing: true
+  n_threads: 50
+  n_tbin_workers: 5
+  output_dir: "logs_SPiecewise_DTwoBreitWigner_FitA21700"
+  plateau_delta_chi2: 0.1
+  seed_offset: 1
+
+mcmc_propagation:
+  enabled: false
+  burn_in: 0
+  target_entries: 200
+  n_workers: 8
+  n_tbin_workers: 5
+  output_file: "mcmc_propagation_spiecewise_dtwobreitwigner_fita21700_results.root"
+  log_dir: "logs_SPiecewise_DTwoBreitWigner_FitA21700/mcmc_fits"
+
+plotting:
+  enabled: true
+  style: "default"
+  moments_vs_t: true
+  moments_vs_t_sharey: false
+  amplitudes_vs_t: true
+  amplitudes_vs_t_sharey: false
+  distributions: true
+
+cross_section:
+  enabled: false
+  resonance: "a2_1320"
+  branching_ratio: 0.0565
+  luminosity: 257.4
+  luminosity_unit: "pb^-1"
+  mass_limits: [0.86, 1.94]
+  has_barrier: true
+  barrier_l: 2
+  barrier_radius: 5.0677
+  phase1_comparison: true
+  propagate_mcmc: true

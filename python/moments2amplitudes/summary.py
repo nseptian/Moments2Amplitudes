@@ -50,6 +50,7 @@ class FitSummary:
         self.ndf: int = 1
         self.is_valid: bool = False
         self.is_valid_error: bool = False
+        self.at_limit: bool = False
         self.status: int = -1
         self.best_seed: int = -1
         self.total_starts: int = 0
@@ -193,11 +194,15 @@ class FitSummary:
                             self.is_valid = (token.split("=")[1] == "1")
                         elif token.startswith("is_valid_error="):
                             self.is_valid_error = (token.split("=")[1] == "1")
+                        elif token.startswith("at_limit="):
+                            self.at_limit = (token.split("=")[1] == "1")
                         elif token.startswith("status="):
                             try:
                                 self.status = int(token.split("=")[1])
                             except ValueError:
                                 pass
+                    if self.at_limit:
+                        self.is_valid = False
 
         if not param_dict:
             return False
@@ -234,6 +239,10 @@ class FitSummary:
                 self.chi2 = float(c_tree["chi2"].array()[0])
                 self.is_valid = bool(c_tree["isValid"].array()[0])
                 self.is_valid_error = bool(c_tree["isValidError"].array()[0])
+                if "atLimit" in c_tree:
+                    self.at_limit = bool(c_tree["atLimit"].array()[0])
+                    if self.at_limit:
+                        self.is_valid = False
                 self.status = int(c_tree["Status"].array()[0])
 
             if "all_params" in f:
@@ -268,6 +277,9 @@ class FitSummary:
                         mask = (np.array(mtree["Status"].array()) == 0)
                     elif "isValid" in mtree:
                         mask = (np.array(mtree["isValid"].array()) == 1)
+                    if "atLimit" in mtree:
+                        lim_mask = (np.array(mtree["atLimit"].array()) == 0)
+                        mask = lim_mask if mask is None else (mask & lim_mask)
 
                     w_arr = None
                     if "weight" in mtree:
@@ -314,6 +326,9 @@ class FitSummary:
             self.chi2 = float(getattr(c_tree, "chi2", 0.0))
             self.is_valid = bool(getattr(c_tree, "isValid", False))
             self.is_valid_error = bool(getattr(c_tree, "isValidError", False))
+            self.at_limit = bool(getattr(c_tree, "atLimit", False))
+            if self.at_limit:
+                self.is_valid = False
             self.status = int(getattr(c_tree, "Status", -1))
 
         p_tree = f.Get("all_params")
@@ -349,8 +364,15 @@ class FitSummary:
         lines.append(f" Moments2Amplitudes Fit Summary Report")
         lines.append(f" Project:      {self.config.project.name}")
         lines.append(f" Minimum Chi2: {self.chi2:.4f}")
-        status_str = "SUCCESS (0)" if self.status == 0 and self.is_valid else f"STATUS {self.status}"
+        if self.status == 0 and self.is_valid and not self.at_limit:
+            status_str = "SUCCESS (0)"
+        elif self.at_limit:
+            status_str = f"NOT CONVERGED (AT LIMIT, Status {self.status})"
+        else:
+            status_str = f"FAILED (Status {self.status}, Valid {int(self.is_valid)})"
         lines.append(f" Status:       {status_str} | Valid Errors: {int(self.is_valid_error)}")
+        if self.total_starts > 0:
+            lines.append(f" Starts:       {self.total_starts} total ({self.converged_starts} converged, {self.plateau_count} in plateau)")
         lines.append(div)
         lines.append(f"{'Parameter':<32} {'Nominal':>12} {'Minuit Err':>12} {'MCMC (-/+)':>16}")
         lines.append("-" * 80)
@@ -370,18 +392,28 @@ class FitSummary:
 
     def generate_markdown_report(self) -> str:
         """Produce a GitHub-flavored Markdown summary report."""
+        if self.status == 0 and self.is_valid and not self.at_limit:
+            md_status_str = "Converged (0)"
+        elif self.at_limit:
+            md_status_str = f"Failed (Hit Limit, Status {self.status})"
+        else:
+            md_status_str = f"Failed ({self.status})"
         lines = [
             f"# Fit Summary: {self.config.project.name}",
             "",
             f"- **Minimum \\(\\chi^2\\)**: `{self.chi2:.4f}`",
-            f"- **Minuit Status**: `{'Converged (0)' if self.status == 0 else f'Failed ({self.status})'}`",
+            f"- **Minuit Status**: `{md_status_str}`",
             f"- **Valid Covariance / Errors**: `{self.is_valid_error}`",
+        ]
+        if self.total_starts > 0:
+            lines.append(f"- **Multi-Start Trials**: `{self.total_starts}` total (`{self.converged_starts}` converged, `{self.plateau_count}` in plateau)")
+        lines.extend([
             "",
             "## Fitted Parameters",
             "",
             "| Parameter | Raw Name | Nominal Value | Minuit Error | MCMC 68% Credible Interval | Status |",
             "| :--- | :--- | :---: | :---: | :---: | :---: |",
-        ]
+        ])
 
         for p in self.parameters:
             err_str = f"± {p['error']:.5f}" if p["error"] > 0 else "*fixed*"
