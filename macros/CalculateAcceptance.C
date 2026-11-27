@@ -7,7 +7,7 @@ R__ADD_INCLUDE_PATH(/d/grid17/septian/EtaPi0Analysis/macros)
 #include "CrossSectionUtils.C"
 #include <TSystem.h>
 
-void CalculateAcceptance_m080200(
+void CalculateAcceptance(
     int tbin_index = 0,
     TString custom_run_dir = "",
     TString result_file_name = "",
@@ -42,7 +42,8 @@ void CalculateAcceptance_m080200(
     // Resolve fit result directory
     TString fit_dir = custom_run_dir;
     if (fit_dir.IsNull()) {
-        fit_dir = "/d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200/" + tbin_name + "/";
+        fit_dir = Form("/d/home/septian/Moments2Amplitudes/run/MomentFit_m%03d%03d_FixedCov_Lmax%d_InitValueScale1.0_step1.0/%s/",
+                       (int)TMath::Nint(m_min * 100), (int)TMath::Nint(m_max * 100), maxL, tbin_name.Data());
     } else {
         if (!fit_dir.EndsWith("/")) fit_dir += "/";
         if (!fit_dir.Contains(tbin_name)) {
@@ -78,8 +79,7 @@ void CalculateAcceptance_m080200(
     } else {
         std::vector<TString> candidate_dirs = {
             "/d/home/septian/Moments2Amplitudes/data/data/nominal_tbins/",
-            "/d/grid17/septian/EtaPi0Analysis/data/nominal_tbins/",
-            "/d/grid17/septian/EtaPi0Analysis/data/m080200/"
+            "/d/grid17/septian/EtaPi0Analysis/data/nominal_tbins/"
         };
         for (const auto& cand : candidate_dirs) {
             if (!gSystem->AccessPathName(cand + weights_fname)) {

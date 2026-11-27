@@ -816,7 +816,7 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
         if use_legacy_alias:
             cfg_data["moment_fit"].pop("calculate_acceptance", None)
             cfg_data["moment_fit"]["acceptance_macro"] = (
-                calculate_acceptance or str(root / "macros" / "CalculateAcceptance_m080200.C")
+                calculate_acceptance or str(root / "macros" / "CalculateAcceptance.C")
             )
         elif calculate_acceptance is not None:
             cfg_data["moment_fit"]["calculate_acceptance"] = calculate_acceptance
@@ -827,20 +827,29 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
 
     def test_legacy_m080200_shell_script_removed(self):
         root = self._repo_root()
-        self.assertFalse((root / "macros" / "legacy" / "RunMomentFit_m080200.sh").exists())
+        leftover_m080200 = list((root / "macros").rglob("*_m080200*"))
+        self.assertEqual(leftover_m080200, [], f"Unexpected _m080200 files under macros/: {leftover_m080200}")
+        calc_acc = root / "macros" / "CalculateAcceptance.C"
+        self.assertTrue(calc_acc.is_file())
+        self.assertIn("void CalculateAcceptance(", calc_acc.read_text(encoding="utf-8"))
 
         for rel_path in [
             "macros/RunMomentFit.sh",
             "macros/MonitorMomentFit.py",
             "macros/MomentFit.C",
+            "macros/CalculateAcceptance.C",
+            "python/moments2amplitudes/momentfit/config.py",
             "python/moments2amplitudes/momentfit/stage3_moment_fit.py",
             "python/moments2amplitudes/momentfit/runner.py",
             "python/moments2amplitudes/cli.py",
+            "configs/momentfit_nominal.yaml",
+            "configs/momentfit_test.yaml",
             "docs/MOMENTFIT.md",
         ]:
             content = (root / rel_path).read_text(encoding="utf-8")
             self.assertNotIn("RunMomentFit_m080200", content, f"Unexpected RunMomentFit_m080200 in {rel_path}")
             self.assertNotIn("MomentFit_m080200(", content, f"Unexpected MomentFit_m080200( in {rel_path}")
+            self.assertNotIn("CalculateAcceptance_m080200", content, f"Unexpected CalculateAcceptance_m080200 in {rel_path}")
             self.assertNotIn("--acceptance-macro", content, f"Unexpected --acceptance-macro in {rel_path}")
 
     def test_acceptance_options_validate_stage3_and_monitor(self):
@@ -854,7 +863,7 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg_path, rdir = self._write_sandbox_safe_config(tmpdir)
             cfg = load_momentfit_config(str(cfg_path))
-            self.assertTrue(cfg.moment_fit.calculate_acceptance.endswith("CalculateAcceptance_m080200.C"))
+            self.assertTrue(cfg.moment_fit.calculate_acceptance.endswith("CalculateAcceptance.C"))
             self.assertEqual(cfg.moment_fit.acceptance_macro, cfg.moment_fit.calculate_acceptance)
             self.assertFalse(cfg.moment_fit.skip_acceptance)
             self.assertFalse(cfg.moment_fit.force_acceptance)
@@ -863,7 +872,7 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
             # Legacy YAML key `acceptance_macro` still works as alias
             alias_cfg_path, _ = self._write_sandbox_safe_config(tmpdir, use_legacy_alias=True)
             alias_cfg = load_momentfit_config(str(alias_cfg_path))
-            self.assertTrue(alias_cfg.moment_fit.calculate_acceptance.endswith("CalculateAcceptance_m080200.C"))
+            self.assertTrue(alias_cfg.moment_fit.calculate_acceptance.endswith("CalculateAcceptance.C"))
 
             # Stage 3 command forwarding
             cfg.moment_fit.skip_acceptance = True
@@ -906,7 +915,7 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
                     dry_run=True,
                 )
             self.assertEqual(rc_acc, 0)
-            self.assertIn("CalculateAcceptance_m080200.C", buf_stage.getvalue())
+            self.assertIn("CalculateAcceptance.C", buf_stage.getvalue())
 
             buf_mon = io.StringIO()
             with contextlib.redirect_stdout(buf_mon):

@@ -275,7 +275,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--calculate-acceptance", nargs="?", const=True, default=None, metavar="MACRO_PATH",
-        help="Run ROOT acceptance calculation only (optionally specifying macro path; default: macros/CalculateAcceptance_m080200.C)."
+        help="Run ROOT acceptance calculation only (optionally specifying macro path; default: macros/CalculateAcceptance.C)."
     )
     parser.add_argument(
         "--data-dir", type=str, default="",
@@ -384,8 +384,8 @@ def run_calculate_acceptance(
     if env_macro:
         macro_candidates.append(env_macro)
     macro_candidates.extend([
-        os.path.join(repo_root, "macros/CalculateAcceptance_m080200.C"),
-        "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance_m080200.C",
+        os.path.join(repo_root, "macros/CalculateAcceptance.C"),
+        "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance.C",
     ])
     for cand in macro_candidates:
         if cand and os.path.isfile(cand):

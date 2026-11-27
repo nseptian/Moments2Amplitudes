@@ -713,7 +713,7 @@ MACRO_PATH="$SCRIPT_DIR/MomentFit.C"
 MONITOR_SCRIPT="$SCRIPT_DIR/MonitorMomentFit.py"
 COLLECTOR_SCRIPT="$SCRIPT_DIR/MomentFitCollector.py"
 if [ -z "$ACCEPTANCE_MACRO" ]; then
-    ACCEPTANCE_MACRO="${MOM2AMP_CALCULATE_ACCEPTANCE:-$SCRIPT_DIR/CalculateAcceptance_m080200.C}"
+    ACCEPTANCE_MACRO="${MOM2AMP_CALCULATE_ACCEPTANCE:-$SCRIPT_DIR/CalculateAcceptance.C}"
 fi
 
 # 5. Resolve Output Directory & Mass Binning Auto-Detection

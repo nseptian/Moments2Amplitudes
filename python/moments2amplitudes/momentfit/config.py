@@ -244,7 +244,7 @@ class BruFitStageConfig:
     run_script: str = "/d/home/septian/Moments2Amplitudes/macros/RunMomentFit.sh"
     monitor_script: str = "/d/home/septian/Moments2Amplitudes/macros/MonitorMomentFit.py"
     collector_script: str = "/d/home/septian/Moments2Amplitudes/macros/MomentFitCollector.py"
-    calculate_acceptance: str = "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance_m080200.C"
+    calculate_acceptance: str = "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance.C"
     skip_acceptance: bool = False
     force_acceptance: bool = False
 

@@ -53,7 +53,7 @@ flowchart LR
 3. **Stage 3 (`moment_fit`)**:
    - Launches BruFit MCMC fits (defaulting to `BruMcmcFixedCovariance` with regularized linear algebra covariance from Stage 2, or optional adaptive `BruMcmcCovariance` via `fixed_covariance: false`).
    - Executes `macros/RunMomentFit.sh` and `macros/MomentFit.C` using system ROOT 6.36 and BruFit, forwarding all YAML-configurable MCMC, frame, acceptance, tuning, and bailout settings via `MOM2AMP_*` environment variables.
-   - Supports parallel t-bin fitting, real-time log monitoring (`macros/MonitorMomentFit.py`, including automated BruFit binner restoration via `CrossSectionUtils.C` / `CalculateAcceptance_m080200.C` and `MomentFit.C(..., run_fit_flag=false)`), bounded-memory 2D-FFT ESS/autocorrelation diagnostics, and targeted single-bin retry script generation (`macros/MomentFitCollector.py`).
+   - Supports parallel t-bin fitting, real-time log monitoring (`macros/MonitorMomentFit.py`, including automated BruFit binner restoration via `CrossSectionUtils.C` / `CalculateAcceptance.C` and `MomentFit.C(..., run_fit_flag=false)`), bounded-memory 2D-FFT ESS/autocorrelation diagnostics, and targeted single-bin retry script generation (`macros/MomentFitCollector.py`).
 
 4. **Stage 4 (`plot`)**:
    - Generates publication-quality unnormalized moments vs mass plots:
@@ -109,7 +109,7 @@ pixi run momentfit configs/momentfit_nominal.yaml --monitor --tbin t010020 --max
 
 # Run standalone acceptance calculation directly (uses YAML macro or optional path)
 pixi run momentfit configs/momentfit_nominal.yaml --calculate-acceptance --max-l 4
-pixi run momentfit --run-dir run/MomentFit_m080200_FixedCov_Lmax4_InitValueScale1.0_step1.0/ --calculate-acceptance macros/CalculateAcceptance_m080200.C
+pixi run momentfit --run-dir run/MomentFit_m080200_FixedCov_Lmax4_InitValueScale1.0_step1.0/ --calculate-acceptance macros/CalculateAcceptance.C
 
 # Collect ESS/acceptance diagnostics and generate RunMomentFit_retry.sh
 pixi run momentfit configs/momentfit_nominal.yaml --collect --no-exec --max-l 8
@@ -242,7 +242,7 @@ moment_fit:
   run_script: "/d/home/septian/Moments2Amplitudes/macros/RunMomentFit.sh"
   monitor_script: "/d/home/septian/Moments2Amplitudes/macros/MonitorMomentFit.py"
   collector_script: "/d/home/septian/Moments2Amplitudes/macros/MomentFitCollector.py"
-  calculate_acceptance: "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance_m080200.C"
+  calculate_acceptance: "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance.C"
   skip_acceptance: false
   force_acceptance: false
   output_dir_template: "/d/home/septian/Moments2Amplitudes/run/MomentFit_m{tag_min:03d}{tag_max:03d}_FixedCov_Lmax{maxL}_InitValueScale{init_scale:.1f}_step{step:.1f}/"
@@ -328,7 +328,7 @@ All required macros reside directly in `/d/home/septian/Moments2Amplitudes/macro
 | `RunMomentFit.sh` | General orchestration shell script supporting arbitrary mass ranges, `--config <yaml>` (`-c`) routing into the Python YAML runner, concurrency, `MOM2AMP_*` environment export, cancellation (`--cancel`), and monitoring (replaces the removed legacy mass-specific shell script). |
 | `MonitorMomentFit.py` | Real-time monitoring script verifying `MCMCTree` completion, computing bounded-memory 2D-FFT ESS/autocorrelation, drawing diagnostic plots, and restoring missing BruFit binner files before acceptance evaluation. |
 | `MomentFitCollector.py` | Post-fit diagnostic evaluator and targeted refit generator supporting `min_ess_threshold`, per-`max_l`/adaptive Gibbs sizing, aligned full-vector vs. Gibbs acceptance rules, proportional burn-in (`burnin_fraction`), iteration scaling up to `max_retry_iters`, and opt-in SPD covariance reconditioning (`recondition_covariance`). |
-| `CalculateAcceptance_m080200.C` | Acceptance normalization macro supporting `force_rebin` and automated BruFit binner reconstruction via `CrossSectionUtils.C`. |
+| `CalculateAcceptance.C` | General acceptance normalization macro supporting arbitrary mass binning, `force_rebin`, and automated BruFit binner reconstruction via `CrossSectionUtils.C`. |
 | `CrossSectionUtils.C` | Binner validation (`IsBinsConfigValid`), missing-tree restoration, and cross-section extraction utilities for BruFit `HS::FIT::Bins`. |
 
 ---
