@@ -660,6 +660,12 @@ def cmd_momentfit(args: argparse.Namespace) -> int:
         elif "monitor" not in stages:
             stages.append("monitor")
 
+    if getattr(args, "calculate_acceptance", None) is not None:
+        if stages is None:
+            stages = ["calculate_acceptance"]
+        elif "calculate_acceptance" not in stages:
+            stages.append("calculate_acceptance")
+
     if getattr(args, "retry", False):
         if stages is None:
             stages = ["retry"]
@@ -713,7 +719,7 @@ def cmd_momentfit(args: argparse.Namespace) -> int:
         replot_from_root=getattr(args, "replot_from_root", False),
         plot_cov=getattr(args, "plot_cov", False) or getattr(args, "plot_covariance", False),
         plot_cov_bins=getattr(args, "plot_cov_bins", None),
-        acceptance_macro=getattr(args, "acceptance_macro", None),
+        calculate_acceptance=getattr(args, "calculate_acceptance", None),
         skip_acceptance=getattr(args, "skip_acceptance", False),
         force_acceptance=getattr(args, "force_acceptance", False),
     )
@@ -862,6 +868,7 @@ def main():
             "linear_algebra", "export_covariance", "moment_fit",
             "plot", "plotting",
             "monitor", "status",
+            "calculate_acceptance", "calc_acceptance", "acceptance",
             "collect", "collector", "diagnostics",
             "retry", "refit", "retries",
             "plot_covariance", "plot_cov", "cov",
@@ -901,16 +908,22 @@ def main():
     p_mfit.add_argument("--validate", action="store_true", help="Validate configuration file and prerequisite paths, then exit")
     p_mfit.add_argument("--overwrite", action="store_true", help="Overwrite existing output directories without prompting")
     p_mfit.add_argument("--force-integral", action="store_true", help="Force recalculation of acceptance integral matrices in Stage 1")
-    p_mfit.add_argument("--acceptance-macro", type=str, default=None, help="Override path to CalculateAcceptance macro used during monitoring")
+    p_mfit.add_argument(
+        "--calculate-acceptance",
+        dest="calculate_acceptance",
+        nargs="?",
+        const=True,
+        default=None,
+        metavar="MACRO_PATH",
+        help="Run acceptance calculation directly (optionally overriding the CalculateAcceptance macro path)",
+    )
     p_mfit.add_argument("--skip-acceptance", action="store_true", help="Skip acceptance calculation after monitoring/fitting")
     p_mfit.add_argument("--force-acceptance", action="store_true", help="Force acceptance calculation even when not all bins meet convergence")
 
     raw_argv = sys.argv[1:]
     if len(raw_argv) >= 2 and raw_argv[0] in ("momentfit", "pipeline"):
-        if raw_argv[1].lower() in ("retry", "refit"):
-            raw_argv = [raw_argv[0], "--retry"] + raw_argv[2:]
-        elif len(raw_argv) >= 3 and raw_argv[1].endswith((".yaml", ".yml")) and raw_argv[2].lower() in ("retry", "refit"):
-            raw_argv = [raw_argv[0], raw_argv[1], "--retry"] + raw_argv[3:]
+        from .momentfit.runner import preprocess_momentfit_argv
+        raw_argv = [raw_argv[0]] + preprocess_momentfit_argv(raw_argv[1:])
 
     args = parser.parse_args(raw_argv)
     if not args.command:

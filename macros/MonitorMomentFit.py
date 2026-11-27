@@ -274,8 +274,8 @@ def parse_arguments():
         help="Number of mass bins for acceptance calculation (auto-inferred from mass subdirectories if omitted)."
     )
     parser.add_argument(
-        "--acceptance-macro", type=str, default=None,
-        help="Path to ROOT acceptance macro (default: macros/CalculateAcceptance_m080200.C)."
+        "--calculate-acceptance", nargs="?", const=True, default=None, metavar="MACRO_PATH",
+        help="Run ROOT acceptance calculation only (optionally specifying macro path; default: macros/CalculateAcceptance_m080200.C)."
     )
     parser.add_argument(
         "--data-dir", type=str, default="",
@@ -380,6 +380,9 @@ def run_calculate_acceptance(
     macro_candidates = []
     if acceptance_macro:
         macro_candidates.append(acceptance_macro)
+    env_macro = os.environ.get("MOM2AMP_CALCULATE_ACCEPTANCE", "").strip()
+    if env_macro:
+        macro_candidates.append(env_macro)
     macro_candidates.extend([
         os.path.join(repo_root, "macros/CalculateAcceptance_m080200.C"),
         "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance_m080200.C",
@@ -1057,6 +1060,130 @@ def _worker_monitor_single_tbin(kwargs: dict) -> tuple[str, float, str, bool]:
     return tbin_name, elapsed, buffer.getvalue(), success
 
 
+def calculate_acceptance_single_tbin(
+    tbin_name: str,
+    tbin_dir: str,
+    root_filename: str | None = None,
+    max_l: int = 4,
+    m_min: float | None = None,
+    m_max: float | None = None,
+    n_bins: int | None = None,
+    acceptance_macro: str | None = None,
+    custom_data_dir: str = "",
+    skip_acceptance: bool = False,
+    force_acceptance: bool = False,
+) -> bool:
+    """Run standalone acceptance calculation for a single t-bin directory."""
+    if skip_acceptance:
+        print(f"ℹ️  Skipping acceptance calculation for {tbin_name} (--skip-acceptance).")
+        return True
+
+    status_info = FitResults.print_fit_status(
+        tbin_dir,
+        mcmc=None,
+        show_diagnostics=False
+    )
+    n_total = len(status_info.get('bins', []))
+    n_success = len(status_info.get('success_bins', []))
+    if n_total > 0 and n_success < n_total:
+        if force_acceptance:
+            print(f"⚠️  Caution: {n_success}/{n_total} bins succeeded in {tbin_name}; running acceptance (--force-acceptance).")
+        else:
+            print(f"ℹ️  Note: {n_success}/{n_total} bins succeeded in {tbin_name}; running requested acceptance calculation.")
+
+    eff_m_min, eff_m_max, eff_n_bins = _infer_mass_binning(tbin_dir, m_min, m_max, n_bins)
+    return run_calculate_acceptance(
+        tbin_name=tbin_name,
+        tbin_dir=tbin_dir,
+        root_filename=root_filename,
+        max_l=max_l,
+        m_min=eff_m_min,
+        m_max=eff_m_max,
+        n_bins=eff_n_bins,
+        custom_data_dir=custom_data_dir,
+        acceptance_macro=acceptance_macro,
+    )
+
+
+def _worker_calculate_acceptance_single_tbin(kwargs: dict) -> tuple[str, float, str, bool]:
+    """Worker process helper to run standalone acceptance calculation for one t-bin."""
+    tbin_name = kwargs.get('tbin_name', 'unknown')
+    t0 = time.time()
+
+    buffer = io.StringIO()
+    success = False
+    with redirect_stdout(buffer), redirect_stderr(buffer):
+        try:
+            success = calculate_acceptance_single_tbin(**kwargs)
+        except Exception as e:
+            success = False
+            print(f"\n❌ Exception while calculating acceptance for {tbin_name}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    elapsed = time.time() - t0
+    return tbin_name, elapsed, buffer.getvalue(), success
+
+
+def execute_calculate_acceptance_cycle(args, run_dir: str) -> bool:
+    """Run standalone acceptance calculation across discovered t-bin directories."""
+    tbin_dirs = discover_tbin_directories(run_dir, args.tbin)
+    if not tbin_dirs:
+        print(f"ERROR: No t-bin directories found in '{run_dir}' matching tbin='{args.tbin}'.")
+        return False
+
+    calc_val = getattr(args, 'calculate_acceptance', None)
+    acc_macro = calc_val if isinstance(calc_val, str) else None
+
+    task_kwargs_list = [
+        {
+            'tbin_name': tbin_name,
+            'tbin_dir': tbin_path,
+            'root_filename': args.root_filename,
+            'max_l': args.max_l,
+            'm_min': getattr(args, 'm_min', None),
+            'm_max': getattr(args, 'm_max', None),
+            'n_bins': getattr(args, 'n_bins', None),
+            'acceptance_macro': acc_macro,
+            'custom_data_dir': getattr(args, 'data_dir', ""),
+            'skip_acceptance': getattr(args, 'skip_acceptance', False),
+            'force_acceptance': getattr(args, 'force_acceptance', False),
+        }
+        for tbin_name, tbin_path in tbin_dirs
+    ]
+
+    if len(task_kwargs_list) == 1 or not getattr(args, 'parallel_tbins', True):
+        all_ok = True
+        for kw in task_kwargs_list:
+            if not calculate_acceptance_single_tbin(**kw):
+                all_ok = False
+        return all_ok
+
+    max_workers = min(len(task_kwargs_list), os.cpu_count() or 4, getattr(args, 'max_parallel_tbins', 5) or 5)
+    print(f"\n⚡ Running acceptance calculation for {len(task_kwargs_list)} t-bins in parallel ({max_workers} concurrent workers)...")
+    all_ok = True
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        future_to_tbin = {
+            executor.submit(_worker_calculate_acceptance_single_tbin, kwargs): kwargs['tbin_name']
+            for kwargs in task_kwargs_list
+        }
+        for future in concurrent.futures.as_completed(future_to_tbin):
+            t_name = future_to_tbin[future]
+            try:
+                res_name, elapsed_sec, captured_log, success = future.result()
+                if captured_log.strip():
+                    print(captured_log)
+                if success:
+                    print(f"  [Parallel Finished] ✅ Calculated acceptance for {res_name} in {elapsed_sec:.1f}s")
+                else:
+                    print(f"  [Parallel Finished] ❌ Acceptance calculation failed for {res_name} in {elapsed_sec:.1f}s")
+                    all_ok = False
+            except Exception as exc:
+                print(f"  [Parallel Finished] ❌ Process failed for {t_name}: {exc}")
+                all_ok = False
+    return all_ok
+
+
 def execute_monitoring_cycle(args, run_dir: str):
     tbin_dirs = discover_tbin_directories(run_dir, args.tbin)
     if not tbin_dirs:
@@ -1091,7 +1218,6 @@ def execute_monitoring_cycle(args, run_dir: str):
                 m_min=getattr(args, 'm_min', None),
                 m_max=getattr(args, 'm_max', None),
                 n_bins=getattr(args, 'n_bins', None),
-                acceptance_macro=getattr(args, 'acceptance_macro', None),
                 custom_data_dir=getattr(args, 'data_dir', "")
             )
     else:
@@ -1120,7 +1246,6 @@ def execute_monitoring_cycle(args, run_dir: str):
                 'm_min': getattr(args, 'm_min', None),
                 'm_max': getattr(args, 'm_max', None),
                 'n_bins': getattr(args, 'n_bins', None),
-                'acceptance_macro': getattr(args, 'acceptance_macro', None),
                 'custom_data_dir': getattr(args, 'data_dir', "")
             }
             for tbin_name, tbin_path in tbin_dirs
@@ -1183,6 +1308,10 @@ def main():
         print("\nUpdated Pipeline Status:")
         print_overall_pipeline_summary(run_dir, discover_tbin_directories(run_dir, "all"))
         return
+
+    if getattr(args, 'calculate_acceptance', None) is not None:
+        ok = execute_calculate_acceptance_cycle(args, run_dir)
+        sys.exit(0 if ok else 1)
 
     if args.watch:
         print(f"Starting continuous progress watch on {run_dir} (interval: {args.interval}s, press Ctrl+C to exit)...")

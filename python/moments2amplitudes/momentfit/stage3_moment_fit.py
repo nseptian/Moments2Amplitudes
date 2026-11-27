@@ -121,8 +121,6 @@ def build_moment_fit_command(
     if cfg.moment_fit.overwrite:
         cmd.append("--overwrite")
 
-    if getattr(cfg.moment_fit, "acceptance_macro", ""):
-        cmd.extend(["--acceptance-macro", cfg.moment_fit.acceptance_macro])
     if getattr(cfg.moment_fit, "skip_acceptance", False):
         cmd.append("--skip-acceptance")
     if getattr(cfg.moment_fit, "force_acceptance", False):
@@ -276,6 +274,8 @@ def run_stage3(
         env = os.environ.copy()
         if "BRUFIT" not in env:
             env["BRUFIT"] = cfg.environment.brufit_dir
+        if getattr(cfg.moment_fit, "calculate_acceptance", ""):
+            env["MOM2AMP_CALCULATE_ACCEPTANCE"] = str(cfg.moment_fit.calculate_acceptance)
 
         ret = subprocess.run(cmd, env=env)
         elapsed = time.time() - start_time

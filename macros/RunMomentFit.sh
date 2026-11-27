@@ -174,7 +174,7 @@ Options:
   --max-retry-iters <int>         Retry MCMC iteration cap (default: 200000).
   --burnin-fraction <float>       Retry burn-in fraction of iterations (default: 0.10).
   --recondition-covariance / --no-recondition-covariance  Opt-in empirical covariance reconditioning (default: false).
-  --acceptance-macro <path>       Acceptance macro forwarded to MonitorMomentFit.py.
+  --calculate-acceptance [path]   Run acceptance calculation directly (with optional macro path).
   --skip-acceptance               Skip running acceptance calculation in MonitorMomentFit.py.
   --force-acceptance              Force running acceptance calculation even if not all bins converged.
   --progress-only, --status-only  Print status table without full plot generation.
@@ -526,9 +526,16 @@ while [[ $# -gt 0 ]]; do
             CONFIG_FILE="$2"
             shift 2
             ;;
-        --acceptance-macro)
-            ACCEPTANCE_MACRO="$2"
-            shift 2
+        --calculate-acceptance)
+            MODE="calculate_acceptance"
+            if [ -n "${2:-}" ] && [[ "${2:-}" != -* ]] && [[ "${2:-}" != *.yaml ]] && [[ "${2:-}" != *.yml ]]; then
+                if [[ "${2:-}" == *.C ]] || [ -f "${2:-}" ]; then
+                    ACCEPTANCE_MACRO="$2"
+                    shift 2
+                    continue
+                fi
+            fi
+            shift
             ;;
         --skip-acceptance)
             SKIP_ACCEPTANCE=true
@@ -630,6 +637,10 @@ if [ -n "$CONFIG_FILE" ]; then
         collect_only) RUNNER_ARGS+=(--collect) ;;
         retry_only) RUNNER_ARGS+=(--retry) ;;
         plot_only) RUNNER_ARGS+=(--plot) ;;
+        calculate_acceptance)
+            RUNNER_ARGS+=(--calculate-acceptance)
+            [ -n "$ACCEPTANCE_MACRO" ] && RUNNER_ARGS+=("$ACCEPTANCE_MACRO")
+            ;;
         cancel) RUNNER_ARGS+=(--cancel) ;;
         *) RUNNER_ARGS+=(--stage moment_fit) ;;
     esac
@@ -644,7 +655,6 @@ if [ -n "$CONFIG_FILE" ]; then
     [ "$EXPLICIT_MIN_ESS_THRESHOLD" = true ] && RUNNER_ARGS+=(--min-ess-threshold "$MIN_ESS_THRESHOLD")
     [ "$EXPLICIT_MAX_RETRIES" = true ] && RUNNER_ARGS+=(--max-retries "$MAX_RETRIES")
     [ "$EXPLICIT_MAX_PARALLEL" = true ] && RUNNER_ARGS+=(--max-parallel "$MAX_PARALLEL")
-    [ -n "$ACCEPTANCE_MACRO" ] && RUNNER_ARGS+=(--acceptance-macro "$ACCEPTANCE_MACRO")
     [ "$SKIP_ACCEPTANCE" = true ] && RUNNER_ARGS+=(--skip-acceptance)
     [ "$FORCE_ACCEPTANCE" = true ] && RUNNER_ARGS+=(--force-acceptance)
     [ "$WATCH" = true ] && RUNNER_ARGS+=(--watch --interval "$INTERVAL")
@@ -703,7 +713,7 @@ MACRO_PATH="$SCRIPT_DIR/MomentFit.C"
 MONITOR_SCRIPT="$SCRIPT_DIR/MonitorMomentFit.py"
 COLLECTOR_SCRIPT="$SCRIPT_DIR/MomentFitCollector.py"
 if [ -z "$ACCEPTANCE_MACRO" ]; then
-    ACCEPTANCE_MACRO="$SCRIPT_DIR/CalculateAcceptance_m080200.C"
+    ACCEPTANCE_MACRO="${MOM2AMP_CALCULATE_ACCEPTANCE:-$SCRIPT_DIR/CalculateAcceptance_m080200.C}"
 fi
 
 # 5. Resolve Output Directory & Mass Binning Auto-Detection
@@ -944,7 +954,7 @@ echo "=========================================================="
 # ==============================================================================
 # Step 1: Run Fit Jobs (ONLY if not in monitor_only, collect_only, or plot_only mode)
 # ==============================================================================
-if [ "$MODE" != "monitor_only" ] && [ "$MODE" != "no_fit" ] && [ "$MODE" != "collect_only" ] && [ "$MODE" != "plot_only" ]; then
+if [ "$MODE" != "monitor_only" ] && [ "$MODE" != "no_fit" ] && [ "$MODE" != "collect_only" ] && [ "$MODE" != "plot_only" ] && [ "$MODE" != "calculate_acceptance" ]; then
     mkdir -p "$LOGS_DIR"
 
     # Safety check: Detect if fit logs or results already exist for target t-bins
@@ -1098,8 +1108,7 @@ if [ "$MODE" != "monitor_only" ] && [ "$MODE" != "no_fit" ] && [ "$MODE" != "col
             --burn-in "$MCMC_BURNIN"
         )
         [ -n "$CUSTOM_DATA_DIR" ] && WORKER_MON_ARGS+=(--data-dir "$CUSTOM_DATA_DIR")
-        [ -n "$ACCEPTANCE_MACRO" ] && WORKER_MON_ARGS+=(--acceptance-macro "$ACCEPTANCE_MACRO")
-        "$PYTHON_BIN" "$MONITOR_SCRIPT" "${WORKER_MON_ARGS[@]}" "${EXTRA_MONITOR_ARGS[@]}" > /dev/null 2>&1 || true
+        MOM2AMP_CALCULATE_ACCEPTANCE="$ACCEPTANCE_MACRO" "$PYTHON_BIN" "$MONITOR_SCRIPT" "${WORKER_MON_ARGS[@]}" "${EXTRA_MONITOR_ARGS[@]}" > /dev/null 2>&1 || true
 
         echo "  [$tbin_name] 🏁 Finished pipeline for $tbin_name."
         return $fit_status
@@ -1181,13 +1190,22 @@ run_monitoring() {
         --burn-in "$MCMC_BURNIN"
     )
     [ -n "$CUSTOM_DATA_DIR" ] && MON_ARGS+=(--data-dir "$CUSTOM_DATA_DIR")
-    [ -n "$ACCEPTANCE_MACRO" ] && MON_ARGS+=(--acceptance-macro "$ACCEPTANCE_MACRO")
+
+    if [ "$MODE" = "calculate_acceptance" ]; then
+        if [ -n "$ACCEPTANCE_MACRO" ]; then
+            MON_ARGS+=(--calculate-acceptance "$ACCEPTANCE_MACRO")
+        else
+            MON_ARGS+=(--calculate-acceptance)
+        fi
+        "$PYTHON_BIN" "$MONITOR_SCRIPT" "${MON_ARGS[@]}" "${EXTRA_MONITOR_ARGS[@]}"
+        return $?
+    fi
 
     if [ "$WATCH" = true ]; then
         MON_ARGS+=(--watch --interval "$INTERVAL")
     fi
 
-    "$PYTHON_BIN" "$MONITOR_SCRIPT" "${MON_ARGS[@]}" "${EXTRA_MONITOR_ARGS[@]}" || true
+    MOM2AMP_CALCULATE_ACCEPTANCE="$ACCEPTANCE_MACRO" "$PYTHON_BIN" "$MONITOR_SCRIPT" "${MON_ARGS[@]}" "${EXTRA_MONITOR_ARGS[@]}" || true
 }
 
 # ==============================================================================
@@ -1273,7 +1291,7 @@ if [ "$MODE" != "collect_only" ] && [ "$MODE" != "fit_only" ]; then
 fi
 
 # Run collector and optional auto-retry loop
-if [ "$MODE" != "fit_only" ] && [ "$MODE" != "monitor_only" ] && [ "$MODE" != "plot_only" ] && [ "$WATCH" != true ]; then
+if [ "$MODE" != "fit_only" ] && [ "$MODE" != "monitor_only" ] && [ "$MODE" != "plot_only" ] && [ "$MODE" != "calculate_acceptance" ] && [ "$WATCH" != true ]; then
     CURRENT_ROUND=1
     while true; do
         run_collection_and_retry

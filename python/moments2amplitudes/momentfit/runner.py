@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from .config import (
     MomentFitConfig,
@@ -39,6 +39,72 @@ def find_script(script_path: Optional[str], default_rel_path: str, repo_root: Pa
     return None
 
 
+def _resolve_monitor_targets(
+    cfg: Optional[MomentFitConfig],
+    run_dir: Optional[str],
+    max_l_filter: Optional[List[int]],
+) -> List[tuple[Optional[int], str]]:
+    """Resolve (max_l, run_dir) targets for monitoring or acceptance calculation."""
+    target_entries: List[tuple[Optional[int], str]] = []
+    if run_dir:
+        explicit_l = max_l_filter[0] if max_l_filter and len(max_l_filter) == 1 else None
+        if explicit_l is None:
+            m_l = re.search(r"Lmax(\d+)", run_dir)
+            explicit_l = int(m_l.group(1)) if m_l else None
+        target_entries.append((explicit_l, run_dir))
+    elif cfg:
+        max_ls = max_l_filter if max_l_filter is not None else cfg.analysis.max_l
+        m_min = cfg.analysis.mass_binning.min
+        m_max = cfg.analysis.mass_binning.max
+        for l in max_ls:
+            target_entries.append((l, cfg.moment_fit.get_run_dir(l, m_min, m_max)))
+    return target_entries
+
+
+def _build_monitor_env_and_base_cmd(
+    script_path: str,
+    rdir: str,
+    l_val: Optional[int],
+    cfg: Optional[MomentFitConfig],
+    tbins_filter: Optional[List[str]],
+    root_filename: Optional[str],
+    data_dir: Optional[str],
+    skip_acceptance: bool,
+    force_acceptance: bool,
+) -> tuple[List[str], dict, Optional[str]]:
+    """Construct common MonitorMomentFit.py command args, environment, and root.sh path."""
+    env = os.environ.copy()
+    if cfg and getattr(cfg.environment, "brufit_dir", None) and "BRUFIT" not in env:
+        env["BRUFIT"] = cfg.environment.brufit_dir
+
+    root_sh = getattr(cfg.environment, "root_sh", None) if cfg else None
+    need_source_root = root_sh if (root_sh and os.path.isfile(root_sh) and not env.get("ROOTSYS")) else None
+
+    cmd = [sys.executable, script_path, "--run-dir", rdir]
+    if tbins_filter:
+        cmd.extend(["--tbin", tbins_filter[0] if len(tbins_filter) == 1 else " ".join(tbins_filter)])
+    else:
+        cmd.extend(["--tbin", "all"])
+    if l_val is not None:
+        cmd.extend(["--max-l", str(l_val)])
+    if cfg is not None:
+        cmd.extend([
+            "--m-min", str(cfg.analysis.mass_binning.min),
+            "--m-max", str(cfg.analysis.mass_binning.max),
+            "--n-bins", str(cfg.analysis.mass_binning.n_bins),
+        ])
+    if root_filename:
+        cmd.extend(["--root-filename", root_filename])
+    effective_data_dir = data_dir or (cfg.moment_fit.data.base_dir if cfg is not None else None)
+    if effective_data_dir:
+        cmd.extend(["--data-dir", str(effective_data_dir)])
+    if skip_acceptance or (cfg is not None and getattr(cfg.moment_fit, "skip_acceptance", False)):
+        cmd.append("--skip-acceptance")
+    if force_acceptance or (cfg is not None and getattr(cfg.moment_fit, "force_acceptance", False)):
+        cmd.append("--force-acceptance")
+    return cmd, env, need_source_root
+
+
 def run_monitor(
     cfg: Optional[MomentFitConfig] = None,
     run_dir: Optional[str] = None,
@@ -59,7 +125,7 @@ def run_monitor(
     ess_metric: Optional[str] = None,
     root_filename: Optional[str] = None,
     data_dir: Optional[str] = None,
-    acceptance_macro: Optional[str] = None,
+    calculate_acceptance: Union[bool, str, None] = None,
     skip_acceptance: bool = False,
     force_acceptance: bool = False,
     dry_run: bool = False,
@@ -74,43 +140,34 @@ def run_monitor(
         print("❌ Error: MonitorMomentFit.py script not found.")
         return False
 
-    target_entries: List[tuple[Optional[int], str]] = []
-    if run_dir:
-        explicit_l = max_l_filter[0] if max_l_filter and len(max_l_filter) == 1 else None
-        target_entries.append((explicit_l, run_dir))
-    elif cfg:
-        max_ls = max_l_filter if max_l_filter is not None else cfg.analysis.max_l
-        m_min = cfg.analysis.mass_binning.min
-        m_max = cfg.analysis.mass_binning.max
-        for l in max_ls:
-            target_entries.append((l, cfg.moment_fit.get_run_dir(l, m_min, m_max)))
-    else:
+    target_entries = _resolve_monitor_targets(cfg=cfg, run_dir=run_dir, max_l_filter=max_l_filter)
+    if not target_entries:
         print("❌ Error: Either a configuration file or --run-dir is required to monitor.")
         return False
 
-    env = os.environ.copy()
-    if cfg and getattr(cfg.environment, "brufit_dir", None) and "BRUFIT" not in env:
-        env["BRUFIT"] = cfg.environment.brufit_dir
-
-    root_sh = getattr(cfg.environment, "root_sh", None) if cfg else None
-    need_source_root = bool(root_sh and os.path.isfile(root_sh) and not env.get("ROOTSYS"))
+    effective_acc_macro = (
+        calculate_acceptance
+        if isinstance(calculate_acceptance, str)
+        else (getattr(cfg.moment_fit, "calculate_acceptance", None) if cfg is not None else None)
+    )
 
     all_ok = True
     for l_val, rdir in target_entries:
-        cmd = [sys.executable, script_path, "--run-dir", rdir]
-        if tbins_filter:
-            cmd.extend(["--tbin", tbins_filter[0] if len(tbins_filter) == 1 else " ".join(tbins_filter)])
-        else:
-            cmd.extend(["--tbin", "all"])
-        if l_val is not None:
-            cmd.extend(["--max-l", str(l_val)])
+        cmd, env, need_source_root = _build_monitor_env_and_base_cmd(
+            script_path=script_path,
+            rdir=rdir,
+            l_val=l_val,
+            cfg=cfg,
+            tbins_filter=tbins_filter,
+            root_filename=root_filename,
+            data_dir=data_dir,
+            skip_acceptance=skip_acceptance,
+            force_acceptance=force_acceptance,
+        )
+        if effective_acc_macro:
+            env["MOM2AMP_CALCULATE_ACCEPTANCE"] = str(effective_acc_macro)
         if cfg is not None:
-            cmd.extend([
-                "--m-min", str(cfg.analysis.mass_binning.min),
-                "--m-max", str(cfg.analysis.mass_binning.max),
-                "--n-bins", str(cfg.analysis.mass_binning.n_bins),
-                "--burn-in", str(cfg.moment_fit.mcmc.burnin),
-            ])
+            cmd.extend(["--burn-in", str(cfg.moment_fit.mcmc.burnin)])
         if watch:
             cmd.append("--watch")
             cmd.extend(["--interval", str(interval)])
@@ -140,20 +197,6 @@ def run_monitor(
             cmd.extend(["--ess-metric", str(ess_metric)])
         elif cfg and hasattr(cfg.moment_fit, "diagnostics"):
             cmd.extend(["--ess-metric", str(cfg.moment_fit.diagnostics.ess_metric)])
-        if root_filename:
-            cmd.extend(["--root-filename", root_filename])
-        effective_data_dir = data_dir or (cfg.moment_fit.data.base_dir if cfg is not None else None)
-        if effective_data_dir:
-            cmd.extend(["--data-dir", str(effective_data_dir)])
-        effective_acc_macro = acceptance_macro or (
-            getattr(cfg.moment_fit, "acceptance_macro", None) if cfg is not None else None
-        )
-        if effective_acc_macro:
-            cmd.extend(["--acceptance-macro", str(effective_acc_macro)])
-        if skip_acceptance or (cfg is not None and getattr(cfg.moment_fit, "skip_acceptance", False)):
-            cmd.append("--skip-acceptance")
-        if force_acceptance or (cfg is not None and getattr(cfg.moment_fit, "force_acceptance", False)):
-            cmd.append("--force-acceptance")
 
         print(f"\n[MONITOR] Launching MonitorMomentFit for run directory:\n  {rdir}")
         if dry_run:
@@ -162,7 +205,7 @@ def run_monitor(
 
         exec_cmd = cmd
         if need_source_root:
-            exec_cmd = ["bash", "-c", f"source {shlex.quote(root_sh)} && exec \"$@\"", "_", *cmd]
+            exec_cmd = ["bash", "-c", f"source {shlex.quote(need_source_root)} && exec \"$@\"", "_", *cmd]
 
         try:
             ret = subprocess.run(exec_cmd, env=env)
@@ -171,6 +214,73 @@ def run_monitor(
         except KeyboardInterrupt:
             print("\n[INFO] Monitoring stopped by user.")
             return True
+
+    return all_ok
+
+
+def run_calculate_acceptance(
+    cfg: Optional[MomentFitConfig] = None,
+    run_dir: Optional[str] = None,
+    tbins_filter: Optional[List[str]] = None,
+    max_l_filter: Optional[List[int]] = None,
+    calculate_acceptance: Union[bool, str, None] = None,
+    skip_acceptance: bool = False,
+    force_acceptance: bool = False,
+    root_filename: Optional[str] = None,
+    data_dir: Optional[str] = None,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Run ROOT acceptance calculation across target run directories via MonitorMomentFit.py.
+    """
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    configured_script = getattr(cfg.moment_fit, "monitor_script", None) if cfg else None
+    script_path = find_script(configured_script, "macros/MonitorMomentFit.py", repo_root)
+    if not script_path:
+        print("❌ Error: MonitorMomentFit.py script not found.")
+        return False
+
+    target_entries = _resolve_monitor_targets(cfg=cfg, run_dir=run_dir, max_l_filter=max_l_filter)
+    if not target_entries:
+        print("❌ Error: Either a configuration file or --run-dir is required to calculate acceptance.")
+        return False
+
+    effective_acc_macro = (
+        calculate_acceptance
+        if isinstance(calculate_acceptance, str)
+        else (getattr(cfg.moment_fit, "calculate_acceptance", None) if cfg is not None else None)
+    )
+
+    all_ok = True
+    for l_val, rdir in target_entries:
+        cmd, env, need_source_root = _build_monitor_env_and_base_cmd(
+            script_path=script_path,
+            rdir=rdir,
+            l_val=l_val,
+            cfg=cfg,
+            tbins_filter=tbins_filter,
+            root_filename=root_filename,
+            data_dir=data_dir,
+            skip_acceptance=skip_acceptance,
+            force_acceptance=force_acceptance,
+        )
+        if effective_acc_macro:
+            cmd.extend(["--calculate-acceptance", str(effective_acc_macro)])
+        else:
+            cmd.append("--calculate-acceptance")
+
+        print(f"\n[ACCEPTANCE] Calculating acceptance for run directory:\n  {rdir}")
+        if dry_run:
+            print(f"  [DRY-RUN] Command: {' '.join(cmd)}")
+            continue
+
+        exec_cmd = cmd
+        if need_source_root:
+            exec_cmd = ["bash", "-c", f"source {shlex.quote(need_source_root)} && exec \"$@\"", "_", *cmd]
+
+        ret = subprocess.run(exec_cmd, env=env)
+        if ret.returncode != 0:
+            all_ok = False
 
     return all_ok
 
@@ -456,6 +566,29 @@ def run_retry(
     return all_ok
 
 
+def preprocess_momentfit_argv(argv: List[str]) -> List[str]:
+    """Normalize shorthand `retry`/`refit` and `--calculate-acceptance <config.yaml>` order."""
+    raw_argv = list(argv)
+    cleaned_argv: List[str] = []
+    i = 0
+    while i < len(raw_argv):
+        tok = raw_argv[i]
+        if tok == "--calculate-acceptance" and i + 1 < len(raw_argv) and raw_argv[i + 1].endswith((".yaml", ".yml")):
+            cleaned_argv.append(raw_argv[i + 1])
+            cleaned_argv.append(tok)
+            i += 2
+            continue
+        cleaned_argv.append(tok)
+        i += 1
+    raw_argv = cleaned_argv
+    if raw_argv:
+        if raw_argv[0].lower() in ("retry", "refit"):
+            raw_argv = ["--retry"] + raw_argv[1:]
+        elif len(raw_argv) >= 2 and raw_argv[0].endswith((".yaml", ".yml")) and raw_argv[1].lower() in ("retry", "refit"):
+            raw_argv = [raw_argv[0], "--retry"] + raw_argv[2:]
+    return raw_argv
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="End-to-End MomentFit: Linear Algebra -> Export Covariance -> BruFit MCMC -> Diagnostics & Plotting",
@@ -482,6 +615,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             "linear_algebra", "export_covariance", "moment_fit",
             "plot", "plotting",
             "monitor", "status",
+            "calculate_acceptance", "calc_acceptance", "acceptance",
             "collect", "collector", "diagnostics",
             "retry", "refit", "retries",
             "all",
@@ -667,10 +801,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Force recalculation of acceptance integral matrices in Stage 1.",
     )
     parser.add_argument(
-        "--acceptance-macro",
-        type=str,
+        "--calculate-acceptance",
+        dest="calculate_acceptance",
+        nargs="?",
+        const=True,
         default=None,
-        help="Override path to CalculateAcceptance macro used during monitoring.",
+        metavar="MACRO_PATH",
+        help="Run acceptance calculation directly (optionally overriding the CalculateAcceptance macro path).",
     )
     parser.add_argument(
         "--skip-acceptance",
@@ -682,12 +819,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Force acceptance calculation even when not all bins meet convergence.",
     )
-    raw_argv = list(sys.argv[1:] if argv is None else argv)
-    if raw_argv:
-        if raw_argv[0].lower() in ("retry", "refit"):
-            raw_argv = ["--retry"] + raw_argv[1:]
-        elif len(raw_argv) >= 2 and raw_argv[0].endswith((".yaml", ".yml")) and raw_argv[1].lower() in ("retry", "refit"):
-            raw_argv = [raw_argv[0], "--retry"] + raw_argv[2:]
+    raw_argv = preprocess_momentfit_argv(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(raw_argv)
 
     # Infer stages from action flags if --stage was not explicitly passed
@@ -696,6 +828,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             args.stage = ["monitor"]
         elif "monitor" not in args.stage:
             args.stage.append("monitor")
+
+    if args.calculate_acceptance is not None:
+        if args.stage is None:
+            args.stage = ["calculate_acceptance"]
+        elif "calculate_acceptance" not in args.stage:
+            args.stage.append("calculate_acceptance")
 
     if args.retry:
         if args.stage is None:
@@ -722,10 +860,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     cfg_file = args.config_opt or args.config
     if not cfg_file:
-        # Allow running monitoring, collector, retry, or covariance plotting directly if --run-dir is provided
+        # Allow running monitoring, acceptance, collector, retry, or covariance plotting directly if --run-dir is provided
         if args.run_dir and (
             args.monitor or args.watch or args.collect or args.retry or args.cancel or args.plot_cov
-            or (args.stage and any(s in ("monitor", "collect", "status", "diagnostics", "retry", "refit", "retries", "plot_covariance", "cov") for s in args.stage))
+            or args.calculate_acceptance is not None
+            or (args.stage and any(s in ("monitor", "collect", "status", "diagnostics", "retry", "refit", "retries", "calculate_acceptance", "calc_acceptance", "acceptance", "plot_covariance", "cov") for s in args.stage))
         ):
             args.config = None
             return args
@@ -756,6 +895,9 @@ def normalize_stage_names(stages: List[str]) -> List[str]:
         "plotting": "plot",
         "monitor": "monitor",
         "status": "monitor",
+        "calculate_acceptance": "calculate_acceptance",
+        "calc_acceptance": "calculate_acceptance",
+        "acceptance": "calculate_acceptance",
         "collect": "collect",
         "collector": "collect",
         "diagnostics": "collect",
@@ -837,7 +979,7 @@ def run_momentfit(
     replot_from_root: bool = False,
     plot_cov: bool = False,
     plot_cov_bins: Optional[List[str]] = None,
-    acceptance_macro: Optional[str] = None,
+    calculate_acceptance: Union[bool, str, None] = None,
     skip_acceptance: bool = False,
     force_acceptance: bool = False,
 ) -> int:
@@ -866,8 +1008,8 @@ def run_momentfit(
             cfg.moment_fit.overwrite = True
         if force_integral:
             cfg.linear_algebra.force_integral_matrix = True
-        if acceptance_macro is not None:
-            cfg.moment_fit.acceptance_macro = acceptance_macro
+        if isinstance(calculate_acceptance, str):
+            cfg.moment_fit.calculate_acceptance = calculate_acceptance
         if skip_acceptance:
             cfg.moment_fit.skip_acceptance = True
         if force_acceptance:
@@ -887,7 +1029,7 @@ def run_momentfit(
         active_stages = ["monitor"]
 
     # Validate configuration if running core pipeline stages (1, 2, 3)
-    if cfg and not set(active_stages).issubset({"monitor", "collect", "retry", "plot", "plot_covariance"}):
+    if cfg and not set(active_stages).issubset({"monitor", "collect", "retry", "calculate_acceptance", "plot", "plot_covariance"}):
         errors = validate_momentfit_config(cfg)
         if errors:
             print("\n[VALIDATION FAILED] Please address the following issues:")
@@ -1009,7 +1151,7 @@ def run_momentfit(
             replot_from_root=replot_from_root,
             ess_threshold=ess_threshold,
             ess_metric=ess_metric,
-            acceptance_macro=acceptance_macro,
+            calculate_acceptance=calculate_acceptance,
             skip_acceptance=skip_acceptance,
             force_acceptance=force_acceptance,
             dry_run=dry_run,
@@ -1065,6 +1207,27 @@ def run_momentfit(
         stage_statuses["retry"] = "SUCCESS" if success else "FAILED"
         if not success and not dry_run:
             print("❌ Workflow halted due to error in Retry.")
+            return 1
+
+    # --------------------------------------------------------------------------
+    # STAGE: Standalone Acceptance Calculation (MonitorMomentFit.py / ROOT)
+    # --------------------------------------------------------------------------
+    if "calculate_acceptance" in active_stages:
+        t0 = time.time()
+        success = run_calculate_acceptance(
+            cfg=cfg,
+            run_dir=run_dir,
+            tbins_filter=tbins_norm,
+            max_l_filter=max_l_filter,
+            calculate_acceptance=calculate_acceptance,
+            skip_acceptance=skip_acceptance,
+            force_acceptance=force_acceptance,
+            dry_run=dry_run,
+        )
+        stage_timings["calculate_acceptance"] = time.time() - t0
+        stage_statuses["calculate_acceptance"] = "SUCCESS" if success else "FAILED"
+        if not success and not dry_run:
+            print("❌ Workflow halted due to error in CalculateAcceptance.")
             return 1
 
     # --------------------------------------------------------------------------
@@ -1195,7 +1358,7 @@ def main():
         replot_from_root=args.replot_from_root,
         plot_cov=args.plot_cov,
         plot_cov_bins=args.plot_cov_bins,
-        acceptance_macro=args.acceptance_macro,
+        calculate_acceptance=args.calculate_acceptance,
         skip_acceptance=args.skip_acceptance,
         force_acceptance=args.force_acceptance,
     )

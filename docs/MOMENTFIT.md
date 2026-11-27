@@ -107,6 +107,10 @@ pixi run momentfit configs/momentfit_nominal.yaml --stage 3 --tbin t010020 --max
 # Monitor running or completed fits / rebuild acceptance plots
 pixi run momentfit configs/momentfit_nominal.yaml --monitor --tbin t010020 --max-l 4
 
+# Run standalone acceptance calculation directly (uses YAML macro or optional path)
+pixi run momentfit configs/momentfit_nominal.yaml --calculate-acceptance --max-l 4
+pixi run momentfit --run-dir run/MomentFit_m080200_FixedCov_Lmax4_InitValueScale1.0_step1.0/ --calculate-acceptance macros/CalculateAcceptance_m080200.C
+
 # Collect ESS/acceptance diagnostics and generate RunMomentFit_retry.sh
 pixi run momentfit configs/momentfit_nominal.yaml --collect --no-exec --max-l 8
 
@@ -137,7 +141,7 @@ pixi run momentfit configs/momentfit_nominal.yaml --stage 1 2 --tbin t010020
 | Flag | Short | Default | Description |
 | :--- | :---: | :---: | :--- |
 | `--config` | `-c` | `configs/momentfit_nominal.yaml` | Path to MomentFit YAML config. |
-| `--stage` | `-s` | From YAML | Stages to execute (`1`, `2`, `3`, `4`, `monitor`, `collect`, `retry`, `plot`, `plot_covariance`, `all`, or names). |
+| `--stage` | `-s` | From YAML | Stages to execute (`1`, `2`, `3`, `4`, `monitor`, `calculate_acceptance`, `collect`, `retry`, `plot`, `plot_covariance`, `all`, or names). |
 | `--monitor` | | `False` | Run post-fit monitoring (`MonitorMomentFit.py`) and acceptance checks. |
 | `--collect` | | `False` | Run diagnostic collection and retry script generation (`MomentFitCollector.py`). |
 | `--retry` (or subcommand `retry`) | | `False` | Run bounded diagnostic-collection + `RunMomentFit_retry.sh` execution rounds (`diagnostics.max_retries`). |
@@ -145,7 +149,7 @@ pixi run momentfit configs/momentfit_nominal.yaml --stage 1 2 --tbin t010020
 | `--max-retries` | | From YAML (`2`) | Override maximum targeted retry rounds for `--retry`. |
 | `--max-parallel` | `-j` | From YAML (`2`) | Override maximum concurrent single-bin retry jobs. |
 | `--no-exec` | | `False` | Generate `RunMomentFit_retry.sh` and JSON diagnostics without launching refits. |
-| `--run-dir` | `-d` | `None` | Target an explicit `MomentFit_*` run directory directly for `--monitor`, `--collect`, or `--retry`. |
+| `--run-dir` | `-d` | `None` | Target an explicit `MomentFit_*` run directory directly for `--monitor`, `--collect`, `--retry`, or `--calculate-acceptance`. |
 | `--ess-threshold` | | From YAML | Primary ESS threshold for convergence (`mean` or `min`). |
 | `--ess-metric` | | From YAML | ESS aggregation metric (`mean` or `min`). |
 | `--min-ess-threshold` | | From YAML | Safety floor on worst-moment ESS even when `--ess-metric mean` (`<= 0` disables). |
@@ -160,7 +164,7 @@ pixi run momentfit configs/momentfit_nominal.yaml --stage 1 2 --tbin t010020
 | `--validate`| | `False` | Validate paths and configuration and exit. |
 | `--overwrite`| | `False` | Overwrite existing output directories without prompt. |
 | `--force-integral` | | `False` | Force recalculation of acceptance integral matrices. |
-| `--acceptance-macro` | | From YAML | Override `CalculateAcceptance` macro path passed to `MonitorMomentFit.py`. |
+| `--calculate-acceptance` | | From YAML | Run acceptance calculation directly via `MonitorMomentFit.py` (optionally pass a `MACRO_PATH` override). |
 | `--skip-acceptance` | | `False` | Skip post-fit acceptance calculation in `MonitorMomentFit.py`. |
 | `--force-acceptance` | | `False` | Force acceptance calculation even if not all bins have converged. |
 
@@ -238,7 +242,7 @@ moment_fit:
   run_script: "/d/home/septian/Moments2Amplitudes/macros/RunMomentFit.sh"
   monitor_script: "/d/home/septian/Moments2Amplitudes/macros/MonitorMomentFit.py"
   collector_script: "/d/home/septian/Moments2Amplitudes/macros/MomentFitCollector.py"
-  acceptance_macro: "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance_m080200.C"
+  calculate_acceptance: "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance_m080200.C"
   skip_acceptance: false
   force_acceptance: false
   output_dir_template: "/d/home/septian/Moments2Amplitudes/run/MomentFit_m{tag_min:03d}{tag_max:03d}_FixedCov_Lmax{maxL}_InitValueScale{init_scale:.1f}_step{step:.1f}/"

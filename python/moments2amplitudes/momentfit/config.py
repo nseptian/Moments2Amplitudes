@@ -244,9 +244,18 @@ class BruFitStageConfig:
     run_script: str = "/d/home/septian/Moments2Amplitudes/macros/RunMomentFit.sh"
     monitor_script: str = "/d/home/septian/Moments2Amplitudes/macros/MonitorMomentFit.py"
     collector_script: str = "/d/home/septian/Moments2Amplitudes/macros/MomentFitCollector.py"
-    acceptance_macro: str = "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance_m080200.C"
+    calculate_acceptance: str = "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance_m080200.C"
     skip_acceptance: bool = False
     force_acceptance: bool = False
+
+    @property
+    def acceptance_macro(self) -> str:
+        """Backward-compatible alias for `calculate_acceptance`."""
+        return self.calculate_acceptance
+
+    @acceptance_macro.setter
+    def acceptance_macro(self, value: str) -> None:
+        self.calculate_acceptance = value
     output_dir_template: str = (
         "/d/home/septian/Moments2Amplitudes/run/"
         "MomentFit_m{tag_min:03d}{tag_max:03d}_FixedCov_Lmax{maxL}_InitValueScale{init_scale:.1f}_step{step:.1f}/"
@@ -414,6 +423,10 @@ def load_momentfit_config(config_path: Union[str, Path]) -> MomentFitConfig:
             cfg.moment_fit.mcmc = _parse_dict_to_dataclass(MCMCConfig, mf_data.pop("mcmc"))
         if "diagnostics" in mf_data:
             cfg.moment_fit.diagnostics = _parse_dict_to_dataclass(DiagnosticsConfig, mf_data.pop("diagnostics"))
+        if "acceptance_macro" in mf_data and "calculate_acceptance" not in mf_data:
+            cfg.moment_fit.calculate_acceptance = mf_data.pop("acceptance_macro")
+        else:
+            mf_data.pop("acceptance_macro", None)
         for k, v in mf_data.items():
             if hasattr(cfg.moment_fit, k):
                 setattr(cfg.moment_fit, k, v)
@@ -462,13 +475,14 @@ def validate_momentfit_config(cfg: MomentFitConfig, check_files: bool = True) ->
         errors.append(f"ExportCovarianceC.C macro not found: {cfg.export_covariance.macro_path}")
 
     # Check MomentFit script and macro
-    if "moment_fit" in cfg.stages:
-        if check_files and not os.path.isfile(cfg.moment_fit.run_script):
-            errors.append(f"MomentFit run script not found: {cfg.moment_fit.run_script}")
-        if check_files and not os.path.isfile(cfg.moment_fit.macro_path):
-            errors.append(f"MomentFit.C macro not found: {cfg.moment_fit.macro_path}")
-        if check_files and cfg.moment_fit.acceptance_macro and not os.path.isfile(cfg.moment_fit.acceptance_macro):
-            errors.append(f"Acceptance macro not found: {cfg.moment_fit.acceptance_macro}")
+    if "moment_fit" in cfg.stages or "calculate_acceptance" in cfg.stages:
+        if "moment_fit" in cfg.stages:
+            if check_files and not os.path.isfile(cfg.moment_fit.run_script):
+                errors.append(f"MomentFit run script not found: {cfg.moment_fit.run_script}")
+            if check_files and not os.path.isfile(cfg.moment_fit.macro_path):
+                errors.append(f"MomentFit.C macro not found: {cfg.moment_fit.macro_path}")
+        if check_files and cfg.moment_fit.calculate_acceptance and not os.path.isfile(cfg.moment_fit.calculate_acceptance):
+            errors.append(f"Acceptance macro not found: {cfg.moment_fit.calculate_acceptance}")
 
         # Check MomentFit data base_dir if configured
         if check_files and cfg.moment_fit.data.base_dir:

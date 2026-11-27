@@ -779,7 +779,12 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
     def _repo_root() -> Path:
         return Path(__file__).resolve().parents[1]
 
-    def _write_sandbox_safe_config(self, tmpdir: str, acceptance_macro: str | None = None) -> tuple[Path, Path]:
+    def _write_sandbox_safe_config(
+        self,
+        tmpdir: str,
+        calculate_acceptance: str | None = None,
+        use_legacy_alias: bool = False,
+    ) -> tuple[Path, Path]:
         import yaml
 
         root = self._repo_root()
@@ -808,8 +813,13 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
         cfg_data["moment_fit"]["output_dir_template"] = str(
             tmp / "run_m{tag_min:03d}{tag_max:03d}_L{maxL}_s{init_scale:.1f}_st{step:.1f}/"
         )
-        if acceptance_macro is not None:
-            cfg_data["moment_fit"]["acceptance_macro"] = acceptance_macro
+        if use_legacy_alias:
+            cfg_data["moment_fit"].pop("calculate_acceptance", None)
+            cfg_data["moment_fit"]["acceptance_macro"] = (
+                calculate_acceptance or str(root / "macros" / "CalculateAcceptance_m080200.C")
+            )
+        elif calculate_acceptance is not None:
+            cfg_data["moment_fit"]["calculate_acceptance"] = calculate_acceptance
 
         cfg_path = tmp / "momentfit_sandbox.yaml"
         cfg_path.write_text(yaml.safe_dump(cfg_data), encoding="utf-8")
@@ -825,11 +835,13 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
             "macros/MomentFit.C",
             "python/moments2amplitudes/momentfit/stage3_moment_fit.py",
             "python/moments2amplitudes/momentfit/runner.py",
+            "python/moments2amplitudes/cli.py",
             "docs/MOMENTFIT.md",
         ]:
             content = (root / rel_path).read_text(encoding="utf-8")
             self.assertNotIn("RunMomentFit_m080200", content, f"Unexpected RunMomentFit_m080200 in {rel_path}")
             self.assertNotIn("MomentFit_m080200(", content, f"Unexpected MomentFit_m080200( in {rel_path}")
+            self.assertNotIn("--acceptance-macro", content, f"Unexpected --acceptance-macro in {rel_path}")
 
     def test_acceptance_options_validate_stage3_and_monitor(self):
         import contextlib
@@ -837,51 +849,68 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
         import tempfile
         from moments2amplitudes.momentfit.config import load_momentfit_config, validate_momentfit_config
         from moments2amplitudes.momentfit.stage3_moment_fit import build_moment_fit_command
-        from moments2amplitudes.momentfit.runner import run_monitor, run_momentfit
+        from moments2amplitudes.momentfit.runner import run_calculate_acceptance, run_monitor, run_momentfit
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg_path, rdir = self._write_sandbox_safe_config(tmpdir)
             cfg = load_momentfit_config(str(cfg_path))
-            self.assertTrue(cfg.moment_fit.acceptance_macro.endswith("CalculateAcceptance_m080200.C"))
+            self.assertTrue(cfg.moment_fit.calculate_acceptance.endswith("CalculateAcceptance_m080200.C"))
+            self.assertEqual(cfg.moment_fit.acceptance_macro, cfg.moment_fit.calculate_acceptance)
             self.assertFalse(cfg.moment_fit.skip_acceptance)
             self.assertFalse(cfg.moment_fit.force_acceptance)
             self.assertEqual(validate_momentfit_config(cfg), [])
+
+            # Legacy YAML key `acceptance_macro` still works as alias
+            alias_cfg_path, _ = self._write_sandbox_safe_config(tmpdir, use_legacy_alias=True)
+            alias_cfg = load_momentfit_config(str(alias_cfg_path))
+            self.assertTrue(alias_cfg.moment_fit.calculate_acceptance.endswith("CalculateAcceptance_m080200.C"))
 
             # Stage 3 command forwarding
             cfg.moment_fit.skip_acceptance = True
             cfg.moment_fit.force_acceptance = True
             cmd, _ = build_moment_fit_command(cfg, max_l=4, tbin_arg="0")
-            self.assertIn("--acceptance-macro", cmd)
-            self.assertIn(cfg.moment_fit.acceptance_macro, cmd)
+            self.assertNotIn("--acceptance-macro", cmd)
             self.assertIn("--skip-acceptance", cmd)
             self.assertIn("--force-acceptance", cmd)
 
-            # Invalid acceptance macro path caught by validator
-            cfg.moment_fit.acceptance_macro = str(Path(tmpdir) / "nonexistent_acc.C")
+            # Invalid calculate_acceptance macro path caught by validator
+            cfg.moment_fit.calculate_acceptance = str(Path(tmpdir) / "nonexistent_acc.C")
             errors = validate_momentfit_config(cfg)
             self.assertTrue(any("Acceptance macro not found" in err for err in errors), errors)
 
-            # run_monitor & run_momentfit forwarding (including min_ess_threshold fix)
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                ok = run_monitor(
+            # run_calculate_acceptance and run_momentfit forwarding (both boolean and explicit path)
+            buf_acc = io.StringIO()
+            with contextlib.redirect_stdout(buf_acc):
+                ok_acc = run_calculate_acceptance(
                     cfg=load_momentfit_config(str(cfg_path)),
                     run_dir=str(rdir),
-                    acceptance_macro="/tmp/custom_acceptance.C",
+                    calculate_acceptance="/tmp/custom_acceptance.C",
                     skip_acceptance=True,
                     force_acceptance=True,
                     dry_run=True,
                 )
-            self.assertTrue(ok)
-            out = buf.getvalue()
-            self.assertIn("--acceptance-macro /tmp/custom_acceptance.C", out)
-            self.assertIn("--skip-acceptance", out)
-            self.assertIn("--force-acceptance", out)
-            self.assertIn(f"--data-dir {cfg.moment_fit.data.base_dir}", out)
+            self.assertTrue(ok_acc)
+            out_acc = buf_acc.getvalue()
+            self.assertIn("--calculate-acceptance /tmp/custom_acceptance.C", out_acc)
+            self.assertIn("--skip-acceptance", out_acc)
+            self.assertIn("--force-acceptance", out_acc)
+            self.assertIn(f"--data-dir {cfg.moment_fit.data.base_dir}", out_acc)
 
-            buf2 = io.StringIO()
-            with contextlib.redirect_stdout(buf2):
-                rc = run_momentfit(
+            buf_stage = io.StringIO()
+            with contextlib.redirect_stdout(buf_stage):
+                rc_acc = run_momentfit(
+                    config_path=str(cfg_path),
+                    stages=["calculate_acceptance"],
+                    run_dir=str(rdir),
+                    calculate_acceptance=True,
+                    dry_run=True,
+                )
+            self.assertEqual(rc_acc, 0)
+            self.assertIn("CalculateAcceptance_m080200.C", buf_stage.getvalue())
+
+            buf_mon = io.StringIO()
+            with contextlib.redirect_stdout(buf_mon):
+                rc_mon = run_momentfit(
                     config_path=str(cfg_path),
                     stages=["monitor"],
                     run_dir=str(rdir),
@@ -889,8 +918,8 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
                     skip_acceptance=True,
                     dry_run=True,
                 )
-            self.assertEqual(rc, 0)
-            self.assertIn("--skip-acceptance", buf2.getvalue())
+            self.assertEqual(rc_mon, 0)
+            self.assertIn("--skip-acceptance", buf_mon.getvalue())
 
     def test_run_momentfit_sh_config_routing_and_cli_flags(self):
         import os
@@ -902,7 +931,7 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
 
         root = self._repo_root()
         with tempfile.TemporaryDirectory() as tmpdir:
-            cfg_path, _ = self._write_sandbox_safe_config(tmpdir)
+            cfg_path, rdir = self._write_sandbox_safe_config(tmpdir)
             env = os.environ.copy()
             env["PYTHONPATH"] = f"{root / 'python'}:{env.get('PYTHONPATH', '')}".rstrip(":")
 
@@ -933,6 +962,29 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
                 self.assertIn("[DRY-RUN]", res.stdout)
                 self.assertNotIn("RuntimeWarning", res.stderr)
 
+            # RunMomentFit.sh --config with --calculate-acceptance [path]
+            res_acc = subprocess.run(
+                [
+                    "bash",
+                    str(root / "macros" / "RunMomentFit.sh"),
+                    "-c",
+                    str(cfg_path),
+                    "--run-dir",
+                    str(rdir),
+                    "--calculate-acceptance",
+                    "/tmp/custom_acc.C",
+                    "--dry-run",
+                ],
+                cwd=str(root),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(res_acc.returncode, 0, f"calculate-acceptance failed:\n{res_acc.stdout}\n{res_acc.stderr}")
+            self.assertIn("--calculate-acceptance /tmp/custom_acc.C", res_acc.stdout)
+
+        # CLI tests: --calculate-acceptance with path, without path, and before config.yaml
         with patch("moments2amplitudes.momentfit.runner.run_momentfit", return_value=0) as mock_run_mf, \
              patch.object(
                  sys,
@@ -941,8 +993,7 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
                      "mom2amp",
                      "momentfit",
                      "configs/momentfit_test.yaml",
-                     "--monitor",
-                     "--acceptance-macro",
+                     "--calculate-acceptance",
                      "/tmp/acc_override.C",
                      "--skip-acceptance",
                      "--force-acceptance",
@@ -952,9 +1003,29 @@ class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
             with self.assertRaises(SystemExit) as cm:
                 mom_cli.main()
             self.assertEqual(cm.exception.code, 0)
-            self.assertEqual(mock_run_mf.call_args.kwargs["acceptance_macro"], "/tmp/acc_override.C")
+            self.assertEqual(mock_run_mf.call_args.kwargs["stages"], ["calculate_acceptance"])
+            self.assertEqual(mock_run_mf.call_args.kwargs["calculate_acceptance"], "/tmp/acc_override.C")
             self.assertTrue(mock_run_mf.call_args.kwargs["skip_acceptance"])
             self.assertTrue(mock_run_mf.call_args.kwargs["force_acceptance"])
+
+        with patch("moments2amplitudes.momentfit.runner.run_momentfit", return_value=0) as mock_run_mf, \
+             patch.object(
+                 sys,
+                 "argv",
+                 [
+                     "mom2amp",
+                     "momentfit",
+                     "--calculate-acceptance",
+                     "configs/momentfit_test.yaml",
+                     "--dry-run",
+                 ],
+             ):
+            with self.assertRaises(SystemExit) as cm:
+                mom_cli.main()
+            self.assertEqual(cm.exception.code, 0)
+            self.assertEqual(mock_run_mf.call_args.kwargs["config_path"], "configs/momentfit_test.yaml")
+            self.assertEqual(mock_run_mf.call_args.kwargs["stages"], ["calculate_acceptance"])
+            self.assertIs(mock_run_mf.call_args.kwargs["calculate_acceptance"], True)
 
 
 if __name__ == "__main__":
