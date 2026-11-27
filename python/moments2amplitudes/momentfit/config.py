@@ -130,7 +130,37 @@ class MCMCConfig:
     allow_negative_pdf: bool = True
     use_tuning: bool = True
     gibbs_block_size: int = 0
+    gibbs_block_size_by_max_l: Dict[int, int] = field(default_factory=dict)
     cold_warmup_acc: float = 0.15
+    min_acceptance: float = 0.05
+    max_acceptance: float = 0.15
+    target_acceptance: Optional[float] = None
+    tune_mode: str = "MappedRhat"
+    rhat_window: int = 1000
+    rhat_target: float = 1.05
+    ess_fraction: float = 0.02
+    rhat_max_retries: int = 5
+    bailout_threshold: int = 10000
+    bailout_min_acceptance: float = 0.0001
+    mc_integration_bins: int = 50
+    fixed_covariance: bool = True
+    use_covariance: bool = True
+    set_init_value: bool = True
+    use_gj_frame: bool = True
+    num_cpu: int = 1
+    seed: int = 111
+
+    def get_gibbs_block_size(self, max_l: int) -> int:
+        """Resolve Gibbs block size for a given max_l, falling back to global gibbs_block_size."""
+        if self.gibbs_block_size_by_max_l and max_l in self.gibbs_block_size_by_max_l:
+            return int(self.gibbs_block_size_by_max_l[max_l])
+        return int(self.gibbs_block_size)
+
+    def get_target_acceptance(self) -> float:
+        """Resolve target acceptance rate, defaulting to midpoint of [min_acceptance, max_acceptance]."""
+        if self.target_acceptance is not None:
+            return float(self.target_acceptance)
+        return 0.5 * (float(self.min_acceptance) + float(self.max_acceptance))
 
 
 @dataclass
@@ -138,8 +168,18 @@ class DiagnosticsConfig:
     """Diagnostics and auto-retry settings for MomentFit."""
     ess_threshold: float = 20.0
     ess_metric: str = "mean"  # "mean" or "min"
+    min_ess_threshold: Optional[float] = 10.0  # Safety floor on worst-moment ESS
     auto_retry: bool = False
     max_retries: int = 2
+    max_retry_iters: int = 200000
+    burnin_fraction: float = 0.10
+    low_acceptance_threshold: float = 0.03
+    gibbs_low_acceptance_threshold: float = 0.12
+    high_acceptance_threshold: float = 0.35
+    gibbs_activation_acceptance: float = 0.05
+    recondition_covariance: bool = False
+    recondition_shrinkage: float = 0.2
+    recondition_min_eigen_floor: float = 1.0e-4
 
 
 @dataclass
@@ -305,8 +345,15 @@ def _parse_dict_to_dataclass(cls: Any, data: Dict[str, Any]) -> Any:
         if name in data:
             val = data[name]
             field_type = f.type
+            if name == "gibbs_block_size_by_max_l":
+                if val is None:
+                    kwargs[name] = {}
+                elif isinstance(val, dict):
+                    kwargs[name] = {int(k): int(v) for k, v in val.items()}
+                else:
+                    raise ValueError(f"Expected dict for '{name}', got {type(val).__name__}")
             # Handle nested dataclasses
-            if hasattr(field_type, "__dataclass_fields__"):
+            elif hasattr(field_type, "__dataclass_fields__"):
                 kwargs[name] = _parse_dict_to_dataclass(field_type, val)
             elif isinstance(val, dict) and hasattr(f.default_factory, "__self__"):
                 # fallback for default factory classes
@@ -425,6 +472,48 @@ def validate_momentfit_config(cfg: MomentFitConfig, check_files: bool = True) ->
                 os.path.islink(p) for p in [base, os.path.dirname(base), os.path.dirname(os.path.dirname(base))]
             ):
                 errors.append(f"MomentFit data base_dir does not exist: {base}")
+
+        # Check MomentFit MCMC parameter consistency
+        mcmc_cfg = cfg.moment_fit.mcmc
+        if not (0.0 < mcmc_cfg.min_acceptance < mcmc_cfg.max_acceptance <= 1.0):
+            errors.append(
+                f"mcmc.min_acceptance ({mcmc_cfg.min_acceptance}) and mcmc.max_acceptance ({mcmc_cfg.max_acceptance}) must satisfy 0 < min < max <= 1."
+            )
+        if mcmc_cfg.target_acceptance is not None and not (mcmc_cfg.min_acceptance <= mcmc_cfg.target_acceptance <= mcmc_cfg.max_acceptance):
+            errors.append(
+                f"mcmc.target_acceptance ({mcmc_cfg.target_acceptance}) must lie within [{mcmc_cfg.min_acceptance}, {mcmc_cfg.max_acceptance}]."
+            )
+        if mcmc_cfg.tune_mode not in ("MappedRhat", "Acceptance", "kMappedRhat", "kAcceptance"):
+            errors.append(f"mcmc.tune_mode must be 'MappedRhat' or 'Acceptance', got '{mcmc_cfg.tune_mode}'.")
+        if mcmc_cfg.gibbs_block_size < 0 or any(v < 0 for v in mcmc_cfg.gibbs_block_size_by_max_l.values()):
+            errors.append("mcmc.gibbs_block_size and all mcmc.gibbs_block_size_by_max_l values must be >= 0.")
+        if mcmc_cfg.iterations <= 0 or mcmc_cfg.burnin < 0 or mcmc_cfg.burnin >= mcmc_cfg.iterations:
+            errors.append(f"mcmc.burnin ({mcmc_cfg.burnin}) must be >= 0 and < mcmc.iterations ({mcmc_cfg.iterations}).")
+        if mcmc_cfg.mc_integration_bins <= 0:
+            errors.append(f"mcmc.mc_integration_bins must be > 0, got {mcmc_cfg.mc_integration_bins}.")
+        if mcmc_cfg.num_cpu < 1:
+            errors.append(f"mcmc.num_cpu must be >= 1, got {mcmc_cfg.num_cpu}.")
+        if mcmc_cfg.bailout_threshold < 0 or not (0.0 <= mcmc_cfg.bailout_min_acceptance <= 1.0):
+            errors.append("mcmc.bailout_threshold must be >= 0 and bailout_min_acceptance in [0, 1].")
+
+        # Check MomentFit diagnostics thresholds
+        diag_cfg = cfg.moment_fit.diagnostics
+        if diag_cfg.ess_metric not in ("mean", "min"):
+            errors.append(f"diagnostics.ess_metric must be 'mean' or 'min', got '{diag_cfg.ess_metric}'.")
+        if diag_cfg.max_retry_iters <= 0:
+            errors.append(f"diagnostics.max_retry_iters must be > 0, got {diag_cfg.max_retry_iters}.")
+        if not (0.0 <= diag_cfg.burnin_fraction < 0.5):
+            errors.append(f"diagnostics.burnin_fraction must be in [0.0, 0.5), got {diag_cfg.burnin_fraction}.")
+        if not (0.0 < diag_cfg.low_acceptance_threshold < diag_cfg.high_acceptance_threshold <= 1.0):
+            errors.append("diagnostics.low_acceptance_threshold must be in (0, high_acceptance_threshold) and <= 1.")
+        if not (0.0 < diag_cfg.gibbs_low_acceptance_threshold < diag_cfg.high_acceptance_threshold <= 1.0):
+            errors.append("diagnostics.gibbs_low_acceptance_threshold must be in (0, high_acceptance_threshold) and <= 1.")
+        if not (0.0 <= diag_cfg.gibbs_activation_acceptance <= 1.0):
+            errors.append(f"diagnostics.gibbs_activation_acceptance must be in [0, 1], got {diag_cfg.gibbs_activation_acceptance}.")
+        if not (0.0 <= diag_cfg.recondition_shrinkage <= 1.0):
+            errors.append(f"diagnostics.recondition_shrinkage must be in [0, 1], got {diag_cfg.recondition_shrinkage}.")
+        if diag_cfg.recondition_min_eigen_floor <= 0.0:
+            errors.append(f"diagnostics.recondition_min_eigen_floor must be > 0, got {diag_cfg.recondition_min_eigen_floor}.")
 
     return errors
 

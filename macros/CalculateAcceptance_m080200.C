@@ -1,8 +1,8 @@
 
 #if defined(__CLING__)
+R__ADD_INCLUDE_PATH(/d/home/septian/Moments2Amplitudes/macros)
 R__ADD_INCLUDE_PATH(/d/home/septian/EtaPi0Analysis/macros)
 R__ADD_INCLUDE_PATH(/d/grid17/septian/EtaPi0Analysis/macros)
-R__ADD_INCLUDE_PATH(/d/home/septian/Moments2Amplitudes/macros)
 #endif
 #include "CrossSectionUtils.C"
 #include <TSystem.h>
@@ -11,7 +11,12 @@ void CalculateAcceptance_m080200(
     int tbin_index = 0,
     TString custom_run_dir = "",
     TString result_file_name = "",
-    int maxL = 4
+    int maxL = 4,
+    double m_min = 0.8,
+    double m_max = 2.0,
+    int n_bins = 30,
+    TString custom_data_dir = "",
+    bool force_rebin = false
 ) {
     if (tbin_index < 0 || tbin_index > 4) {
         cout << "Invalid tbin_index. Please provide a value between 0 and 4:" << endl;
@@ -50,33 +55,53 @@ void CalculateAcceptance_m080200(
     if (!result_file_name.IsNull()) {
         config.result_file_name = result_file_name;
     } else {
-        if (!gSystem->AccessPathName(config.fit_result_dir + "Mpi0eta0.820000_/ResultsBruMcmcFixedCovariance.root") ||
-            !gSystem->AccessPathName(config.fit_result_dir + "Mpi0eta0.940000_/ResultsBruMcmcFixedCovariance.root")) {
+        double first_bin_center = m_min + 0.5 * (m_max - m_min) / n_bins;
+        TString first_fixed_cov = config.fit_result_dir + Form("Mpi0eta%.6f_/ResultsBruMcmcFixedCovariance.root", first_bin_center);
+        if (!gSystem->AccessPathName(first_fixed_cov) ||
+            config.fit_result_dir.Contains("FixedCov")) {
             config.result_file_name = "ResultsBruMcmcFixedCovariance.root";
         } else {
             config.result_file_name = "ResultsBruMcmcCovariance.root";
         }
     }
 
-    config.analysis_tag = Form("m080200_maxL%d", maxL);
+    config.analysis_tag = Form("m%03d%03d_maxL%d", (int)TMath::Nint(m_min * 100), (int)TMath::Nint(m_max * 100), maxL);
     config.lmax = TMath::Floor(maxL / 2);
     config.mmax = TMath::Floor(maxL / 2);
     config.nrefl = 2;
 
-    // Data directory with merged weights
-    TString input_dir = "/d/grid17/septian/EtaPi0Analysis/data/m080200/";
-    if (gSystem->AccessPathName(input_dir + Form("weights_data_merged_%s.root", tbin_name.Data()))) {
-        input_dir = "/d/grid17/septian/EtaPi0Analysis/data/nominal_tbins/";
+    // Data directory with merged weights and binner inputs (prioritize nominal_tbins)
+    TString weights_fname = Form("weights_data_merged_%s.root", tbin_name.Data());
+    TString input_dir;
+    if (!custom_data_dir.IsNull()) {
+        input_dir = EnsureTrailingSlash(custom_data_dir);
+    } else {
+        std::vector<TString> candidate_dirs = {
+            "/d/home/septian/Moments2Amplitudes/data/data/nominal_tbins/",
+            "/d/grid17/septian/EtaPi0Analysis/data/nominal_tbins/",
+            "/d/grid17/septian/EtaPi0Analysis/data/m080200/"
+        };
+        for (const auto& cand : candidate_dirs) {
+            if (!gSystem->AccessPathName(cand + weights_fname)) {
+                input_dir = cand;
+                break;
+            }
+        }
+        if (input_dir.IsNull()) input_dir = candidate_dirs.front();
     }
     config.input_data_dir = input_dir;
-    config.weights_file = Form("weights_data_merged_%s.root", tbin_name.Data());
+    config.data_file = Form("data_merged_%s.root", tbin_name.Data());
+    config.simulated_file = Form("reconmc_merged_%s.root", tbin_name.Data());
+    config.generated_file = Form("genmc_merged_%s.root", tbin_name.Data());
+    config.weights_file = weights_fname;
+    config.force_rebin = force_rebin;
     config.weight_species = "Acc";
     config.weight_name = "weight";
 
     config.bin_variables = {"Mpi0eta"};
-    config.n_bins = {30};
-    config.bin_min = {0.8};
-    config.bin_max = {2.0};
+    config.n_bins = {n_bins};
+    config.bin_min = {m_min};
+    config.bin_max = {m_max};
     config.luminosity_file = "/d/home/septian/Moments2Amplitudes/data/flux_GlueXI_GlueX2020.root";
 
     cout << "==========================================================" << endl;

@@ -28,6 +28,7 @@ MCMC_ITERS=200000
 MCMC_BURNIN=2000
 ESS_THRESHOLD=20.0
 ESS_METRIC="mean"
+MIN_ESS_THRESHOLD="10.0"
 AUTO_RETRY=false
 MAX_RETRIES=2
 NUM_CPUS=$(nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 2)
@@ -40,6 +41,32 @@ ALLOW_NEG_PDF=true
 USE_TUNING=true
 GIBBS_BLOCK_SIZE=0
 COLD_WARMUP_ACC=0.15
+MIN_ACCEPTANCE=0.05
+MAX_ACCEPTANCE=0.15
+TARGET_ACCEPTANCE=""
+TUNE_MODE="MappedRhat"
+RHAT_WINDOW=1000
+RHAT_TARGET=1.05
+ESS_FRACTION=0.02
+RHAT_MAX_RETRIES=5
+BAILOUT_THRESHOLD=10000
+BAILOUT_MIN_ACC=0.0001
+MC_INT_BINS=50
+FIXED_COV=true
+USE_COV=true
+SET_INIT_VALUE=true
+USE_GJ_FRAME=true
+NUM_CPU=1
+MCMC_SEED=111
+MAX_RETRY_ITERS=200000
+BURNIN_FRACTION=0.10
+LOW_ACC_THRESH=0.03
+GIBBS_LOW_ACC_THRESH=0.12
+HIGH_ACC_THRESH=0.35
+GIBBS_ACT_ACC=0.05
+RECONDITION_COV=false
+RECONDITION_SHRINKAGE=0.2
+RECONDITION_MIN_EIGEN=1.0e-4
 
 NO_WAIT=false
 WATCH=false
@@ -117,6 +144,26 @@ Options:
   --no-tuning                     Disable MCMC covariance tuning engine.
   --gibbs-block-size <int>        Gibbs block size (default: 0).
   --cold-warmup-acc <float>       Cold warm-up acceptance target (default: 0.15).
+  --min-acceptance <float>        Minimum acceptance bound for tuning (default: 0.05).
+  --max-acceptance <float>        Maximum acceptance bound for tuning (default: 0.15).
+  --target-acceptance <float>     Target acceptance rate (default: midpoint of [min, max]).
+  --tune-mode <mode>              Tuning mode: MappedRhat or Acceptance (default: MappedRhat).
+  --rhat-window <int>             R-hat tuning window size (default: 1000).
+  --rhat-target <float>           R-hat tuning target (default: 1.05).
+  --ess-fraction <float>          ESS fraction for MappedRhat tuning (default: 0.02).
+  --rhat-max-retries <int>        Max adaptive R-hat retries (default: 5).
+  --bailout-threshold <int>       Bailout check proposal count (default: 10000).
+  --bailout-min-acceptance <flt>  Bailout min acceptance fraction (default: 0.0001).
+  --mc-integration-bins <int>     Angular MC integration bins (default: 50).
+  --fixed-covariance / --no-fixed-covariance  Use linear-algebra fixed covariance (default: true).
+  --use-covariance / --no-use-covariance      Use covariance proposal matrix (default: true).
+  --set-init-value / --no-set-init-value      Initialize from Stage 2 moments (default: true).
+  --gj-frame / --hel-frame        Decay frame (default: --gj-frame).
+  --num-cpu <int>                 RooFit NumCPU per job (default: 1).
+  --seed <int>                    gRandom RNG seed (default: 111).
+  --max-retry-iters <int>         Retry MCMC iteration cap (default: 200000).
+  --burnin-fraction <float>       Retry burn-in fraction of iterations (default: 0.10).
+  --recondition-covariance / --no-recondition-covariance  Opt-in empirical covariance reconditioning (default: false).
   --progress-only, --status-only  Print status table without full plot generation.
   --help, -h                      Show this help message.
 
@@ -250,6 +297,10 @@ while [[ $# -gt 0 ]]; do
             ESS_METRIC="$2"
             shift 2
             ;;
+        --min-ess-threshold)
+            MIN_ESS_THRESHOLD="$2"
+            shift 2
+            ;;
         --mc-variance)
             APPLY_MC_VAR=true
             shift
@@ -280,6 +331,130 @@ while [[ $# -gt 0 ]]; do
             ;;
         --cold-warmup-acc)
             COLD_WARMUP_ACC="$2"
+            shift 2
+            ;;
+        --min-acceptance)
+            MIN_ACCEPTANCE="$2"
+            shift 2
+            ;;
+        --max-acceptance)
+            MAX_ACCEPTANCE="$2"
+            shift 2
+            ;;
+        --target-acceptance)
+            TARGET_ACCEPTANCE="$2"
+            shift 2
+            ;;
+        --tune-mode)
+            TUNE_MODE="$2"
+            shift 2
+            ;;
+        --rhat-window)
+            RHAT_WINDOW="$2"
+            shift 2
+            ;;
+        --rhat-target)
+            RHAT_TARGET="$2"
+            shift 2
+            ;;
+        --ess-fraction)
+            ESS_FRACTION="$2"
+            shift 2
+            ;;
+        --rhat-max-retries)
+            RHAT_MAX_RETRIES="$2"
+            shift 2
+            ;;
+        --bailout-threshold)
+            BAILOUT_THRESHOLD="$2"
+            shift 2
+            ;;
+        --bailout-min-acceptance)
+            BAILOUT_MIN_ACC="$2"
+            shift 2
+            ;;
+        --mc-integration-bins)
+            MC_INT_BINS="$2"
+            shift 2
+            ;;
+        --fixed-covariance)
+            FIXED_COV=true
+            shift
+            ;;
+        --no-fixed-covariance)
+            FIXED_COV=false
+            shift
+            ;;
+        --use-covariance)
+            USE_COV=true
+            shift
+            ;;
+        --no-use-covariance)
+            USE_COV=false
+            shift
+            ;;
+        --set-init-value)
+            SET_INIT_VALUE=true
+            shift
+            ;;
+        --no-set-init-value)
+            SET_INIT_VALUE=false
+            shift
+            ;;
+        --gj-frame)
+            USE_GJ_FRAME=true
+            shift
+            ;;
+        --hel-frame)
+            USE_GJ_FRAME=false
+            shift
+            ;;
+        --num-cpu)
+            NUM_CPU="$2"
+            shift 2
+            ;;
+        --seed)
+            MCMC_SEED="$2"
+            shift 2
+            ;;
+        --max-retry-iters)
+            MAX_RETRY_ITERS="$2"
+            shift 2
+            ;;
+        --burnin-fraction)
+            BURNIN_FRACTION="$2"
+            shift 2
+            ;;
+        --low-acceptance-threshold)
+            LOW_ACC_THRESH="$2"
+            shift 2
+            ;;
+        --gibbs-low-acceptance-threshold)
+            GIBBS_LOW_ACC_THRESH="$2"
+            shift 2
+            ;;
+        --high-acceptance-threshold)
+            HIGH_ACC_THRESH="$2"
+            shift 2
+            ;;
+        --gibbs-activation-acceptance)
+            GIBBS_ACT_ACC="$2"
+            shift 2
+            ;;
+        --recondition-covariance)
+            RECONDITION_COV=true
+            shift
+            ;;
+        --no-recondition-covariance)
+            RECONDITION_COV=false
+            shift
+            ;;
+        --recondition-shrinkage)
+            RECONDITION_SHRINKAGE="$2"
+            shift 2
+            ;;
+        --recondition-min-eigen-floor)
+            RECONDITION_MIN_EIGEN="$2"
             shift 2
             ;;
         --auto-retry)
@@ -766,6 +941,26 @@ if [ "$MODE" != "monitor_only" ] && [ "$MODE" != "no_fit" ] && [ "$MODE" != "col
     }
     trap cleanup_on_interrupt SIGINT SIGTERM
 
+    export_mom2amp_env() {
+        export MOM2AMP_MIN_ACCEPTANCE="$MIN_ACCEPTANCE"
+        export MOM2AMP_MAX_ACCEPTANCE="$MAX_ACCEPTANCE"
+        export MOM2AMP_TARGET_ACCEPTANCE="$TARGET_ACCEPTANCE"
+        export MOM2AMP_TUNE_MODE="$TUNE_MODE"
+        export MOM2AMP_RHAT_WINDOW="$RHAT_WINDOW"
+        export MOM2AMP_RHAT_TARGET="$RHAT_TARGET"
+        export MOM2AMP_ESS_FRACTION="$ESS_FRACTION"
+        export MOM2AMP_RHAT_MAX_RETRIES="$RHAT_MAX_RETRIES"
+        export MOM2AMP_BAILOUT_THRESHOLD="$BAILOUT_THRESHOLD"
+        export MOM2AMP_BAILOUT_MIN_ACC="$BAILOUT_MIN_ACC"
+        export MOM2AMP_MC_INT_BINS="$MC_INT_BINS"
+        export MOM2AMP_FIXED_COV="$FIXED_COV"
+        export MOM2AMP_USE_COV="$USE_COV"
+        export MOM2AMP_SET_INIT_VALUE="$SET_INIT_VALUE"
+        export MOM2AMP_USE_GJ_FRAME="$USE_GJ_FRAME"
+        export MOM2AMP_NUM_CPU="$NUM_CPU"
+        export MOM2AMP_SEED="$MCMC_SEED"
+    }
+
     run_tbin_worker() {
         local i="$1"
         local tbin_name="${TBIN_INDEX_MAP[$i]:-tbin_${i}}"
@@ -800,6 +995,7 @@ if [ "$MODE" != "monitor_only" ] && [ "$MODE" != "no_fit" ] && [ "$MODE" != "col
             weight_f="${weight_f//\{base_dir\}/$CUSTOM_DATA_DIR}"
         fi
 
+        export_mom2amp_env
         if [[ "$MACRO_PATH" =~ MomentFit_m080200\.C$ ]]; then
             root -l -b -q "${BRUFIT}/macros/LoadBru.C" \
                 "${MACRO_PATH}($i, $MAX_L, $INIT_SCALE, $STEP, $APPLY_MC_VAR, $ALLOW_NEG_PDF, $USE_TUNING, $GIBBS_BLOCK_SIZE, $COLD_WARMUP_ACC)" > "$log_file" 2>&1
@@ -928,10 +1124,49 @@ run_collection_and_retry() {
         --n-bins "$N_BINS"
         --ess-threshold "$ESS_THRESHOLD"
         --ess-metric "$ESS_METRIC"
+        --min-ess-threshold "$MIN_ESS_THRESHOLD"
         --burn-in "$MCMC_BURNIN"
         --max-parallel "$MAX_PARALLEL"
         --macro-path "$MACRO_PATH"
+        --gibbs-block-size "$GIBBS_BLOCK_SIZE"
+        --cold-warmup-acc "$COLD_WARMUP_ACC"
+        --min-acceptance "$MIN_ACCEPTANCE"
+        --max-acceptance "$MAX_ACCEPTANCE"
+        --tune-mode "$TUNE_MODE"
+        --rhat-window "$RHAT_WINDOW"
+        --rhat-target "$RHAT_TARGET"
+        --ess-fraction "$ESS_FRACTION"
+        --rhat-max-retries "$RHAT_MAX_RETRIES"
+        --bailout-threshold "$BAILOUT_THRESHOLD"
+        --bailout-min-acceptance "$BAILOUT_MIN_ACC"
+        --mc-integration-bins "$MC_INT_BINS"
+        --num-cpu "$NUM_CPU"
+        --seed "$MCMC_SEED"
+        --max-retry-iters "$MAX_RETRY_ITERS"
+        --burnin-fraction "$BURNIN_FRACTION"
+        --low-acceptance-threshold "$LOW_ACC_THRESH"
+        --gibbs-low-acceptance-threshold "$GIBBS_LOW_ACC_THRESH"
+        --high-acceptance-threshold "$HIGH_ACC_THRESH"
+        --gibbs-activation-acceptance "$GIBBS_ACT_ACC"
+        --recondition-shrinkage "$RECONDITION_SHRINKAGE"
+        --recondition-min-eigen-floor "$RECONDITION_MIN_EIGEN"
     )
+
+    if [ -n "$TARGET_ACCEPTANCE" ]; then COLLECTOR_CMD+=(--target-acceptance "$TARGET_ACCEPTANCE"); fi
+    if [ -n "$CUSTOM_COV_DIR" ]; then COLLECTOR_CMD+=(--cov-dir "$CUSTOM_COV_DIR"); fi
+    if [ -n "$CUSTOM_DATA_DIR" ]; then COLLECTOR_CMD+=(--data-dir "$CUSTOM_DATA_DIR"); fi
+    if [ -n "$CUSTOM_DATA_FILE" ]; then COLLECTOR_CMD+=(--data-pattern "$CUSTOM_DATA_FILE"); fi
+    if [ -n "$CUSTOM_MCRECON_FILE" ]; then COLLECTOR_CMD+=(--mcrecon-pattern "$CUSTOM_MCRECON_FILE"); fi
+    if [ -n "$CUSTOM_MCGEN_FILE" ]; then COLLECTOR_CMD+=(--mcgen-pattern "$CUSTOM_MCGEN_FILE"); fi
+    if [ -n "$CUSTOM_WEIGHT_FILE" ]; then COLLECTOR_CMD+=(--weight-pattern "$CUSTOM_WEIGHT_FILE"); fi
+    if [ "$APPLY_MC_VAR" = true ]; then COLLECTOR_CMD+=(--mc-variance); else COLLECTOR_CMD+=(--no-mc-variance); fi
+    if [ "$ALLOW_NEG_PDF" = true ]; then COLLECTOR_CMD+=(--negative-pdf); else COLLECTOR_CMD+=(--no-negative-pdf); fi
+    if [ "$USE_TUNING" = true ]; then COLLECTOR_CMD+=(--tuning); else COLLECTOR_CMD+=(--no-tuning); fi
+    if [ "$FIXED_COV" = true ]; then COLLECTOR_CMD+=(--fixed-covariance); else COLLECTOR_CMD+=(--no-fixed-covariance); fi
+    if [ "$USE_COV" = true ]; then COLLECTOR_CMD+=(--use-covariance); else COLLECTOR_CMD+=(--no-use-covariance); fi
+    if [ "$SET_INIT_VALUE" = true ]; then COLLECTOR_CMD+=(--set-init-value); else COLLECTOR_CMD+=(--no-set-init-value); fi
+    if [ "$USE_GJ_FRAME" = true ]; then COLLECTOR_CMD+=(--gj-frame); else COLLECTOR_CMD+=(--hel-frame); fi
+    if [ "$RECONDITION_COV" = true ]; then COLLECTOR_CMD+=(--recondition-covariance); else COLLECTOR_CMD+=(--no-recondition-covariance); fi
 
     if [ "$EXPLICIT_MAX_L" = true ]; then COLLECTOR_CMD+=(--max-l "$MAX_L"); fi
     if [ "$EXPLICIT_SCALE" = true ]; then COLLECTOR_CMD+=(--init-scale "$INIT_SCALE"); fi

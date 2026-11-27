@@ -265,14 +265,74 @@ def parse_arguments():
         "--replot-from-root", "--from-root", action="store_true",
         help="Re-render all PDF plots (traces, posteriors, moments vs mass) directly from saved ROOT files without re-evaluating MCMC trees."
     )
+    parser.add_argument(
+        "--m-min", type=float, default=None,
+        help="Minimum resonance mass in GeV for acceptance calculation (auto-inferred from run directory if omitted)."
+    )
+    parser.add_argument(
+        "--m-max", type=float, default=None,
+        help="Maximum resonance mass in GeV for acceptance calculation (auto-inferred from run directory if omitted)."
+    )
+    parser.add_argument(
+        "--n-bins", type=int, default=None,
+        help="Number of mass bins for acceptance calculation (auto-inferred from mass subdirectories if omitted)."
+    )
     return parser.parse_args()
+
+
+def _infer_mass_binning(
+    tbin_dir: str,
+    m_min: float | None = None,
+    m_max: float | None = None,
+    n_bins: int | None = None
+) -> tuple[float, float, int]:
+    """Infer (m_min, m_max, n_bins) from tbin_dir/run_dir unless explicitly overridden."""
+    centers = []
+    if os.path.isdir(tbin_dir):
+        for d in os.listdir(tbin_dir):
+            if ".bak" in d:
+                continue
+            m = re.match(r"^Mpi0eta([0-9.]+)_?$", d)
+            if m and os.path.isdir(os.path.join(tbin_dir, d)):
+                centers.append(float(m.group(1)))
+    centers.sort()
+
+    eff_n_bins = n_bins if n_bins is not None else (len(centers) if centers else 30)
+    eff_m_min = m_min
+    eff_m_max = m_max
+
+    if eff_m_min is None or eff_m_max is None:
+        tag_match = re.search(r"_m(\d{3})(\d{3})(?:_|$)", tbin_dir)
+        if tag_match:
+            if eff_m_min is None:
+                eff_m_min = int(tag_match.group(1)) / 100.0
+            if eff_m_max is None:
+                eff_m_max = int(tag_match.group(2)) / 100.0
+        elif len(centers) >= 2:
+            step = (centers[-1] - centers[0]) / float(len(centers) - 1)
+            if eff_m_min is None:
+                eff_m_min = round(centers[0] - 0.5 * step, 4)
+            if eff_m_max is None:
+                eff_m_max = round(centers[-1] + 0.5 * step, 4)
+
+    if eff_m_min is None:
+        eff_m_min = 0.8
+    if eff_m_max is None:
+        eff_m_max = 2.0
+
+    return eff_m_min, eff_m_max, eff_n_bins
 
 
 def run_calculate_acceptance(
     tbin_name: str,
     tbin_dir: str,
     root_filename: str | None = None,
-    max_l: int = 4
+    max_l: int = 4,
+    m_min: float = 0.8,
+    m_max: float = 2.0,
+    n_bins: int = 30,
+    custom_data_dir: str = "",
+    force_rebin: bool = False
 ) -> bool:
     """Run CalculateAcceptance_m080200.C via ROOT for a converged t-bin.
 
@@ -299,6 +359,7 @@ def run_calculate_acceptance(
     brufit_load = None
     for cand in [
         os.environ.get("BRUFIT", "") + "/macros/LoadBru.C",
+        "/d/grid17/septian/brufit_dev/brufit_negative/macros/LoadBru.C",
         "/d/home/septian/brufit/macros/LoadBru.C",
         "/d/grid17/septian/brufit/macros/LoadBru.C"
     ]:
@@ -343,7 +404,12 @@ def run_calculate_acceptance(
     if shutil.which("root") is None and os.path.isfile("/d/grid17/septian/root_v6-36-08_cuda_install/bin/thisroot.sh"):
         env_source += "source /d/grid17/septian/root_v6-36-08_cuda_install/bin/thisroot.sh && "
 
-    root_cmd = f'{env_source}root -l -b -q {brufit_load} \'{macro_path}({tbin_idx}, "{tbin_dir}", "{res_file}", {max_l})\''
+    force_rebin_str = "true" if force_rebin else "false"
+    root_cmd = (
+        f'{env_source}root -l -b -q {brufit_load} '
+        f'\'{macro_path}({tbin_idx}, "{tbin_dir}", "{res_file}", {max_l}, '
+        f'{m_min}, {m_max}, {n_bins}, "{custom_data_dir}", {force_rebin_str})\''
+    )
 
     print(f"\n--- Running CalculateAcceptance_m080200.C for {tbin_name} ---")
     print(f"Command: {root_cmd}")
@@ -669,7 +735,10 @@ def monitor_single_tbin(
     force_plots: bool = False,
     ess_metric: str = "mean",
     downsample_trace: int | None = None,
-    replot_from_root: bool = False
+    replot_from_root: bool = False,
+    m_min: float | None = None,
+    m_max: float | None = None,
+    n_bins: int | None = None
 ):
     if output_dir is None:
         plot_out_dir = tbin_dir
@@ -744,6 +813,7 @@ def monitor_single_tbin(
             n_loaded = 0
 
         # 3. Print MCMC Chain Diagnostics for finished bins
+        diags = None
         if mcmc is not None and n_loaded > 0:
             print("\n[3/5] MCMC Diagnostics Across Successful Mass Bins:")
             diags = mcmc.print_mcmc_diagnostics()
@@ -846,12 +916,19 @@ def monitor_single_tbin(
             return
 
         if mcmc is not None and not skip_trace:
-            downsample_note = f" (downsampled to {downsample_trace} pts)" if downsample_trace else ""
+            import inspect
+            sig = inspect.signature(mcmc.print_all_moment_trace_graph)
+            supports_downsample = "max_points" in sig.parameters
+            downsample_note = f" (downsampled to {downsample_trace} pts)" if (downsample_trace and supports_downsample) else ""
             print(f"\n[4a/5] Generating MCMC Trace plots -> {trace_pdf}{downsample_note}")
             print(f"      ROOT: {trace_root}")
             try:
-                mcmc.print_all_moment_trace_graph(trace_pdf, max_points=downsample_trace)
-                mcmc.save_all_moment_trace_graphs(trace_root, max_points=downsample_trace)
+                if supports_downsample:
+                    mcmc.print_all_moment_trace_graph(trace_pdf, max_points=downsample_trace)
+                else:
+                    mcmc.print_all_moment_trace_graph(trace_pdf)
+                if hasattr(mcmc, "save_all_moment_trace_graphs"):
+                    mcmc.save_all_moment_trace_graphs(trace_root, max_points=downsample_trace)
             except Exception as e:
                 print(f"Warning: Failed to generate trace plots: {e}")
         else:
@@ -862,7 +939,8 @@ def monitor_single_tbin(
             print(f"      ROOT: {posterior_root}")
             try:
                 mcmc.print_posterior_distribution_all_bins(posterior_pdf, burn_in=burn_in)
-                mcmc.save_posterior_distributions_to_root(posterior_root, burn_in=burn_in)
+                if hasattr(mcmc, "save_posterior_distributions_to_root"):
+                    mcmc.save_posterior_distributions_to_root(posterior_root, burn_in=burn_in)
             except Exception as e:
                 print(f"Warning: Failed to generate posterior distribution plots: {e}")
         else:
@@ -879,11 +957,15 @@ def monitor_single_tbin(
             else:
                 print(f"✅ All {n_total} mass bins converged successfully! Running CalculateAcceptance_m080200.C...")
 
+            eff_m_min, eff_m_max, eff_n_bins = _infer_mass_binning(tbin_dir, m_min, m_max, n_bins)
             acc_success = run_calculate_acceptance(
                 tbin_name=tbin_name,
                 tbin_dir=tbin_dir,
                 root_filename=root_filename,
-                max_l=max_l
+                max_l=max_l,
+                m_min=eff_m_min,
+                m_max=eff_m_max,
+                n_bins=eff_n_bins
             )
             if acc_success and mcmc is not None:
                 try:
@@ -908,8 +990,18 @@ def monitor_single_tbin(
             print(f"      PDF:  {moments_pdf}")
             print(f"      ROOT: {moments_root}")
             try:
-                mcmc.print_unnormalized_moments_vs_mass_by_ess(moments_pdf, ess_threshold=ess_threshold, burn_in=burn_in)
-                mcmc.save_unnormalized_moments_vs_mass_by_ess(moments_root, ess_threshold=ess_threshold, burn_in=burn_in)
+                mcmc.print_unnormalized_moments_vs_mass_by_ess(
+                    moments_pdf,
+                    ess_threshold=ess_threshold,
+                    burn_in=burn_in,
+                    cached_diagnostics=diags
+                )
+                mcmc.save_unnormalized_moments_vs_mass_by_ess(
+                    moments_root,
+                    ess_threshold=ess_threshold,
+                    burn_in=burn_in,
+                    cached_diagnostics=diags
+                )
             except Exception as e:
                 print(f"Warning: Failed to generate unnormalized moments vs mass plots: {e}")
         else:
@@ -987,7 +1079,10 @@ def execute_monitoring_cycle(args, run_dir: str):
                 force_plots=args.plot,
                 ess_metric=args.ess_metric,
                 downsample_trace=getattr(args, 'downsample_trace', None),
-                replot_from_root=getattr(args, 'replot_from_root', False)
+                replot_from_root=getattr(args, 'replot_from_root', False),
+                m_min=getattr(args, 'm_min', None),
+                m_max=getattr(args, 'm_max', None),
+                n_bins=getattr(args, 'n_bins', None)
             )
     else:
         max_workers = min(len(tbin_dirs), os.cpu_count() or 4, getattr(args, 'max_parallel_tbins', 5) or 5)
@@ -1011,7 +1106,10 @@ def execute_monitoring_cycle(args, run_dir: str):
                 'force_plots': args.plot,
                 'ess_metric': args.ess_metric,
                 'downsample_trace': getattr(args, 'downsample_trace', None),
-                'replot_from_root': getattr(args, 'replot_from_root', False)
+                'replot_from_root': getattr(args, 'replot_from_root', False),
+                'm_min': getattr(args, 'm_min', None),
+                'm_max': getattr(args, 'm_max', None),
+                'n_bins': getattr(args, 'n_bins', None)
             }
             for tbin_name, tbin_path in tbin_dirs
         ]

@@ -125,13 +125,41 @@ moment_fit:
     apply_mc_variance: false      # Enable MC variance scaling
     allow_negative_pdf: true      # Allow negative PDF / negative intensities
     use_tuning: true              # Activate MCMC covariance tuning engine
-    gibbs_block_size: 0           # Gibbs block size (0 = disabled)
+    gibbs_block_size: 0           # Default Gibbs block size (0 = full-vector proposal)
+    gibbs_block_size_by_max_l: {} # Optional per-maxL Gibbs block overrides (e.g. {4: 0, 6: 12, 8: 16})
     cold_warmup_acc: 0.15         # Cold warm-up acceptance rate target
+    min_acceptance: 0.05          # Minimum acceptance bound for MCMC tuning
+    max_acceptance: 0.15          # Maximum acceptance bound for MCMC tuning
+    target_acceptance: null       # Target acceptance rate (null = midpoint of [min, max])
+    tune_mode: "MappedRhat"       # BruFit tuning mode: "MappedRhat" or "Acceptance"
+    rhat_window: 1000             # Window size for MappedRhat diagnostic tuning
+    rhat_target: 1.05             # Target R-hat threshold during adaptive tuning
+    ess_fraction: 0.02            # Minimum ESS fraction during MappedRhat tuning
+    rhat_max_retries: 5           # Maximum adaptive R-hat tuning retries
+    bailout_threshold: 10000      # Proposals before checking low-acceptance bailout
+    bailout_min_acceptance: 0.0001 # Minimum acceptance required past bailout_threshold
+    mc_integration_bins: 50       # Angular grid bins for RooFit MC integration
+    fixed_covariance: true        # Use fixed Stage 2 linear-algebra covariance (false = BruMcmcCovariance)
+    use_covariance: true          # Use covariance proposal matrix (false = diagonal Gaussian proposal)
+    set_init_value: true          # Initialize moments from Stage 2 linear-algebra values
+    use_gj_frame: true            # Decay angles frame (true = Gottfried-Jackson, false = Helicity)
+    num_cpu: 1                    # RooFit likelihood evaluation CPUs per job
+    seed: 111                     # gRandom RNG seed for MomentFit
   diagnostics:
     ess_threshold: 20.0           # Effective Sample Size threshold
     ess_metric: "mean"            # Metric to evaluate against threshold ("mean" or "min")
+    min_ess_threshold: 10.0       # Safety floor on worst-moment ESS (even when ess_metric="mean")
     auto_retry: false             # Auto-retry bins not meeting ESS threshold
     max_retries: 2                # Max retry rounds for bad bins
+    max_retry_iters: 200000       # Maximum MCMC iteration cap for retry escalation
+    burnin_fraction: 0.10         # Retry burn-in fraction of retry iterations (0.0 disables scaling)
+    low_acceptance_threshold: 0.03 # Low-acceptance threshold for full-vector proposals (gibbs=0)
+    gibbs_low_acceptance_threshold: 0.12 # Low-acceptance threshold for blocked Gibbs proposals (gibbs>0)
+    high_acceptance_threshold: 0.35 # High-acceptance threshold (triggers step increase)
+    gibbs_activation_acceptance: 0.05 # Enable blocked Gibbs on maxL>=6 retries below this acceptance
+    recondition_covariance: false # Opt-in: empirical posterior covariance blend on LOW_ESS retries (default: false)
+    recondition_shrinkage: 0.2    # Shrinkage weight toward Stage 2 linear-algebra prior (when enabled)
+    recondition_min_eigen_floor: 1.0e-4 # SPD correlation-space eigenvalue floor for reconditioning
   max_parallel: 2                 # Concurrent t-bin fit jobs
   overwrite: false                # Overwrite existing fit logs and results without prompt
 

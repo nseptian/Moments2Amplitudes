@@ -6,6 +6,7 @@ R__ADD_INCLUDE_PATH(/d/grid17/septian/EtaPi0Analysis/macros)
 
 #include "MomentFitUtils.C"
 #include <TSystem.h>
+#include <cstdlib>
 #include <map>
 
 // ==============================================================================
@@ -41,7 +42,8 @@ void MomentFit(
     TString custom_data_file = "",
     TString custom_mcrecon_file = "",
     TString custom_mcgen_file = "",
-    TString custom_weight_file = ""
+    TString custom_weight_file = "",
+    bool run_fit_flag = true
 ) {
     if (tbin_index < 0 || tbin_index > 4) {
         cout << "Invalid tbin_index. Please provide a value between 0 and 4:" << endl;
@@ -138,46 +140,69 @@ void MomentFit(
         cout << "==========================================================" << endl;
     }
 
+    auto env_double = [](const char* name, double fallback) -> double {
+        const char* val = gSystem->Getenv(name);
+        return (val && val[0] != '\0') ? atof(val) : fallback;
+    };
+    auto env_int = [](const char* name, int fallback) -> int {
+        const char* val = gSystem->Getenv(name);
+        return (val && val[0] != '\0') ? atoi(val) : fallback;
+    };
+    auto env_bool = [](const char* name, bool fallback) -> bool {
+        const char* val = gSystem->Getenv(name);
+        if (!val || val[0] == '\0') return fallback;
+        TString s(val);
+        s.ToLower();
+        return (s == "1" || s == "true" || s == "yes" || s == "on");
+    };
+    auto env_str = [](const char* name, const char* fallback) -> TString {
+        const char* val = gSystem->Getenv(name);
+        return (val && val[0] != '\0') ? TString(val) : TString(fallback);
+    };
+
     // 5. Multipoles and physics configuration
     config.lmax = TMath::Floor(maxL / 2);
     config.mmax = TMath::Floor(maxL / 2);
     config.nrefl = 2;
-    config.num_cpu = 1;
-    config.run_fit = true;
-    config.use_gj_frame = true;
+    config.num_cpu = env_int("MOM2AMP_NUM_CPU", 1);
+    config.run_fit = run_fit_flag;
+    config.use_gj_frame = env_bool("MOM2AMP_USE_GJ_FRAME", true);
 
     // 6. MCMC Configuration
     config.mcmc_iterations = {mcmc_iterations, mcmc_iterations, mcmc_iterations};
     config.mcmc_burnin = mcmc_burnin;
     config.mcmc_step = mcmc_step;
-    config.mcmc_min_acceptance = 0.05;
-    config.mcmc_max_acceptance = 0.15;
-    config.mcmc_target_acceptance = (config.mcmc_min_acceptance + config.mcmc_max_acceptance) / 2.0;
+    config.mcmc_min_acceptance = env_double("MOM2AMP_MIN_ACCEPTANCE", 0.05);
+    config.mcmc_max_acceptance = env_double("MOM2AMP_MAX_ACCEPTANCE", 0.15);
+    double default_target_acc = 0.5 * (config.mcmc_min_acceptance + config.mcmc_max_acceptance);
+    config.mcmc_target_acceptance = env_double("MOM2AMP_TARGET_ACCEPTANCE", default_target_acc);
 
     // Likelihood & PDF options
     config.apply_mc_variance = apply_mc_variance;
     config.allow_negative_pdf = allow_negative_pdf;
-    config.mc_integration_bins = 50;
+    config.mc_integration_bins = env_int("MOM2AMP_MC_INT_BINS", 50);
 
     // Tuning options
     config.mcmc_use_covariance_tuning = use_tuning;
-    config.mcmc_tune_mode = "MappedRhat";
-    config.mcmc_rhat_window = 1000;
-    config.mcmc_rhat_target = 1.05;
-    config.mcmc_ess_fraction = 0.02;
-    config.mcmc_rhat_max_retries = 5;
+    config.mcmc_tune_mode = env_str("MOM2AMP_TUNE_MODE", "MappedRhat");
+    config.mcmc_rhat_window = env_int("MOM2AMP_RHAT_WINDOW", 1000);
+    config.mcmc_rhat_target = env_double("MOM2AMP_RHAT_TARGET", 1.05);
+    config.mcmc_ess_fraction = env_double("MOM2AMP_ESS_FRACTION", 0.02);
+    config.mcmc_rhat_max_retries = env_int("MOM2AMP_RHAT_MAX_RETRIES", 5);
     config.mcmc_gibbs_block_size = gibbs_block_size;
     config.mcmc_cold_warmup_acceptance = cold_warmup_acc;
 
-    // Fast-fail bailout: cancel if after 10000 sampling proposals there is zero acceptance
-    config.mcmc_bailout_threshold = 10000;
-    config.mcmc_bailout_min_acceptance = 0.0001;
+    // Fast-fail bailout: cancel if after bailout_threshold sampling proposals acceptance falls short
+    config.mcmc_bailout_threshold = env_int("MOM2AMP_BAILOUT_THRESHOLD", 10000);
+    config.mcmc_bailout_min_acceptance = env_double("MOM2AMP_BAILOUT_MIN_ACC", 0.0001);
 
     // 7. Fixed covariance & Initial values
-    config.fixed_covariance = true;
-    config.set_init_value = true;
+    config.fixed_covariance = env_bool("MOM2AMP_FIXED_COV", true);
+    config.mcmc_use_covariance = env_bool("MOM2AMP_USE_COV", true);
+    config.set_init_value = env_bool("MOM2AMP_SET_INIT_VALUE", true);
     config.init_value_scale = init_value_scale;
     config.covariance_matrix_name = "MyCovMatrix";
+    int rng_seed = env_int("MOM2AMP_SEED", 111);
 
     if (target_bin_index >= 0) {
         double bin_low = m_min + target_bin_index * full_bin_width;
@@ -221,7 +246,7 @@ void MomentFit(
 
     // 9. BruFit setup
     FitManager fitter;
-    gRandom->SetSeed(111);
+    gRandom->SetSeed(rng_seed);
     fitter.SetUp().SetOutDir(config.output_dir);
     fitter.SetUp().AddFitOption(RooFit::EvalBackend("cpu"));
     fitter.SetUp().ApplyMCVariance(config.apply_mc_variance);
@@ -232,21 +257,120 @@ void MomentFit(
     configure_variables(amplitude_config, config);
     setup_binning(fitter, config);
     load_data_files(fitter, amplitude_config, config);
+    if (!config.run_fit) {
+        cout << "\n=== BINNING ONLY MODE (run_fit=false) ===" << endl;
+        cout << "Restored BinsConfig files in " << config.output_dir << "; skipping MCMC fit execution." << endl;
+        cout << "=========================================" << endl;
+        return;
+    }
     configure_amplitude_model(amplitude_config, config);
 
-    cout << "\n=== CONFIGURING FIXED COVARIANCE MCMC MINIMIZER ===" << endl;
-    auto mcmc = new HS::FIT::BruMcmcFixedCovariance(
-        config.covariance_file,
-        config.covariance_matrix_name,
-        config.init_value_file,
-        config.init_value_scale,
-        std::vector<Int_t>{config.mcmc_iterations[0], config.mcmc_iterations[2]},
-        config.mcmc_burnin,
-        config.mcmc_step,
-        config.mcmc_target_acceptance,
-        config.mcmc_min_acceptance,
-        config.mcmc_max_acceptance
-    );
+    cout << "\n=== CONFIGURING MCMC MINIMIZER ===" << endl;
+    cout << "  Fixed covariance:    " << (config.fixed_covariance ? "Enabled" : "Disabled") << endl;
+    cout << "  Init values enabled: " << (config.set_init_value ? "Enabled" : "Disabled") << endl;
+    cout << "  MC integration bins: " << config.mc_integration_bins << endl;
+    cout << "  Use GJ frame:        " << (config.use_gj_frame ? "Yes" : "No (Helicity)") << endl;
+    cout << "  RNG seed / NumCPU:   " << rng_seed << " / " << config.num_cpu << endl;
+
+    HS::FIT::BruMcmcCovariance* mcmc = nullptr;
+    if (config.fixed_covariance) {
+        TString ctor_init_file = config.set_init_value ? config.init_value_file : TString("");
+        auto* fixedMcmc = new HS::FIT::BruMcmcFixedCovariance(
+            config.covariance_file,
+            config.covariance_matrix_name,
+            ctor_init_file,
+            config.init_value_scale,
+            std::vector<Int_t>{config.mcmc_iterations[0], config.mcmc_iterations[2]},
+            config.mcmc_burnin,
+            config.mcmc_step,
+            config.mcmc_target_acceptance,
+            config.mcmc_min_acceptance,
+            config.mcmc_max_acceptance
+        );
+
+        if (target_bin_index >= 0) {
+            double bin_low = m_min + target_bin_index * full_bin_width;
+            double bin_high = m_min + (target_bin_index + 1) * full_bin_width;
+            double center = (bin_low + bin_high) / 2.0;
+            TString cov_file = Form("%s/BruCovMatrix_Mpi0eta_%.3f.root", moments_base_dir.Data(), center);
+            TString init_file = Form("%s/covariance_matrix_Mpi0eta_%.3f.root", moments_base_dir.Data(), center);
+            TString bName = fitter.Bins().BinName(0);
+
+            fixedMcmc->SetBinFile(bName, cov_file);
+            fixedMcmc->SetBinFile(0, cov_file);
+            if (config.set_init_value) {
+                fixedMcmc->SetBinInitFile(bName, init_file);
+                fixedMcmc->SetBinInitFile(0, init_file);
+            }
+            cout << Form("  Mapped single bin: %s -> %s (init: %s)",
+                         bName.Data(), cov_file.Data(),
+                         config.set_init_value ? init_file.Data() : "disabled") << endl;
+        } else {
+            int fit_bins = config.n_bins[0];
+            double b_width = (config.bin_max[0] - config.bin_min[0]) / fit_bins;
+            for (int i = 0; i < fit_bins; ++i) {
+                double center = config.bin_min[0] + (i + 0.5) * b_width;
+                TString cov_file = Form("%s/BruCovMatrix_Mpi0eta_%.3f.root", moments_base_dir.Data(), center);
+                TString init_file = Form("%s/covariance_matrix_Mpi0eta_%.3f.root", moments_base_dir.Data(), center);
+                TString bName = fitter.Bins().BinName(i);
+
+                fixedMcmc->SetBinFile(bName, cov_file);
+                fixedMcmc->SetBinFile(i, cov_file);
+                if (config.set_init_value) {
+                    fixedMcmc->SetBinInitFile(bName, init_file);
+                    fixedMcmc->SetBinInitFile(i, init_file);
+                }
+            }
+            cout << "  Explicitly mapped " << fit_bins << " bins into BruMcmcFixedCovariance." << endl;
+        }
+
+        fixedMcmc->SetBailoutParameters(config.mcmc_bailout_threshold, config.mcmc_bailout_min_acceptance);
+        fixedMcmc->BruMcmc::SetBailoutParameters(config.mcmc_bailout_threshold, config.mcmc_bailout_min_acceptance);
+        mcmc = fixedMcmc;
+    } else {
+        mcmc = new HS::FIT::BruMcmcCovariance(
+            config.mcmc_iterations,
+            config.mcmc_burnin,
+            config.mcmc_step,
+            config.mcmc_target_acceptance,
+            config.mcmc_min_acceptance,
+            config.mcmc_max_acceptance
+        );
+        mcmc->SetBailoutParameters(config.mcmc_bailout_threshold, config.mcmc_bailout_min_acceptance);
+
+        if (config.set_init_value) {
+            TString init_file = config.init_value_file;
+            if (init_file.Contains("%.3f")) {
+                int mid_idx = config.n_bins[0] / 2;
+                double mid_center = config.bin_min[0] + (mid_idx + 0.5) * ((config.bin_max[0] - config.bin_min[0]) / config.n_bins[0]);
+                init_file = Form("%s/covariance_matrix_Mpi0eta_%.3f.root", moments_base_dir.Data(), mid_center);
+            }
+            TFile* ifile = TFile::Open(init_file);
+            if (ifile && !ifile->IsZombie()) {
+                TObjString* paramNamesObj = dynamic_cast<TObjString*>(ifile->Get("paramNames"));
+                if (paramNamesObj) {
+                    stringstream namesStream(paramNamesObj->GetString().Data());
+                    string paramName;
+                    while (getline(namesStream, paramName, ',')) {
+                        if (paramName.empty() || paramName == "Yld_Moments") continue;
+                        TString hist_name = "h1_norm_" + TString(paramName);
+                        TH1* h1 = dynamic_cast<TH1*>(ifile->Get(hist_name.Data()));
+                        if (h1) {
+                            double val = h1->GetBinContent(1) * config.init_value_scale;
+                            fitter.SetUp().SetParVal(paramName, val, kFALSE);
+                        }
+                    }
+                    cout << "  Initialized moments from " << init_file << " (Scale: " << config.init_value_scale << ")" << endl;
+                }
+                ifile->Close();
+            } else {
+                cout << "  Notice: Init value file not opened (" << init_file << "); using default initial values." << endl;
+                if (ifile) ifile->Close();
+            }
+        }
+    }
+
+    mcmc->SetDesiredAcceptance(config.mcmc_min_acceptance, config.mcmc_max_acceptance, config.mcmc_target_acceptance);
 
     if (config.mcmc_use_covariance_tuning) {
         if (config.mcmc_tune_mode == "Acceptance" || config.mcmc_tune_mode == "kAcceptance") {
@@ -256,8 +380,11 @@ void MomentFit(
         }
         mcmc->TuneCovarianceStep();
         mcmc->SetDiagnosticTuningParameters(config.mcmc_rhat_window, config.mcmc_rhat_target, config.mcmc_ess_fraction, config.mcmc_rhat_max_retries);
-        cout << "  Activated MCMC covariance tuning (Mode: " << config.mcmc_tune_mode 
-             << ", Window: " << config.mcmc_rhat_window << ", Target R-hat: " << config.mcmc_rhat_target << ")" << endl;
+        cout << "  Activated MCMC covariance tuning (Mode: " << config.mcmc_tune_mode
+             << ", Window: " << config.mcmc_rhat_window << ", Target R-hat: " << config.mcmc_rhat_target
+             << ", ESS fraction: " << config.mcmc_ess_fraction << ", Max retries: " << config.mcmc_rhat_max_retries << ")" << endl;
+    } else {
+        mcmc->TuneCovarianceStep(kFALSE);
     }
 
     if (config.mcmc_gibbs_block_size > 0) {
@@ -270,44 +397,12 @@ void MomentFit(
         cout << "  Cold warm-up acceptance: " << config.mcmc_cold_warmup_acceptance << endl;
     }
 
-    if (target_bin_index >= 0) {
-        double bin_low = m_min + target_bin_index * full_bin_width;
-        double bin_high = m_min + (target_bin_index + 1) * full_bin_width;
-        double center = (bin_low + bin_high) / 2.0;
-        TString cov_file = Form("%s/BruCovMatrix_Mpi0eta_%.3f.root", moments_base_dir.Data(), center);
-        TString init_file = Form("%s/covariance_matrix_Mpi0eta_%.3f.root", moments_base_dir.Data(), center);
-        TString bName = fitter.Bins().BinName(0);
-
-        mcmc->SetBinFile(bName, cov_file);
-        mcmc->SetBinFile(0, cov_file);
-        mcmc->SetBinInitFile(bName, init_file);
-        mcmc->SetBinInitFile(0, init_file);
-        cout << Form("  Mapped single bin: %s -> %s (init: %s)", bName.Data(), cov_file.Data(), init_file.Data()) << endl;
-    } else {
-        int fit_bins = config.n_bins[0];
-        double b_width = (config.bin_max[0] - config.bin_min[0]) / fit_bins;
-        for (int i = 0; i < fit_bins; ++i) {
-            double center = config.bin_min[0] + (i + 0.5) * b_width;
-            TString cov_file = Form("%s/BruCovMatrix_Mpi0eta_%.3f.root", moments_base_dir.Data(), center);
-            TString init_file = Form("%s/covariance_matrix_Mpi0eta_%.3f.root", moments_base_dir.Data(), center);
-            TString bName = fitter.Bins().BinName(i);
-
-            mcmc->SetBinFile(bName, cov_file);
-            mcmc->SetBinFile(i, cov_file);
-            mcmc->SetBinInitFile(bName, init_file);
-            mcmc->SetBinInitFile(i, init_file);
-        }
-        cout << "  Explicitly mapped " << fit_bins << " bins into BruMcmcFixedCovariance." << endl;
-    }
-
     if (!config.mcmc_use_covariance) {
         mcmc->TurnOffCovariance();
         cout << "  MCMC covariance matrix: OFF" << endl;
     }
 
-    mcmc->SetBailoutParameters(config.mcmc_bailout_threshold, config.mcmc_bailout_min_acceptance);
-    mcmc->BruMcmc::SetBailoutParameters(config.mcmc_bailout_threshold, config.mcmc_bailout_min_acceptance);
-    cout << "  Bailout parameters: threshold=" << config.mcmc_bailout_threshold 
+    cout << "  Bailout parameters: threshold=" << config.mcmc_bailout_threshold
          << ", min_acceptance=" << config.mcmc_bailout_min_acceptance << endl;
     fitter.SetMinimiser(mcmc);
     fitter.SetUp().AddFitOption(RooFit::NumCPU(config.num_cpu));
@@ -339,14 +434,16 @@ void MomentFit_General(
     TString custom_data_file = "",
     TString custom_mcrecon_file = "",
     TString custom_mcgen_file = "",
-    TString custom_weight_file = ""
+    TString custom_weight_file = "",
+    bool run_fit_flag = true
 ) {
     MomentFit(tbin_index, maxL, init_value_scale, mcmc_step, target_bin_index,
               mcmc_iterations, mcmc_burnin, m_min, m_max, n_bins,
               custom_run_dir, custom_cov_dir, custom_data_dir,
               apply_mc_variance, allow_negative_pdf, use_tuning,
               gibbs_block_size, cold_warmup_acc,
-              custom_data_file, custom_mcrecon_file, custom_mcgen_file, custom_weight_file);
+              custom_data_file, custom_mcrecon_file, custom_mcgen_file, custom_weight_file,
+              run_fit_flag);
 }
 
 // Backward-compatibility wrapper for MomentFit_m080200

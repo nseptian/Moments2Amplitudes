@@ -16,6 +16,57 @@ from .config import PipelineConfig
 
 print = functools.partial(print, flush=True)
 
+
+def build_mcmc_and_diagnostics_flags(
+    cfg: PipelineConfig,
+    max_l: Optional[int] = None,
+) -> List[str]:
+    """Build CLI flags for all configurable MCMC, frame, covariance, and diagnostics parameters."""
+    mcmc_cfg = cfg.moment_fit.mcmc
+    diag_cfg = cfg.moment_fit.diagnostics
+    resolved_gibbs = (
+        mcmc_cfg.get_gibbs_block_size(max_l)
+        if max_l is not None
+        else int(mcmc_cfg.gibbs_block_size)
+    )
+    resolved_target_acc = mcmc_cfg.get_target_acceptance()
+
+    flags = [
+        "--gibbs-block-size", str(resolved_gibbs),
+        "--cold-warmup-acc", str(mcmc_cfg.cold_warmup_acc),
+        "--min-acceptance", str(mcmc_cfg.min_acceptance),
+        "--max-acceptance", str(mcmc_cfg.max_acceptance),
+        "--target-acceptance", str(resolved_target_acc),
+        "--tune-mode", str(mcmc_cfg.tune_mode),
+        "--rhat-window", str(mcmc_cfg.rhat_window),
+        "--rhat-target", str(mcmc_cfg.rhat_target),
+        "--ess-fraction", str(mcmc_cfg.ess_fraction),
+        "--rhat-max-retries", str(mcmc_cfg.rhat_max_retries),
+        "--bailout-threshold", str(mcmc_cfg.bailout_threshold),
+        "--bailout-min-acceptance", str(mcmc_cfg.bailout_min_acceptance),
+        "--mc-integration-bins", str(mcmc_cfg.mc_integration_bins),
+        "--num-cpu", str(mcmc_cfg.num_cpu),
+        "--seed", str(mcmc_cfg.seed),
+        "--mc-variance" if mcmc_cfg.apply_mc_variance else "--no-mc-variance",
+        "--negative-pdf" if mcmc_cfg.allow_negative_pdf else "--no-negative-pdf",
+        "--tuning" if mcmc_cfg.use_tuning else "--no-tuning",
+        "--fixed-covariance" if mcmc_cfg.fixed_covariance else "--no-fixed-covariance",
+        "--use-covariance" if mcmc_cfg.use_covariance else "--no-use-covariance",
+        "--set-init-value" if mcmc_cfg.set_init_value else "--no-set-init-value",
+        "--gj-frame" if mcmc_cfg.use_gj_frame else "--hel-frame",
+        "--max-retry-iters", str(diag_cfg.max_retry_iters),
+        "--burnin-fraction", str(diag_cfg.burnin_fraction),
+        "--low-acceptance-threshold", str(diag_cfg.low_acceptance_threshold),
+        "--gibbs-low-acceptance-threshold", str(diag_cfg.gibbs_low_acceptance_threshold),
+        "--high-acceptance-threshold", str(diag_cfg.high_acceptance_threshold),
+        "--gibbs-activation-acceptance", str(diag_cfg.gibbs_activation_acceptance),
+        "--recondition-covariance" if diag_cfg.recondition_covariance else "--no-recondition-covariance",
+        "--recondition-shrinkage", str(diag_cfg.recondition_shrinkage),
+        "--recondition-min-eigen-floor", str(diag_cfg.recondition_min_eigen_floor),
+    ]
+    return flags
+
+
 TBIN_INDEX_MAP = {
     "t010020": 0,
     "t020032": 1,
@@ -54,25 +105,14 @@ def build_moment_fit_command(
         "--burn-in", str(cfg.moment_fit.mcmc.burnin),
         "--ess-threshold", str(cfg.moment_fit.diagnostics.ess_threshold),
         "--ess-metric", str(cfg.moment_fit.diagnostics.ess_metric),
+        "--min-ess-threshold", str(
+            cfg.moment_fit.diagnostics.min_ess_threshold
+            if getattr(cfg.moment_fit.diagnostics, "min_ess_threshold", None) is not None
+            else 0
+        ),
         "--max-parallel", str(cfg.moment_fit.max_parallel),
-        "--gibbs-block-size", str(cfg.moment_fit.mcmc.gibbs_block_size),
-        "--cold-warmup-acc", str(cfg.moment_fit.mcmc.cold_warmup_acc),
     ]
-
-    if cfg.moment_fit.mcmc.apply_mc_variance:
-        cmd.append("--mc-variance")
-    else:
-        cmd.append("--no-mc-variance")
-
-    if cfg.moment_fit.mcmc.allow_negative_pdf:
-        cmd.append("--negative-pdf")
-    else:
-        cmd.append("--no-negative-pdf")
-
-    if cfg.moment_fit.mcmc.use_tuning:
-        cmd.append("--tuning")
-    else:
-        cmd.append("--no-tuning")
+    cmd.extend(build_mcmc_and_diagnostics_flags(cfg, max_l=max_l))
 
     if cfg.moment_fit.diagnostics.auto_retry:
         cmd.append("--auto-retry")
@@ -169,8 +209,9 @@ def run_stage3(
     print(f" Multipoles Max L:   {max_ls}")
     print(f" MCMC Iterations:    {cfg.moment_fit.mcmc.iterations} (burn-in: {cfg.moment_fit.mcmc.burnin})")
     print(f" Init Scale / Step:  {cfg.moment_fit.mcmc.init_scale} / {cfg.moment_fit.mcmc.step}")
-    print(f" Tuning / Neg PDF:   {cfg.moment_fit.mcmc.use_tuning} / {cfg.moment_fit.mcmc.allow_negative_pdf}")
-    print(f" Auto-Retry Loop:    {cfg.moment_fit.diagnostics.auto_retry} (ESS >= {cfg.moment_fit.diagnostics.ess_threshold})")
+    print(f" Tuning / Neg PDF:   {cfg.moment_fit.mcmc.use_tuning} ({cfg.moment_fit.mcmc.tune_mode}) / {cfg.moment_fit.mcmc.allow_negative_pdf}")
+    print(f" Fixed Covariance:   {cfg.moment_fit.mcmc.fixed_covariance} (Recondition retries: {cfg.moment_fit.diagnostics.recondition_covariance})")
+    print(f" Auto-Retry Loop:    {cfg.moment_fit.diagnostics.auto_retry} (ESS >= {cfg.moment_fit.diagnostics.ess_threshold}, max_iters={cfg.moment_fit.diagnostics.max_retry_iters})")
     print(f" Script:             {cfg.moment_fit.run_script}")
     print("=" * 70 + "\n")
 
@@ -195,16 +236,17 @@ def run_stage3(
 
         # Verify Stage 2 prerequisites
         if not dry_run:
-            missing = check_stage2_prerequisites(cfg, tbins, l)
-            if missing:
-                print(f"❌ Error: Missing {len(missing)} covariance prerequisite files for Max L = {l}:")
-                for m in missing[:5]:
-                    print(f"  - {m}")
-                if len(missing) > 5:
-                    print(f"  ... and {len(missing) - 5} more.")
-                print("  Please run Stage 1 and Stage 2 first!")
-                all_success = False
-                continue
+            if cfg.moment_fit.mcmc.fixed_covariance or cfg.moment_fit.mcmc.set_init_value:
+                missing = check_stage2_prerequisites(cfg, tbins, l)
+                if missing:
+                    print(f"❌ Error: Missing {len(missing)} covariance prerequisite files for Max L = {l}:")
+                    for m in missing[:5]:
+                        print(f"  - {m}")
+                    if len(missing) > 5:
+                        print(f"  ... and {len(missing) - 5} more.")
+                    print("  Please run Stage 1 and Stage 2 first!")
+                    all_success = False
+                    continue
 
             # Verify Stage 3 input data files
             missing_data = check_stage3_data_files(cfg, tbins)

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -67,26 +68,43 @@ def run_monitor(
         print("❌ Error: MonitorMomentFit.py script not found.")
         return False
 
-    target_dirs = []
+    target_entries: List[tuple[Optional[int], str]] = []
     if run_dir:
-        target_dirs.append(run_dir)
+        explicit_l = max_l_filter[0] if max_l_filter and len(max_l_filter) == 1 else None
+        target_entries.append((explicit_l, run_dir))
     elif cfg:
         max_ls = max_l_filter if max_l_filter is not None else cfg.analysis.max_l
         m_min = cfg.analysis.mass_binning.min
         m_max = cfg.analysis.mass_binning.max
         for l in max_ls:
-            target_dirs.append(cfg.moment_fit.get_run_dir(l, m_min, m_max))
+            target_entries.append((l, cfg.moment_fit.get_run_dir(l, m_min, m_max)))
     else:
         print("❌ Error: Either a configuration file or --run-dir is required to monitor.")
         return False
 
+    env = os.environ.copy()
+    if cfg and getattr(cfg.environment, "brufit_dir", None) and "BRUFIT" not in env:
+        env["BRUFIT"] = cfg.environment.brufit_dir
+
+    root_sh = getattr(cfg.environment, "root_sh", None) if cfg else None
+    need_source_root = bool(root_sh and os.path.isfile(root_sh) and not env.get("ROOTSYS"))
+
     all_ok = True
-    for rdir in target_dirs:
+    for l_val, rdir in target_entries:
         cmd = [sys.executable, script_path, "--run-dir", rdir]
         if tbins_filter:
             cmd.extend(["--tbin", tbins_filter[0] if len(tbins_filter) == 1 else " ".join(tbins_filter)])
         else:
             cmd.extend(["--tbin", "all"])
+        if l_val is not None:
+            cmd.extend(["--max-l", str(l_val)])
+        if cfg is not None:
+            cmd.extend([
+                "--m-min", str(cfg.analysis.mass_binning.min),
+                "--m-max", str(cfg.analysis.mass_binning.max),
+                "--n-bins", str(cfg.analysis.mass_binning.n_bins),
+                "--burn-in", str(cfg.moment_fit.mcmc.burnin),
+            ])
         if watch:
             cmd.append("--watch")
             cmd.extend(["--interval", str(interval)])
@@ -124,8 +142,12 @@ def run_monitor(
             print(f"  [DRY-RUN] Command: {' '.join(cmd)}")
             continue
 
+        exec_cmd = cmd
+        if need_source_root:
+            exec_cmd = ["bash", "-c", f"source {shlex.quote(root_sh)} && exec \"$@\"", "_", *cmd]
+
         try:
-            ret = subprocess.run(cmd)
+            ret = subprocess.run(exec_cmd, env=env)
             if ret.returncode != 0:
                 all_ok = False
         except KeyboardInterrupt:
@@ -145,6 +167,7 @@ def run_collector(
     non_interactive: bool = True,
     ess_threshold: Optional[float] = None,
     ess_metric: Optional[str] = None,
+    min_ess_threshold: Optional[float] = None,
     max_parallel: Optional[int] = None,
     macro_path: Optional[str] = None,
     dry_run: bool = False,
@@ -159,22 +182,28 @@ def run_collector(
         print("❌ Error: MomentFitCollector.py script not found.")
         return False
 
-    target_dirs = []
+    from .stage3_moment_fit import build_mcmc_and_diagnostics_flags
+    import re
+
+    target_entries: List[Tuple[Optional[int], str]] = []
     if run_dir:
-        target_dirs.append(run_dir)
+        m_l = re.search(r"Lmax(\d+)", run_dir)
+        target_entries.append((int(m_l.group(1)) if m_l else None, run_dir))
     elif cfg:
         max_ls = max_l_filter if max_l_filter is not None else cfg.analysis.max_l
         m_min = cfg.analysis.mass_binning.min
         m_max = cfg.analysis.mass_binning.max
         for l in max_ls:
-            target_dirs.append(cfg.moment_fit.get_run_dir(l, m_min, m_max))
+            target_entries.append((l, cfg.moment_fit.get_run_dir(l, m_min, m_max)))
     else:
         print("❌ Error: Either a configuration file or --run-dir is required to collect diagnostics.")
         return False
 
     all_ok = True
-    for rdir in target_dirs:
+    for dir_max_l, rdir in target_entries:
         cmd = [sys.executable, script_path, "--run-dir", rdir]
+        if dir_max_l is not None:
+            cmd.extend(["--max-l", str(dir_max_l)])
         if tbins_filter:
             cmd.extend(["--tbin", tbins_filter[0] if len(tbins_filter) == 1 else " ".join(tbins_filter)])
         else:
@@ -193,6 +222,12 @@ def run_collector(
             cmd.extend(["--ess-metric", str(ess_metric)])
         elif cfg and hasattr(cfg.moment_fit, "diagnostics"):
             cmd.extend(["--ess-metric", str(cfg.moment_fit.diagnostics.ess_metric)])
+        if min_ess_threshold is not None:
+            cmd.extend(["--min-ess-threshold", str(min_ess_threshold)])
+        elif cfg and hasattr(cfg.moment_fit, "diagnostics"):
+            cfg_min_ess = getattr(cfg.moment_fit.diagnostics, "min_ess_threshold", None)
+            if cfg_min_ess is not None:
+                cmd.extend(["--min-ess-threshold", str(cfg_min_ess)])
         if max_parallel is not None:
             cmd.extend(["--max-parallel", str(max_parallel)])
         elif cfg:
@@ -201,6 +236,29 @@ def run_collector(
             cmd.extend(["--macro-path", macro_path])
         elif cfg and hasattr(cfg.moment_fit, "macro_path"):
             cmd.extend(["--macro-path", cfg.moment_fit.macro_path])
+        if cfg and hasattr(cfg, "linear_algebra") and getattr(cfg.linear_algebra, "output_base_dir", None):
+            cmd.extend(["--cov-dir", cfg.linear_algebra.output_base_dir])
+        if cfg and hasattr(cfg.moment_fit, "data"):
+            data_cfg = cfg.moment_fit.data
+            if getattr(data_cfg, "base_dir", None):
+                cmd.extend(["--data-dir", data_cfg.base_dir])
+            if getattr(data_cfg, "data", None):
+                cmd.extend(["--data-pattern", data_cfg.data])
+            if getattr(data_cfg, "mcrecon", None):
+                cmd.extend(["--mcrecon-pattern", data_cfg.mcrecon])
+            if getattr(data_cfg, "mcgen", None):
+                cmd.extend(["--mcgen-pattern", data_cfg.mcgen])
+            if getattr(data_cfg, "weight", None):
+                cmd.extend(["--weight-pattern", data_cfg.weight])
+        if cfg and hasattr(cfg.moment_fit, "mcmc"):
+            mcmc_cfg = cfg.moment_fit.mcmc
+            cmd.extend([
+                "--init-scale", str(mcmc_cfg.init_scale),
+                "--step", str(mcmc_cfg.step),
+                "--burn-in", str(mcmc_cfg.burnin),
+                "--iters", str(mcmc_cfg.iterations),
+            ])
+            cmd.extend(build_mcmc_and_diagnostics_flags(cfg, max_l=dir_max_l))
 
         print(f"\n[COLLECTOR] Launching MomentFitCollector for run directory:\n  {rdir}")
         if dry_run:
@@ -330,6 +388,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         choices=["mean", "min"],
         default=None,
         help="ESS metric to evaluate against threshold: 'mean' or 'min' (default: from YAML or 'mean').",
+    )
+    parser.add_argument(
+        "--min-ess-threshold",
+        type=float,
+        default=None,
+        help="Safety floor on worst-moment ESS even when --ess-metric=mean (default: from YAML or 10.0).",
     )
     parser.add_argument(
         "--plot-traces",
@@ -476,7 +540,12 @@ def normalize_stage_names(stages: List[str]) -> List[str]:
             canonical.append(mapping[s_lower])
         else:
             raise ValueError(f"Unknown stage name: {s}")
-    return list(dict.fromkeys(canonical))  # preserve order without duplicates
+    deduped = list(dict.fromkeys(canonical))  # preserve order without duplicates
+    # "collect" and "monitor" operate on Stage 3 (moment_fit) outputs; when passed alongside
+    # Stage 3 / moment_fit, skip running the fitting process and execute monitoring/collection directly.
+    if "moment_fit" in deduped and any(s in ("collect", "monitor") for s in deduped):
+        deduped = [s for s in deduped if s != "moment_fit"]
+    return deduped
 
 
 def normalize_tbin_filter(tbins_in: Optional[List[str]]) -> Optional[List[str]]:
@@ -523,6 +592,7 @@ def run_momentfit(
     no_exec: bool = False,
     ess_threshold: Optional[float] = None,
     ess_metric: Optional[str] = None,
+    min_ess_threshold: Optional[float] = None,
     plot_traces: bool = False,
     plot_posteriors: bool = False,
     downsample_trace: Optional[int] = None,
@@ -692,6 +762,7 @@ def run_momentfit(
             replot_from_root=replot_from_root,
             ess_threshold=ess_threshold,
             ess_metric=ess_metric,
+            min_ess_threshold=min_ess_threshold,
             dry_run=dry_run,
         )
         stage_timings["monitor"] = time.time() - t0
@@ -714,6 +785,7 @@ def run_momentfit(
             no_exec=no_exec,
             ess_threshold=ess_threshold,
             ess_metric=ess_metric,
+            min_ess_threshold=min_ess_threshold,
             dry_run=dry_run,
         )
         stage_timings["collect"] = time.time() - t0
@@ -841,6 +913,7 @@ def main():
         no_exec=args.no_exec,
         ess_threshold=args.ess_threshold,
         ess_metric=args.ess_metric,
+        min_ess_threshold=args.min_ess_threshold,
         plot_traces=args.plot_traces,
         plot_posteriors=args.plot_posteriors,
         downsample_trace=args.downsample_trace,

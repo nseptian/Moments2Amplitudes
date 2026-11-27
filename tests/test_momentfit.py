@@ -104,8 +104,28 @@ class TestMomentFit(unittest.TestCase):
             normalize_stage_names(["all"]),
             ["linear_algebra", "export_covariance", "moment_fit", "plot"],
         )
+        self.assertEqual(normalize_stage_names(["3", "collect"]), ["collect"])
+        self.assertEqual(normalize_stage_names(["moment_fit", "collect"]), ["collect"])
+        self.assertEqual(normalize_stage_names(["3", "monitor"]), ["monitor"])
+        self.assertEqual(normalize_stage_names(["3", "monitor", "collect"]), ["monitor", "collect"])
         with self.assertRaises(ValueError):
             normalize_stage_names(["invalid_stage"])
+
+    def test_stage_3_collect_skips_fitting(self):
+        from unittest.mock import patch
+        from moments2amplitudes.momentfit.runner import parse_args, run_momentfit
+
+        args = parse_args(["configs/momentfit_test.yaml", "--stage", "3", "collect"])
+        self.assertEqual(args.stage, ["3", "collect"])
+        self.assertEqual(normalize_stage_names(args.stage), ["collect"])
+
+        with patch("moments2amplitudes.momentfit.stage3_moment_fit.run_stage3") as mock_stage3, \
+             patch("moments2amplitudes.momentfit.runner.run_collector", return_value=True) as mock_collect:
+            rc = run_momentfit(config_path=args.config, stages=args.stage, dry_run=True)
+
+        self.assertEqual(rc, 0)
+        mock_stage3.assert_not_called()
+        mock_collect.assert_called_once()
 
     def test_tbin_filter_normalization(self):
         self.assertIsNone(normalize_tbin_filter(None))
@@ -332,6 +352,330 @@ class TestMomentFit(unittest.TestCase):
                     formats=["png"],
                 )
                 self.assertGreaterEqual(len(dir_plots), 1)
+
+    def test_vectorized_chain_diagnostics_and_collector_cache(self):
+        import importlib.util
+        import tempfile
+        import numpy as np
+        import uproot
+        from unittest.mock import patch
+        import BruFitResults as BFR
+
+        spec = importlib.util.spec_from_file_location("MomentFitCollector", "macros/MomentFitCollector.py")
+        mfc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mfc)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir)
+            tbin_dir = run_dir / "t010020"
+            bin0_dir = tbin_dir / "Mpi0eta0.820000_"
+            bin0_dir.mkdir(parents=True)
+            root_path = bin0_dir / "ResultsBruMcmcFixedCovariance.root"
+
+            rng = np.random.default_rng(123)
+            n_entries = 1200
+            weights = rng.integers(1, 5, size=n_entries).astype(np.float64)
+            h_0_0_0 = np.cumsum(rng.normal(0.0, 0.2, size=n_entries)).astype(np.float64)
+            h_0_2_0 = rng.normal(1.5, 0.3, size=n_entries).astype(np.float64)
+            h_0_2_0_err = rng.uniform(0.01, 0.05, size=n_entries).astype(np.float64)
+
+            with uproot.recreate(root_path) as uf:
+                uf["MCMCTree"] = {
+                    "weight": weights,
+                    "H_0_0_0": h_0_0_0,
+                    "H_0_2_0": h_0_2_0,
+                    "H_0_2_0_err": h_0_2_0_err,
+                }
+            self.assertGreater(root_path.stat().st_size, 10240)
+
+            # Compare vectorized uproot diagnostics against reference scalar ACF formula
+            bfr_diag = BFR.compute_chain_diagnostics_from_root(str(root_path), burn_in=200)
+            mfc_diag = mfc.compute_bin_diagnostics_from_root(str(root_path), burn_in=200)
+            self.assertIsNotNone(bfr_diag)
+            self.assertIsNotNone(mfc_diag)
+            self.assertEqual(set(bfr_diag["per_moment"].keys()), {"H_0_0_0", "H_0_2_0"})
+
+            int_w = np.maximum(1, np.round(weights)).astype(int)
+            for name, raw_arr in [("H_0_0_0", h_0_0_0), ("H_0_2_0", h_0_2_0)]:
+                d = np.repeat(raw_arr, int_w)[200:]
+                acf = BFR._compute_autocorrelation_fft(d, max_lag=len(d) // 2)
+                tau_ref = 0.5
+                for lag in range(1, len(acf)):
+                    if acf[lag] <= 0:
+                        break
+                    tau_ref += acf[lag]
+                ess_ref = min(float(len(d)), len(d) / (2.0 * tau_ref))
+                self.assertAlmostEqual(bfr_diag["per_moment"][name]["tau"], tau_ref, places=10)
+                self.assertAlmostEqual(bfr_diag["per_moment"][name]["ess"], ess_ref, places=10)
+                self.assertAlmostEqual(mfc_diag["per_moment"][name]["tau"], tau_ref, places=10)
+                self.assertAlmostEqual(mfc_diag["per_moment"][name]["ess"], ess_ref, places=10)
+
+            # Evaluate tbin populates .collector_diag_cache.json
+            evals1 = mfc.evaluate_tbin(
+                tbin_idx=0, tbin_name="t010020", tbin_dir=str(tbin_dir), run_dir=str(run_dir),
+                m_min=0.8, m_max=2.0, n_bins=30, ess_threshold=20.0, burn_in=200,
+            )
+            self.assertEqual(len(evals1), 30)
+            self.assertEqual(evals1[0]["status"], "SUCCESS")
+            self.assertAlmostEqual(evals1[0]["mean_ess"], mfc_diag["ess_mean"], places=10)
+            cache_file = tbin_dir / ".collector_diag_cache.json"
+            self.assertTrue(cache_file.is_file())
+
+            # Second call with same ROOT file hits cache without invoking _inspect_root_bin_task
+            with patch.object(mfc, "_inspect_root_bin_task", side_effect=AssertionError("Should hit cache")) as mock_insp:
+                evals2 = mfc.evaluate_tbin(
+                    tbin_idx=0, tbin_name="t010020", tbin_dir=str(tbin_dir), run_dir=str(run_dir),
+                    m_min=0.8, m_max=2.0, n_bins=30, ess_threshold=100000.0, burn_in=200,
+                )
+                mock_insp.assert_not_called()
+            # Threshold recomputed dynamically from cached per_moment_ess
+            self.assertFalse(evals2[0]["is_successful"])
+            self.assertEqual(evals2[0]["n_low_ess"], 2)
+
+            # Single-job fast path evaluates only requested bin_idx
+            evals_single = mfc.evaluate_tbin(
+                tbin_idx=0, tbin_name="t010020", tbin_dir=str(tbin_dir), run_dir=str(run_dir),
+                m_min=0.8, m_max=2.0, n_bins=30, ess_threshold=20.0, burn_in=200, target_bin_idx=0,
+            )
+            self.assertEqual(len(evals_single), 1)
+            self.assertEqual(evals_single[0]["bin_idx"], 0)
+
+            # End-to-end CLI subprocess run exercising ProcessPoolExecutor (> 2 uncached bins)
+            import subprocess, sys, json
+            for b_i, b_center in [(1, 0.86), (2, 0.90), (3, 0.94)]:
+                bdir = tbin_dir / f"Mpi0eta{b_center:.6f}_"
+                bdir.mkdir(parents=True)
+                with uproot.recreate(bdir / "ResultsBruMcmcFixedCovariance.root") as uf:
+                    uf["MCMCTree"] = {
+                        "weight": weights,
+                        "H_0_0_0": h_0_0_0,
+                        "H_0_2_0": h_0_2_0,
+                    }
+            summary_json = run_dir / "summary_4bins.json"
+            proc = subprocess.run(
+                [
+                    sys.executable, "macros/MomentFitCollector.py",
+                    "--run-dir", str(run_dir), "--tbin", "0",
+                    "--m-min", "0.8", "--m-max", "0.96", "--n-bins", "4",
+                    "--burn-in", "200", "--ess-threshold", "1.0",
+                    "--non-interactive", "--no-exec",
+                    "--summary-json", str(summary_json),
+                ],
+                capture_output=True, text=True, check=True,
+            )
+            self.assertEqual(proc.returncode, 0)
+            summary = json.loads(summary_json.read_text())
+            self.assertEqual(summary["total_bins"], 4)
+            self.assertEqual(summary["successful_count"], 4)
+
+    def test_mcmc_and_diagnostics_config_yaml_and_validation(self):
+        import tempfile
+        import yaml
+
+        for yaml_path in ["configs/momentfit_nominal.yaml", "configs/momentfit_test.yaml"]:
+            cfg = load_momentfit_config(yaml_path)
+            self.assertTrue(cfg.moment_fit.mcmc.fixed_covariance)
+            self.assertTrue(cfg.moment_fit.mcmc.use_covariance)
+            self.assertTrue(cfg.moment_fit.mcmc.set_init_value)
+            self.assertTrue(cfg.moment_fit.mcmc.use_gj_frame)
+            self.assertEqual(cfg.moment_fit.mcmc.min_acceptance, 0.05)
+            self.assertEqual(cfg.moment_fit.mcmc.max_acceptance, 0.15)
+            self.assertEqual(cfg.moment_fit.mcmc.get_target_acceptance(), 0.10)
+            self.assertEqual(cfg.moment_fit.mcmc.tune_mode, "MappedRhat")
+            self.assertEqual(cfg.moment_fit.mcmc.mc_integration_bins, 50)
+            self.assertEqual(cfg.moment_fit.diagnostics.max_retry_iters, 200000)
+            self.assertAlmostEqual(cfg.moment_fit.diagnostics.burnin_fraction, 0.10)
+            self.assertAlmostEqual(cfg.moment_fit.diagnostics.low_acceptance_threshold, 0.03)
+            self.assertAlmostEqual(cfg.moment_fit.diagnostics.gibbs_low_acceptance_threshold, 0.12)
+            self.assertAlmostEqual(cfg.moment_fit.diagnostics.high_acceptance_threshold, 0.35)
+            self.assertFalse(cfg.moment_fit.diagnostics.recondition_covariance)
+            self.assertEqual(validate_momentfit_config(cfg, check_files=False), [])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_yaml = Path(tmpdir) / "custom.yaml"
+            raw = yaml.safe_load(Path("configs/momentfit_test.yaml").read_text())
+            raw["moment_fit"]["mcmc"]["gibbs_block_size"] = 0
+            raw["moment_fit"]["mcmc"]["gibbs_block_size_by_max_l"] = {"6": 12, 8: 16}
+            raw["moment_fit"]["mcmc"]["fixed_covariance"] = False
+            raw["moment_fit"]["diagnostics"]["recondition_covariance"] = True
+            raw["moment_fit"]["diagnostics"]["recondition_shrinkage"] = 0.25
+            custom_yaml.write_text(yaml.safe_dump(raw))
+
+            cfg_custom = load_momentfit_config(custom_yaml)
+            self.assertEqual(cfg_custom.moment_fit.mcmc.get_gibbs_block_size(4), 0)
+            self.assertEqual(cfg_custom.moment_fit.mcmc.get_gibbs_block_size(6), 12)
+            self.assertEqual(cfg_custom.moment_fit.mcmc.get_gibbs_block_size(8), 16)
+            self.assertFalse(cfg_custom.moment_fit.mcmc.fixed_covariance)
+            self.assertTrue(cfg_custom.moment_fit.diagnostics.recondition_covariance)
+            self.assertEqual(validate_momentfit_config(cfg_custom, check_files=False), [])
+
+            # Invalid bounds caught by validation
+            cfg_bad = load_momentfit_config(custom_yaml)
+            cfg_bad.moment_fit.mcmc.min_acceptance = 0.3
+            cfg_bad.moment_fit.mcmc.max_acceptance = 0.2
+            cfg_bad.moment_fit.diagnostics.burnin_fraction = 0.6
+            cfg_bad.moment_fit.diagnostics.recondition_shrinkage = 1.5
+            errs = validate_momentfit_config(cfg_bad, check_files=False)
+            self.assertGreaterEqual(len(errs), 3)
+
+    def test_stage3_and_collector_forwarding_with_gibbs_overrides(self):
+        from unittest.mock import patch, MagicMock
+        from moments2amplitudes.momentfit.runner import run_collector
+
+        cfg = load_momentfit_config("configs/momentfit_test.yaml")
+        cfg.moment_fit.mcmc.gibbs_block_size = 0
+        cfg.moment_fit.mcmc.gibbs_block_size_by_max_l = {8: 16}
+        cfg.moment_fit.mcmc.fixed_covariance = False
+        cfg.moment_fit.diagnostics.recondition_covariance = True
+
+        cmd_l4, _ = build_moment_fit_command(cfg, max_l=4, tbin_arg="0")
+        cmd_l8, _ = build_moment_fit_command(cfg, max_l=8, tbin_arg="0")
+        self.assertEqual(cmd_l4[cmd_l4.index("--gibbs-block-size") + 1], "0")
+        self.assertEqual(cmd_l8[cmd_l8.index("--gibbs-block-size") + 1], "16")
+        self.assertIn("--no-fixed-covariance", cmd_l8)
+        self.assertIn("--recondition-covariance", cmd_l8)
+        self.assertIn("--burnin-fraction", cmd_l8)
+        self.assertIn("--low-acceptance-threshold", cmd_l8)
+
+        with patch("moments2amplitudes.momentfit.runner.subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
+            ok = run_collector(cfg=cfg, max_l_filter=[8], no_exec=True, dry_run=False)
+        self.assertTrue(ok)
+        mock_run.assert_called_once()
+        col_cmd = mock_run.call_args[0][0]
+        self.assertEqual(col_cmd[col_cmd.index("--gibbs-block-size") + 1], "16")
+        self.assertEqual(col_cmd[col_cmd.index("--max-retry-iters") + 1], "200000")
+        self.assertIn("--no-fixed-covariance", col_cmd)
+        self.assertIn("--recondition-covariance", col_cmd)
+
+    def test_aligned_acceptance_dynamic_burnin_and_reconditioning(self):
+        import importlib.util
+        import tempfile
+        from unittest.mock import patch
+        import numpy as np
+        import uproot
+
+        spec = importlib.util.spec_from_file_location("moment_fit_collector", "macros/MomentFitCollector.py")
+        mfc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mfc)
+
+        # Full-vector acceptance (6%) stays inside [0.03, 0.35]: keep calibrated step, scale iters
+        _, step_fv, iters_fv, _ = mfc.recommend_low_ess_params(
+            bin_scale=1.0, bin_step=1.0, bin_iters=50000, burn_in=2000,
+            eval_ess=10.0, ess_threshold=20.0, mean_tau=3000.0, bin_acceptance=0.06,
+            bin_gibbs=0, low_acceptance_threshold=0.03, gibbs_low_acceptance_threshold=0.12,
+        )
+        self.assertEqual(step_fv, 1.0)
+        self.assertGreater(iters_fv, 50000)
+
+        # Genuinely stalled full-vector (2% < 3%): shrink step
+        _, step_low, _, _ = mfc.recommend_low_ess_params(
+            bin_scale=1.0, bin_step=1.0, bin_iters=50000, burn_in=2000,
+            eval_ess=5.0, ess_threshold=20.0, mean_tau=5000.0, bin_acceptance=0.02,
+            bin_gibbs=0, low_acceptance_threshold=0.03, gibbs_low_acceptance_threshold=0.12,
+        )
+        self.assertLess(step_low, 1.0)
+
+        # Blocked Gibbs (8% < 12%): shrink step
+        _, step_gibbs, _, _ = mfc.recommend_low_ess_params(
+            bin_scale=1.0, bin_step=1.0, bin_iters=50000, burn_in=2000,
+            eval_ess=8.0, ess_threshold=20.0, mean_tau=4000.0, bin_acceptance=0.08,
+            bin_gibbs=12, low_acceptance_threshold=0.03, gibbs_low_acceptance_threshold=0.12,
+        )
+        self.assertLess(step_gibbs, 1.0)
+
+        # Dynamic burn-in scaling
+        self.assertEqual(mfc.compute_retry_burnin(2000, 200000, 0.10), 20000)
+        self.assertEqual(mfc.compute_retry_burnin(2000, 10000, 0.10), 2000)
+        self.assertEqual(mfc.compute_retry_burnin(2000, 200000, 0.0), 2000)
+
+        # Shrinkage + SPD projection with correlated prior & rank-deficient empirical sample
+        rng = np.random.default_rng(7)
+        base = rng.normal(0.0, 1.0, size=(300, 1))
+        samples = np.hstack([base, base * 2.0, rng.normal(1000.0, 250.0, size=(300, 1))])
+        weights = rng.integers(1, 4, size=300)
+        names = ["H_0_0_0", "H_0_2_0", "Yld_Moments"]
+        prior = np.array([[1.0, 0.2, 0.0], [0.2, 4.0, 0.0], [0.0, 0.0, 62500.0]])
+        spd = mfc._compute_shrinkage_spd_covariance(
+            samples, weights, names, prior_cov=prior, shrinkage=0.25, min_eigen_floor=1e-3,
+        )
+        self.assertEqual(spd.shape, (3, 3))
+        self.assertAlmostEqual(spd[0, 2], 0.0)
+        self.assertAlmostEqual(spd[2, 0], 0.0)
+        np.linalg.cholesky(spd)
+
+        # End-to-end recondition_covariance_for_bin + retry script emission (mocked ROOT matrix I/O)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "run"
+            tbin_dir = run_dir / "t010020" / "Mpi0eta0.820000_"
+            src_cov_dir = Path(tmpdir) / "cov" / "t010020" / "All.maxL_4"
+            tbin_dir.mkdir(parents=True)
+            src_cov_dir.mkdir(parents=True)
+            root_path = tbin_dir / "ResultsBruMcmcFixedCovariance.root"
+            with uproot.recreate(root_path) as uf:
+                uf["MCMCTree"] = {
+                    "weight": np.full(600, 2, dtype=np.float64),
+                    "H_0_0_0": rng.normal(1.0, 0.4, size=600),
+                    "H_0_2_0": rng.normal(0.5, 0.3, size=600),
+                    "Yld_Moments": rng.normal(1000.0, 50.0, size=600),
+                }
+            (src_cov_dir / "BruCovMatrix_Mpi0eta_0.820.root").write_bytes(b"stage2")
+            (src_cov_dir / "covariance_matrix_Mpi0eta_0.820.root").write_bytes(b"init2")
+
+            bin_rec = {
+                "tbin_idx": 0,
+                "tbin_name": "t010020",
+                "bin_idx": 0,
+                "mass_center": 0.82,
+                "bin_dir_path": str(tbin_dir),
+                "root_file": str(root_path),
+                "failure_type": "LOW_ESS",
+                "rec_scale": 1.0,
+                "rec_step": 1.0,
+                "rec_iters": 150000,
+                "rec_burnin": 15000,
+                "rec_gibbs": 0,
+            }
+
+            saved_paths = []
+
+            def fake_save(out_path, cov_array, param_names, matrix_name="MyCovMatrix"):
+                Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(out_path).write_text("mock_spd")
+                saved_paths.append((out_path, cov_array.copy(), list(param_names)))
+                return True
+
+            with patch.object(mfc, "_load_bru_cov_matrix_root", return_value=(prior, names)), \
+                 patch.object(mfc, "_save_bru_cov_matrix_root", side_effect=fake_save):
+                recond_dir = mfc.recondition_covariance_for_bin(
+                    bin_record=bin_rec,
+                    run_dir=str(run_dir),
+                    src_cov_dir=str(Path(tmpdir) / "cov"),
+                    max_l=4,
+                    burn_in=200,
+                    shrinkage=0.2,
+                )
+
+            self.assertIsNotNone(recond_dir)
+            self.assertIn("t010020", recond_dir)
+            self.assertEqual(len(saved_paths), 1)
+            self.assertTrue((Path(recond_dir) / "covariance_matrix_Mpi0eta_0.820.root").is_file())
+            self.assertEqual((src_cov_dir / "BruCovMatrix_Mpi0eta_0.820.root").read_bytes(), b"stage2")
+
+            bin_rec["rec_cov_dir"] = recond_dir
+            retry_path = mfc.generate_retry_script(
+                run_dir=str(run_dir),
+                unsuccessful_bins=[bin_rec],
+                macro_path="/d/home/septian/Moments2Amplitudes/macros/MomentFit.C",
+                max_l=4,
+                burn_in=2000,
+                cov_dir=str(Path(tmpdir) / "cov"),
+                fixed_covariance=True,
+                recondition_covariance=True,
+            )
+            script_txt = Path(retry_path).read_text()
+            self.assertIn("MOM2AMP_FIXED_COV=\"true\"", script_txt)
+            self.assertIn(recond_dir, script_txt)
+            self.assertIn(", 150000, 15000,", script_txt)
 
 
 if __name__ == "__main__":
