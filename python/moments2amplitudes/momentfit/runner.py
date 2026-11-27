@@ -5,14 +5,16 @@ MomentFit runner and CLI entry point for Moments analysis workflow.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .config import (
     MomentFitConfig,
@@ -157,6 +159,104 @@ def run_monitor(
     return all_ok
 
 
+def _resolve_collector_targets(
+    cfg: Optional[MomentFitConfig],
+    run_dir: Optional[str],
+    max_l_filter: Optional[List[int]],
+) -> List[Tuple[Optional[int], str]]:
+    """Resolve (max_l, run_dir) targets from explicit run_dir or YAML config."""
+    target_entries: List[Tuple[Optional[int], str]] = []
+    if run_dir:
+        m_l = re.search(r"Lmax(\d+)", run_dir)
+        target_entries.append((int(m_l.group(1)) if m_l else None, run_dir))
+    elif cfg:
+        max_ls = max_l_filter if max_l_filter is not None else cfg.analysis.max_l
+        m_min = cfg.analysis.mass_binning.min
+        m_max = cfg.analysis.mass_binning.max
+        for l in max_ls:
+            target_entries.append((l, cfg.moment_fit.get_run_dir(l, m_min, m_max)))
+    return target_entries
+
+
+def _build_collector_command(
+    script_path: str,
+    rdir: str,
+    dir_max_l: Optional[int],
+    cfg: Optional[MomentFitConfig] = None,
+    tbins_filter: Optional[List[str]] = None,
+    auto_retry: bool = False,
+    no_exec: bool = False,
+    non_interactive: bool = True,
+    ess_threshold: Optional[float] = None,
+    ess_metric: Optional[str] = None,
+    min_ess_threshold: Optional[float] = None,
+    max_parallel: Optional[int] = None,
+    macro_path: Optional[str] = None,
+) -> List[str]:
+    """Build MomentFitCollector.py CLI invocation for a run directory."""
+    from .stage3_moment_fit import build_mcmc_and_diagnostics_flags
+
+    cmd = [sys.executable, script_path, "--run-dir", rdir]
+    if dir_max_l is not None:
+        cmd.extend(["--max-l", str(dir_max_l)])
+    if tbins_filter:
+        cmd.extend(["--tbin", tbins_filter[0] if len(tbins_filter) == 1 else " ".join(tbins_filter)])
+    else:
+        cmd.extend(["--tbin", "all"])
+    if auto_retry:
+        cmd.append("--auto-retry")
+    if no_exec:
+        cmd.append("--no-exec")
+    if non_interactive:
+        cmd.append("--non-interactive")
+    if ess_threshold is not None:
+        cmd.extend(["--ess-threshold", str(ess_threshold)])
+    elif cfg and hasattr(cfg.moment_fit, "diagnostics"):
+        cmd.extend(["--ess-threshold", str(cfg.moment_fit.diagnostics.ess_threshold)])
+    if ess_metric:
+        cmd.extend(["--ess-metric", str(ess_metric)])
+    elif cfg and hasattr(cfg.moment_fit, "diagnostics"):
+        cmd.extend(["--ess-metric", str(cfg.moment_fit.diagnostics.ess_metric)])
+    if min_ess_threshold is not None:
+        cmd.extend(["--min-ess-threshold", str(min_ess_threshold)])
+    elif cfg and hasattr(cfg.moment_fit, "diagnostics"):
+        cfg_min_ess = getattr(cfg.moment_fit.diagnostics, "min_ess_threshold", None)
+        if cfg_min_ess is not None:
+            cmd.extend(["--min-ess-threshold", str(cfg_min_ess)])
+    if max_parallel is not None:
+        cmd.extend(["--max-parallel", str(max_parallel)])
+    elif cfg:
+        cmd.extend(["--max-parallel", str(cfg.moment_fit.max_parallel)])
+    if macro_path:
+        cmd.extend(["--macro-path", macro_path])
+    elif cfg and hasattr(cfg.moment_fit, "macro_path"):
+        cmd.extend(["--macro-path", cfg.moment_fit.macro_path])
+    if cfg and hasattr(cfg, "linear_algebra") and getattr(cfg.linear_algebra, "output_base_dir", None):
+        cmd.extend(["--cov-dir", cfg.linear_algebra.output_base_dir])
+    if cfg and hasattr(cfg.moment_fit, "data"):
+        data_cfg = cfg.moment_fit.data
+        if getattr(data_cfg, "base_dir", None):
+            cmd.extend(["--data-dir", data_cfg.base_dir])
+        if getattr(data_cfg, "data", None):
+            cmd.extend(["--data-pattern", data_cfg.data])
+        if getattr(data_cfg, "mcrecon", None):
+            cmd.extend(["--mcrecon-pattern", data_cfg.mcrecon])
+        if getattr(data_cfg, "mcgen", None):
+            cmd.extend(["--mcgen-pattern", data_cfg.mcgen])
+        if getattr(data_cfg, "weight", None):
+            cmd.extend(["--weight-pattern", data_cfg.weight])
+    if cfg and hasattr(cfg.moment_fit, "mcmc"):
+        mcmc_cfg = cfg.moment_fit.mcmc
+        cmd.extend([
+            "--init-scale", str(mcmc_cfg.init_scale),
+            "--step", str(mcmc_cfg.step),
+            "--burn-in", str(mcmc_cfg.burnin),
+            "--iters", str(mcmc_cfg.iterations),
+        ])
+        cmd.extend(build_mcmc_and_diagnostics_flags(cfg, max_l=dir_max_l))
+    return cmd
+
+
 def run_collector(
     cfg: Optional[MomentFitConfig] = None,
     run_dir: Optional[str] = None,
@@ -182,83 +282,28 @@ def run_collector(
         print("❌ Error: MomentFitCollector.py script not found.")
         return False
 
-    from .stage3_moment_fit import build_mcmc_and_diagnostics_flags
-    import re
-
-    target_entries: List[Tuple[Optional[int], str]] = []
-    if run_dir:
-        m_l = re.search(r"Lmax(\d+)", run_dir)
-        target_entries.append((int(m_l.group(1)) if m_l else None, run_dir))
-    elif cfg:
-        max_ls = max_l_filter if max_l_filter is not None else cfg.analysis.max_l
-        m_min = cfg.analysis.mass_binning.min
-        m_max = cfg.analysis.mass_binning.max
-        for l in max_ls:
-            target_entries.append((l, cfg.moment_fit.get_run_dir(l, m_min, m_max)))
-    else:
+    target_entries = _resolve_collector_targets(cfg=cfg, run_dir=run_dir, max_l_filter=max_l_filter)
+    if not target_entries:
         print("❌ Error: Either a configuration file or --run-dir is required to collect diagnostics.")
         return False
 
     all_ok = True
     for dir_max_l, rdir in target_entries:
-        cmd = [sys.executable, script_path, "--run-dir", rdir]
-        if dir_max_l is not None:
-            cmd.extend(["--max-l", str(dir_max_l)])
-        if tbins_filter:
-            cmd.extend(["--tbin", tbins_filter[0] if len(tbins_filter) == 1 else " ".join(tbins_filter)])
-        else:
-            cmd.extend(["--tbin", "all"])
-        if auto_retry:
-            cmd.append("--auto-retry")
-        if no_exec:
-            cmd.append("--no-exec")
-        if non_interactive:
-            cmd.append("--non-interactive")
-        if ess_threshold is not None:
-            cmd.extend(["--ess-threshold", str(ess_threshold)])
-        elif cfg and hasattr(cfg.moment_fit, "diagnostics"):
-            cmd.extend(["--ess-threshold", str(cfg.moment_fit.diagnostics.ess_threshold)])
-        if ess_metric:
-            cmd.extend(["--ess-metric", str(ess_metric)])
-        elif cfg and hasattr(cfg.moment_fit, "diagnostics"):
-            cmd.extend(["--ess-metric", str(cfg.moment_fit.diagnostics.ess_metric)])
-        if min_ess_threshold is not None:
-            cmd.extend(["--min-ess-threshold", str(min_ess_threshold)])
-        elif cfg and hasattr(cfg.moment_fit, "diagnostics"):
-            cfg_min_ess = getattr(cfg.moment_fit.diagnostics, "min_ess_threshold", None)
-            if cfg_min_ess is not None:
-                cmd.extend(["--min-ess-threshold", str(cfg_min_ess)])
-        if max_parallel is not None:
-            cmd.extend(["--max-parallel", str(max_parallel)])
-        elif cfg:
-            cmd.extend(["--max-parallel", str(cfg.moment_fit.max_parallel)])
-        if macro_path:
-            cmd.extend(["--macro-path", macro_path])
-        elif cfg and hasattr(cfg.moment_fit, "macro_path"):
-            cmd.extend(["--macro-path", cfg.moment_fit.macro_path])
-        if cfg and hasattr(cfg, "linear_algebra") and getattr(cfg.linear_algebra, "output_base_dir", None):
-            cmd.extend(["--cov-dir", cfg.linear_algebra.output_base_dir])
-        if cfg and hasattr(cfg.moment_fit, "data"):
-            data_cfg = cfg.moment_fit.data
-            if getattr(data_cfg, "base_dir", None):
-                cmd.extend(["--data-dir", data_cfg.base_dir])
-            if getattr(data_cfg, "data", None):
-                cmd.extend(["--data-pattern", data_cfg.data])
-            if getattr(data_cfg, "mcrecon", None):
-                cmd.extend(["--mcrecon-pattern", data_cfg.mcrecon])
-            if getattr(data_cfg, "mcgen", None):
-                cmd.extend(["--mcgen-pattern", data_cfg.mcgen])
-            if getattr(data_cfg, "weight", None):
-                cmd.extend(["--weight-pattern", data_cfg.weight])
-        if cfg and hasattr(cfg.moment_fit, "mcmc"):
-            mcmc_cfg = cfg.moment_fit.mcmc
-            cmd.extend([
-                "--init-scale", str(mcmc_cfg.init_scale),
-                "--step", str(mcmc_cfg.step),
-                "--burn-in", str(mcmc_cfg.burnin),
-                "--iters", str(mcmc_cfg.iterations),
-            ])
-            cmd.extend(build_mcmc_and_diagnostics_flags(cfg, max_l=dir_max_l))
+        cmd = _build_collector_command(
+            script_path=script_path,
+            rdir=rdir,
+            dir_max_l=dir_max_l,
+            cfg=cfg,
+            tbins_filter=tbins_filter,
+            auto_retry=auto_retry,
+            no_exec=no_exec,
+            non_interactive=non_interactive,
+            ess_threshold=ess_threshold,
+            ess_metric=ess_metric,
+            min_ess_threshold=min_ess_threshold,
+            max_parallel=max_parallel,
+            macro_path=macro_path,
+        )
 
         print(f"\n[COLLECTOR] Launching MomentFitCollector for run directory:\n  {rdir}")
         if dry_run:
@@ -268,6 +313,129 @@ def run_collector(
         ret = subprocess.run(cmd)
         if ret.returncode != 0:
             all_ok = False
+
+    return all_ok
+
+
+def run_retry(
+    cfg: Optional[MomentFitConfig] = None,
+    run_dir: Optional[str] = None,
+    tbins_filter: Optional[List[str]] = None,
+    max_l_filter: Optional[List[int]] = None,
+    max_retries: Optional[int] = None,
+    max_parallel: Optional[int] = None,
+    ess_threshold: Optional[float] = None,
+    ess_metric: Optional[str] = None,
+    min_ess_threshold: Optional[float] = None,
+    macro_path: Optional[str] = None,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Collect diagnostics and execute targeted single-bin retry rounds (RunMomentFit_retry.sh)
+    across target run directories, bounded by max_retries.
+    """
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    configured_script = getattr(cfg.moment_fit, "collector_script", None) if cfg else None
+    script_path = find_script(configured_script, "macros/MomentFitCollector.py", repo_root)
+    if not script_path:
+        print("❌ Error: MomentFitCollector.py script not found.")
+        return False
+
+    target_entries = _resolve_collector_targets(cfg=cfg, run_dir=run_dir, max_l_filter=max_l_filter)
+    if not target_entries:
+        print("❌ Error: Either a configuration file or --run-dir is required to run retries.")
+        return False
+
+    if max_retries is not None:
+        eff_max_retries = max(0, int(max_retries))
+    elif cfg and hasattr(cfg.moment_fit, "diagnostics"):
+        eff_max_retries = max(1, int(getattr(cfg.moment_fit.diagnostics, "max_retries", 2)))
+    else:
+        eff_max_retries = 1
+
+    env = os.environ.copy()
+    if cfg and "BRUFIT" not in env and getattr(cfg.environment, "brufit_dir", None):
+        env["BRUFIT"] = cfg.environment.brufit_dir
+    if max_parallel is not None:
+        env["MAX_PARALLEL"] = str(max_parallel)
+
+    all_ok = True
+    for dir_max_l, rdir in target_entries:
+        retry_script = os.path.join(rdir, "RunMomentFit_retry.sh")
+        summary_json = os.path.join(rdir, "unsuccessful_bins_summary.json")
+
+        collector_cmd = _build_collector_command(
+            script_path=script_path,
+            rdir=rdir,
+            dir_max_l=dir_max_l,
+            cfg=cfg,
+            tbins_filter=tbins_filter,
+            auto_retry=False,
+            no_exec=True,
+            non_interactive=True,
+            ess_threshold=ess_threshold,
+            ess_metric=ess_metric,
+            min_ess_threshold=min_ess_threshold,
+            max_parallel=max_parallel,
+            macro_path=macro_path,
+        )
+
+        retry_cmd = ["bash", retry_script, "--non-interactive", "--no-exec"]
+        if tbins_filter:
+            retry_cmd.extend(["--tbin", tbins_filter[0] if len(tbins_filter) == 1 else " ".join(tbins_filter)])
+
+        print(f"\n[RETRY] Target run directory (up to {eff_max_retries} round(s)):\n  {rdir}")
+        if dry_run:
+            print(f"  [DRY-RUN] Collect command: {' '.join(collector_cmd)}")
+            print(f"  [DRY-RUN] Retry script:    {' '.join(retry_cmd)}")
+            continue
+
+        if not os.path.isdir(rdir):
+            print(f"❌ Error: Run directory not found: {rdir}")
+            all_ok = False
+            continue
+
+        for round_idx in range(1, eff_max_retries + 1):
+            print(f"\n=== [Retry Round {round_idx} / {eff_max_retries}] Collecting & Generating Retry Plan ===")
+            col_ret = subprocess.run(collector_cmd, env=env)
+            if col_ret.returncode != 0:
+                print(f"❌ Error: Diagnostic collector failed (exit code {col_ret.returncode}) for {rdir}.")
+                all_ok = False
+                break
+
+            unsucc_count = None
+            if os.path.isfile(summary_json):
+                try:
+                    with open(summary_json, "r", encoding="utf-8") as f:
+                        unsucc_count = int(json.load(f).get("unsuccessful_count", 0))
+                except Exception:
+                    unsucc_count = None
+
+            if unsucc_count == 0:
+                print(f"🎉 All evaluated mass bins in {rdir} satisfy ESS threshold (0 unsuccessful).")
+                break
+
+            if not os.path.isfile(retry_script):
+                print(f"ℹ️  No retry script generated at {retry_script}; stopping.")
+                break
+
+            print(f"\n=== [Retry Round {round_idx} / {eff_max_retries}] Executing {retry_script} ===")
+            retry_ret = subprocess.run(retry_cmd, env=env)
+            if retry_ret.returncode != 0:
+                print(f"❌ Error: Retry script exited with code {retry_ret.returncode} for {rdir}.")
+                all_ok = False
+                break
+        else:
+            if eff_max_retries > 0 and os.path.isfile(summary_json):
+                try:
+                    with open(summary_json, "r", encoding="utf-8") as f:
+                        rem = int(json.load(f).get("unsuccessful_count", 0))
+                    if rem == 0:
+                        print(f"\n🎉 All evaluated mass bins in {rdir} now satisfy ESS threshold!")
+                    else:
+                        print(f"\n⚠️  Completed {eff_max_retries} retry round(s) for {rdir}; {rem} unsuccessful bin(s) remain.")
+                except Exception:
+                    pass
 
     return all_ok
 
@@ -299,6 +467,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             "plot", "plotting",
             "monitor", "status",
             "collect", "collector", "diagnostics",
+            "retry", "refit", "retries",
             "all",
         ],
         default=None,
@@ -332,6 +501,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         dest="collect",
         action="store_true",
         help="Diagnose BruFit MomentFit results across bins and generate targeted retries for unsuccessful bins.",
+    )
+    parser.add_argument(
+        "--retry",
+        dest="retry",
+        action="store_true",
+        help="Collect diagnostics and execute targeted single-bin retry rounds (RunMomentFit_retry.sh).",
     )
     parser.add_argument(
         "--watch", "-w",
@@ -369,6 +544,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--no-exec",
         action="store_true",
         help="Do not execute retry script from within Python (collector script generation only).",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=None,
+        help="Maximum number of retry rounds to execute when --retry / --stage retry is used.",
+    )
+    parser.add_argument(
+        "--max-parallel", "-j",
+        type=int,
+        default=None,
+        help="Override maximum concurrent single-bin retry jobs (default: from YAML or CPUs/2).",
     )
     parser.add_argument(
         "--run-dir", "-d",
@@ -463,7 +650,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Force recalculation of acceptance integral matrices in Stage 1.",
     )
-    args = parser.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if raw_argv:
+        if raw_argv[0].lower() in ("retry", "refit"):
+            raw_argv = ["--retry"] + raw_argv[1:]
+        elif len(raw_argv) >= 2 and raw_argv[0].endswith((".yaml", ".yml")) and raw_argv[1].lower() in ("retry", "refit"):
+            raw_argv = [raw_argv[0], "--retry"] + raw_argv[2:]
+    args = parser.parse_args(raw_argv)
 
     # Infer stages from action flags if --stage was not explicitly passed
     if args.monitor or args.watch or args.cancel or args.progress_only:
@@ -472,7 +665,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         elif "monitor" not in args.stage:
             args.stage.append("monitor")
 
-    if args.collect or args.auto_retry:
+    if args.retry:
+        if args.stage is None:
+            args.stage = ["retry"]
+        elif "retry" not in args.stage:
+            args.stage.append("retry")
+    elif args.collect or args.auto_retry:
         if args.stage is None:
             args.stage = ["collect"]
         elif "collect" not in args.stage:
@@ -492,8 +690,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     cfg_file = args.config_opt or args.config
     if not cfg_file:
-        # Allow running monitoring, collector, or covariance plotting directly if --run-dir is provided
-        if args.run_dir and (args.monitor or args.watch or args.collect or args.cancel or args.plot_cov or (args.stage and any(s in ("monitor", "collect", "status", "diagnostics", "plot_covariance", "cov") for s in args.stage))):
+        # Allow running monitoring, collector, retry, or covariance plotting directly if --run-dir is provided
+        if args.run_dir and (
+            args.monitor or args.watch or args.collect or args.retry or args.cancel or args.plot_cov
+            or (args.stage and any(s in ("monitor", "collect", "status", "diagnostics", "retry", "refit", "retries", "plot_covariance", "cov") for s in args.stage))
+        ):
             args.config = None
             return args
 
@@ -526,6 +727,9 @@ def normalize_stage_names(stages: List[str]) -> List[str]:
         "collect": "collect",
         "collector": "collect",
         "diagnostics": "collect",
+        "retry": "retry",
+        "refit": "retry",
+        "retries": "retry",
         "plot_covariance": "plot_covariance",
         "plot_cov": "plot_covariance",
         "cov": "plot_covariance",
@@ -541,9 +745,9 @@ def normalize_stage_names(stages: List[str]) -> List[str]:
         else:
             raise ValueError(f"Unknown stage name: {s}")
     deduped = list(dict.fromkeys(canonical))  # preserve order without duplicates
-    # "collect" and "monitor" operate on Stage 3 (moment_fit) outputs; when passed alongside
-    # Stage 3 / moment_fit, skip running the fitting process and execute monitoring/collection directly.
-    if "moment_fit" in deduped and any(s in ("collect", "monitor") for s in deduped):
+    # "collect", "monitor", and "retry" operate on Stage 3 (moment_fit) outputs; when passed alongside
+    # Stage 3 / moment_fit, skip running the fitting process and execute those stages directly.
+    if "moment_fit" in deduped and any(s in ("collect", "monitor", "retry") for s in deduped):
         deduped = [s for s in deduped if s != "moment_fit"]
     return deduped
 
@@ -590,6 +794,8 @@ def run_momentfit(
     force: bool = False,
     auto_retry: bool = False,
     no_exec: bool = False,
+    max_retries: Optional[int] = None,
+    max_parallel: Optional[int] = None,
     ess_threshold: Optional[float] = None,
     ess_metric: Optional[str] = None,
     min_ess_threshold: Optional[float] = None,
@@ -640,7 +846,7 @@ def run_momentfit(
         active_stages = ["monitor"]
 
     # Validate configuration if running core pipeline stages (1, 2, 3)
-    if cfg and not set(active_stages).issubset({"monitor", "collect", "plot", "plot_covariance"}):
+    if cfg and not set(active_stages).issubset({"monitor", "collect", "retry", "plot", "plot_covariance"}):
         errors = validate_momentfit_config(cfg)
         if errors:
             print("\n[VALIDATION FAILED] Please address the following issues:")
@@ -786,12 +992,36 @@ def run_momentfit(
             ess_threshold=ess_threshold,
             ess_metric=ess_metric,
             min_ess_threshold=min_ess_threshold,
+            max_parallel=max_parallel,
             dry_run=dry_run,
         )
         stage_timings["collect"] = time.time() - t0
         stage_statuses["collect"] = "SUCCESS" if success else "FAILED"
         if not success and not dry_run:
             print("❌ Workflow halted due to error in Collector.")
+            return 1
+
+    # --------------------------------------------------------------------------
+    # STAGE: Bounded Retry Loop (MomentFitCollector + RunMomentFit_retry.sh)
+    # --------------------------------------------------------------------------
+    if "retry" in active_stages:
+        t0 = time.time()
+        success = run_retry(
+            cfg=cfg,
+            run_dir=run_dir,
+            tbins_filter=tbins_norm,
+            max_l_filter=max_l_filter,
+            max_retries=max_retries,
+            max_parallel=max_parallel,
+            ess_threshold=ess_threshold,
+            ess_metric=ess_metric,
+            min_ess_threshold=min_ess_threshold,
+            dry_run=dry_run,
+        )
+        stage_timings["retry"] = time.time() - t0
+        stage_statuses["retry"] = "SUCCESS" if success else "FAILED"
+        if not success and not dry_run:
+            print("❌ Workflow halted due to error in Retry.")
             return 1
 
     # --------------------------------------------------------------------------
@@ -911,6 +1141,8 @@ def main():
         force=args.force,
         auto_retry=args.auto_retry,
         no_exec=args.no_exec,
+        max_retries=args.max_retries,
+        max_parallel=args.max_parallel,
         ess_threshold=args.ess_threshold,
         ess_metric=args.ess_metric,
         min_ess_threshold=args.min_ess_threshold,

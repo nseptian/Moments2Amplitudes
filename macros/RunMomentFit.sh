@@ -1217,7 +1217,7 @@ if [ "$MODE" != "fit_only" ] && [ "$MODE" != "monitor_only" ] && [ "$MODE" != "p
                 echo " [Auto-Retry Round $CURRENT_ROUND / $MAX_RETRIES]"
                 echo " Automatically executing targeted refits for $UNSUCC_COUNT bin(s)..."
                 echo "=========================================================="
-                bash "$RETRY_SCRIPT"
+                bash "$RETRY_SCRIPT" --non-interactive --no-exec
 
                 ((CURRENT_ROUND++))
             else
@@ -1243,7 +1243,7 @@ if [ "$MODE" != "fit_only" ] && [ "$MODE" != "monitor_only" ] && [ "$MODE" != "p
                         echo " [Interactive Retry Round $CURRENT_ROUND]"
                         echo " Executing targeted refits for $UNSUCC_COUNT bin(s)..."
                         echo "=========================================================="
-                        bash "$RETRY_SCRIPT"
+                        bash "$RETRY_SCRIPT" --non-interactive --no-exec
                         ((CURRENT_ROUND++))
                         ;;
                 esac

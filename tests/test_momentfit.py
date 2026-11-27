@@ -677,6 +677,100 @@ class TestMomentFit(unittest.TestCase):
             self.assertIn(recond_dir, script_txt)
             self.assertIn(", 150000, 15000,", script_txt)
 
+    def test_momentfit_retry_cli_and_bounded_loop(self):
+        import json
+        import tempfile
+        from unittest.mock import patch, MagicMock
+        from moments2amplitudes.momentfit.runner import parse_args, run_momentfit, run_retry
+
+        # Supported CLI forms for retry
+        args_flag = parse_args(["configs/momentfit_test.yaml", "--retry", "--max-l", "8", "--max-retries", "3", "-j", "4"])
+        self.assertTrue(args_flag.retry)
+        self.assertEqual(args_flag.stage, ["retry"])
+        self.assertEqual(args_flag.max_retries, 3)
+        self.assertEqual(args_flag.max_parallel, 4)
+
+        args_sub = parse_args(["retry", "configs/momentfit_test.yaml", "--max-l", "8", "--tbin", "0"])
+        self.assertEqual(args_sub.config, "configs/momentfit_test.yaml")
+        self.assertTrue(args_sub.retry)
+        self.assertEqual(args_sub.stage, ["retry"])
+
+        args_trail = parse_args(["configs/momentfit_test.yaml", "retry", "--max-l", "8"])
+        self.assertEqual(args_trail.config, "configs/momentfit_test.yaml")
+        self.assertEqual(args_trail.stage, ["retry"])
+
+        args_rundir = parse_args(["retry", "--run-dir", "/tmp/some_run_Lmax8"])
+        self.assertIsNone(args_rundir.config)
+        self.assertEqual(args_rundir.run_dir, "/tmp/some_run_Lmax8")
+        self.assertEqual(args_rundir.stage, ["retry"])
+
+        self.assertEqual(normalize_stage_names(["3", "retry"]), ["retry"])
+        self.assertEqual(normalize_stage_names(["refit"]), ["retry"])
+
+        with patch("moments2amplitudes.momentfit.stage3_moment_fit.run_stage3") as mock_s3, \
+             patch("moments2amplitudes.momentfit.runner.run_retry", return_value=True) as mock_retry:
+            rc = run_momentfit(
+                config_path="configs/momentfit_test.yaml",
+                stages=["retry"],
+                max_retries=2,
+                max_parallel=4,
+                dry_run=True,
+            )
+        self.assertEqual(rc, 0)
+        mock_s3.assert_not_called()
+        mock_retry.assert_called_once()
+        self.assertEqual(mock_retry.call_args.kwargs["max_retries"], 2)
+        self.assertEqual(mock_retry.call_args.kwargs["max_parallel"], 4)
+
+        # Verify bounded retry loop stops once unsuccessful_count drops to 0
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rdir = Path(tmpdir) / "MomentFit_m104160_FixedCov_Lmax8_InitValueScale1.0_step1.0"
+            rdir.mkdir(parents=True)
+            summary_path = rdir / "unsuccessful_bins_summary.json"
+            retry_script = rdir / "RunMomentFit_retry.sh"
+            retry_script.write_text("#!/bin/bash\nexit 0\n")
+
+            calls = []
+
+            def fake_subproc(cmd, **kwargs):
+                calls.append((list(cmd), dict(kwargs.get("env", {}))))
+                if "MomentFitCollector.py" in " ".join(cmd):
+                    col_count = sum(1 for c, _ in calls if "MomentFitCollector.py" in " ".join(c))
+                    summary_path.write_text(json.dumps({"unsuccessful_count": 3 if col_count == 1 else 0}))
+                return MagicMock(returncode=0)
+
+            cfg = load_momentfit_config("configs/momentfit_test.yaml")
+            with patch("moments2amplitudes.momentfit.runner.subprocess.run", side_effect=fake_subproc):
+                ok = run_retry(
+                    cfg=cfg,
+                    run_dir=str(rdir),
+                    tbins_filter=["t010020"],
+                    max_retries=3,
+                    max_parallel=4,
+                    dry_run=False,
+                )
+            self.assertTrue(ok)
+            collector_calls = [c for c, _ in calls if "MomentFitCollector.py" in " ".join(c)]
+            bash_calls = [(c, env) for c, env in calls if c[0] == "bash"]
+            self.assertEqual(len(collector_calls), 2)
+            self.assertEqual(len(bash_calls), 1)
+            self.assertIn("--non-interactive", bash_calls[0][0])
+            self.assertIn("--no-exec", bash_calls[0][0])
+            self.assertEqual(bash_calls[0][1].get("MAX_PARALLEL"), "4")
+
+        # Verify cli.py mom2amp momentfit parser supports retry options
+        import sys
+        from moments2amplitudes import cli as mom_cli
+        with patch("moments2amplitudes.momentfit.runner.run_momentfit", return_value=0) as mock_run_mf, \
+             patch.object(sys, "argv", ["mom2amp", "momentfit", "retry", "configs/momentfit_test.yaml", "--max-retries", "2", "-j", "3", "--dry-run"]):
+            with self.assertRaises(SystemExit) as cm:
+                mom_cli.main()
+            self.assertEqual(cm.exception.code, 0)
+            mock_run_mf.assert_called_once()
+            self.assertEqual(mock_run_mf.call_args.kwargs["stages"], ["retry"])
+            self.assertEqual(mock_run_mf.call_args.kwargs["max_retries"], 2)
+            self.assertEqual(mock_run_mf.call_args.kwargs["max_parallel"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()
