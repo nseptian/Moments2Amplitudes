@@ -87,6 +87,12 @@ pixi run momentfit configs/momentfit_nominal.yaml --dry-run --tbin t010020 --max
 pixi run momentfit configs/momentfit_nominal.yaml
 ```
 
+### Run via `RunMomentFit.sh --config`
+```bash
+# Route directly from the general shell script through YAML configuration:
+bash macros/RunMomentFit.sh --config configs/momentfit_nominal.yaml --dry-run
+```
+
 ### Run Individual Stages
 ```bash
 # Stage 1: Linear algebra moments only
@@ -154,6 +160,9 @@ pixi run momentfit configs/momentfit_nominal.yaml --stage 1 2 --tbin t010020
 | `--validate`| | `False` | Validate paths and configuration and exit. |
 | `--overwrite`| | `False` | Overwrite existing output directories without prompt. |
 | `--force-integral` | | `False` | Force recalculation of acceptance integral matrices. |
+| `--acceptance-macro` | | From YAML | Override `CalculateAcceptance` macro path passed to `MonitorMomentFit.py`. |
+| `--skip-acceptance` | | `False` | Skip post-fit acceptance calculation in `MonitorMomentFit.py`. |
+| `--force-acceptance` | | `False` | Force acceptance calculation even if not all bins have converged. |
 
 ---
 
@@ -229,6 +238,9 @@ moment_fit:
   run_script: "/d/home/septian/Moments2Amplitudes/macros/RunMomentFit.sh"
   monitor_script: "/d/home/septian/Moments2Amplitudes/macros/MonitorMomentFit.py"
   collector_script: "/d/home/septian/Moments2Amplitudes/macros/MomentFitCollector.py"
+  acceptance_macro: "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance_m080200.C"
+  skip_acceptance: false
+  force_acceptance: false
   output_dir_template: "/d/home/septian/Moments2Amplitudes/run/MomentFit_m{tag_min:03d}{tag_max:03d}_FixedCov_Lmax{maxL}_InitValueScale{init_scale:.1f}_step{step:.1f}/"
   data:
     base_dir: "/d/home/septian/Moments2Amplitudes/data/data/nominal_tbins"
@@ -307,9 +319,9 @@ All required macros reside directly in `/d/home/septian/Moments2Amplitudes/macro
 | Macro | Description |
 | :--- | :--- |
 | `ExportCovarianceC.C` | C++ macro to convert raw moments into scaled, regularized SPD covariance matrices (`BruCovMatrix_*.root`). |
-| `MomentFit.C` | BruFit MCMC macro supporting full spectrum or single-bin refits, default linear-algebra fixed covariance (`fixed_covariance: true`) or adaptive `BruMcmcCovariance`, YAML/env parameter overrides, and binner-only mode (`run_fit_flag=false`). |
+| `MomentFit.C` | BruFit MCMC macro supporting full spectrum or single-bin refits (`MomentFit` / `MomentFit_General`; legacy `MomentFit_m080200` wrapper removed), default linear-algebra fixed covariance (`fixed_covariance: true`) or adaptive `BruMcmcCovariance`, YAML/env parameter overrides, and binner-only mode (`run_fit_flag=false`). |
 | `MomentFitUtils.C` | Core fitting utility functions, parameter bounds, covariance mapping, and logging. |
-| `RunMomentFit.sh` | Orchestration shell script handling concurrency, `MOM2AMP_*` environment export, logs, cancellation, and monitoring. |
+| `RunMomentFit.sh` | General orchestration shell script supporting arbitrary mass ranges, `--config <yaml>` (`-c`) routing into the Python YAML runner, concurrency, `MOM2AMP_*` environment export, cancellation (`--cancel`), and monitoring (replaces the removed legacy mass-specific shell script). |
 | `MonitorMomentFit.py` | Real-time monitoring script verifying `MCMCTree` completion, computing bounded-memory 2D-FFT ESS/autocorrelation, drawing diagnostic plots, and restoring missing BruFit binner files before acceptance evaluation. |
 | `MomentFitCollector.py` | Post-fit diagnostic evaluator and targeted refit generator supporting `min_ess_threshold`, per-`max_l`/adaptive Gibbs sizing, aligned full-vector vs. Gibbs acceptance rules, proportional burn-in (`burnin_fraction`), iteration scaling up to `max_retry_iters`, and opt-in SPD covariance reconditioning (`recondition_covariance`). |
 | `CalculateAcceptance_m080200.C` | Acceptance normalization macro supporting `force_rebin` and automated BruFit binner reconstruction via `CrossSectionUtils.C`. |

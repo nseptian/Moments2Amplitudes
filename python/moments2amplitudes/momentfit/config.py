@@ -244,6 +244,9 @@ class BruFitStageConfig:
     run_script: str = "/d/home/septian/Moments2Amplitudes/macros/RunMomentFit.sh"
     monitor_script: str = "/d/home/septian/Moments2Amplitudes/macros/MonitorMomentFit.py"
     collector_script: str = "/d/home/septian/Moments2Amplitudes/macros/MomentFitCollector.py"
+    acceptance_macro: str = "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance_m080200.C"
+    skip_acceptance: bool = False
+    force_acceptance: bool = False
     output_dir_template: str = (
         "/d/home/septian/Moments2Amplitudes/run/"
         "MomentFit_m{tag_min:03d}{tag_max:03d}_FixedCov_Lmax{maxL}_InitValueScale{init_scale:.1f}_step{step:.1f}/"
@@ -464,6 +467,8 @@ def validate_momentfit_config(cfg: MomentFitConfig, check_files: bool = True) ->
             errors.append(f"MomentFit run script not found: {cfg.moment_fit.run_script}")
         if check_files and not os.path.isfile(cfg.moment_fit.macro_path):
             errors.append(f"MomentFit.C macro not found: {cfg.moment_fit.macro_path}")
+        if check_files and cfg.moment_fit.acceptance_macro and not os.path.isfile(cfg.moment_fit.acceptance_macro):
+            errors.append(f"Acceptance macro not found: {cfg.moment_fit.acceptance_macro}")
 
         # Check MomentFit data base_dir if configured
         if check_files and cfg.moment_fit.data.base_dir:

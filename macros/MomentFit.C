@@ -445,20 +445,3 @@ void MomentFit_General(
               custom_data_file, custom_mcrecon_file, custom_mcgen_file, custom_weight_file,
               run_fit_flag);
 }
-
-// Backward-compatibility wrapper for MomentFit_m080200
-void MomentFit_m080200(
-    int tbin_index = -1,
-    int maxL = 4,
-    double init_value_scale = 0.5,
-    double mcmc_step = 0.8,
-    bool apply_mc_variance = true,
-    bool allow_negative_pdf = true,
-    bool use_tuning = true,
-    int gibbs_block_size = 0,
-    double cold_warmup_acc = 0.15
-) {
-    MomentFit(tbin_index, maxL, init_value_scale, mcmc_step, -1, 6000, 1000, 0.8, 2.0, 30,
-              "", "", "", apply_mc_variance, allow_negative_pdf, use_tuning,
-              gibbs_block_size, cold_warmup_acc);
-}

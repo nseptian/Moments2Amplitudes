@@ -82,7 +82,7 @@ def build_moment_fit_command(
     tbin_arg: str,
 ) -> Tuple[List[str], str]:
     """
-    Constructs the command-line invocation for RunMomentFit_m080200.sh.
+    Constructs the command-line invocation for the configured MomentFit run script (RunMomentFit.sh).
     """
     m_min = cfg.analysis.mass_binning.min
     m_max = cfg.analysis.mass_binning.max
@@ -120,6 +120,13 @@ def build_moment_fit_command(
 
     if cfg.moment_fit.overwrite:
         cmd.append("--overwrite")
+
+    if getattr(cfg.moment_fit, "acceptance_macro", ""):
+        cmd.extend(["--acceptance-macro", cfg.moment_fit.acceptance_macro])
+    if getattr(cfg.moment_fit, "skip_acceptance", False):
+        cmd.append("--skip-acceptance")
+    if getattr(cfg.moment_fit, "force_acceptance", False):
+        cmd.append("--force-acceptance")
 
     # Pass configured input data directory and patterns if available
     if hasattr(cfg.moment_fit, "data"):
@@ -215,7 +222,7 @@ def run_stage3(
     print(f" Script:             {cfg.moment_fit.run_script}")
     print("=" * 70 + "\n")
 
-    # Map t-bins to argument format for RunMomentFit_m080200.sh
+    # Map t-bins to argument format for RunMomentFit.sh
     if set(tbins) == set(TBIN_INDEX_MAP.keys()):
         tbin_arg = "all"
     elif len(tbins) == 1 and tbins[0] in TBIN_INDEX_MAP:
@@ -261,7 +268,8 @@ def run_stage3(
             print("[DRY-RUN] Skipping actual fit execution.")
             continue
 
-        print(f"\n--- Launching RunMomentFit_m080200.sh for Max L = {l} ---")
+        run_script_name = os.path.basename(cfg.moment_fit.run_script)
+        print(f"\n--- Launching {run_script_name} for Max L = {l} ---")
         start_time = time.time()
 
         # Run with environment from set_ana_env.sh

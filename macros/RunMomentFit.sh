@@ -2,20 +2,20 @@
 set -e
 
 # ==============================================================================
-# RunMomentFit_m080200.sh
+# RunMomentFit.sh
 #
-# MomentFit Pipeline for m080200 (M = 0.8 - 2.0 GeV, 30 bins) adapted to use
-# the generalized MomentFit macro (MomentFit.C) and diagnostic collector:
+# Generalized MomentFit Pipeline (arbitrary mass ranges via --config <yaml> or CLI)
+# powered by MomentFit.C and MomentFitCollector.py:
 #   1. Runs BruFit MomentFit (MomentFit.C) across t-bins in parallel.
 #   2. Process control: cancel running jobs, detach/background, live watch.
 #   3. Runs post-fit monitoring and diagnostics (MonitorMomentFit.py).
 #   4. Collects unsuccessful bins (fit failure, stuck chains, or ESS < threshold).
 #   5. Diagnoses failure mechanisms (zero acceptance Ph1, stuck Ph2, or low ESS).
 #   6. Generates ready-to-run targeted single-bin retry script (RunMomentFit_retry.sh).
-#   7. Optional --auto-retry loop to automatically achieve ESS >= 100.
+#   7. Optional --auto-retry loop across configurable retry rounds.
 # ==============================================================================
 
-# Default Configuration Parameters (m080200 specific defaults)
+# Default Configuration Parameters (overridden by --config <yaml> or CLI flags)
 MAX_L=8
 INIT_SCALE=1.0
 STEP=1.0
@@ -81,6 +81,10 @@ CUSTOM_DATA_FILE=""
 CUSTOM_MCRECON_FILE=""
 CUSTOM_MCGEN_FILE=""
 CUSTOM_WEIGHT_FILE=""
+CONFIG_FILE=""
+ACCEPTANCE_MACRO=""
+SKIP_ACCEPTANCE=false
+FORCE_ACCEPTANCE=false
 EXTRA_MONITOR_ARGS=()
 
 EXPLICIT_STEP=false
@@ -89,6 +93,11 @@ EXPLICIT_MAX_L=false
 EXPLICIT_M_MIN=false
 EXPLICIT_M_MAX=false
 EXPLICIT_N_BINS=false
+EXPLICIT_ESS_THRESHOLD=false
+EXPLICIT_ESS_METRIC=false
+EXPLICIT_MIN_ESS_THRESHOLD=false
+EXPLICIT_MAX_RETRIES=false
+EXPLICIT_MAX_PARALLEL=false
 
 declare -A TBIN_INDEX_MAP=(
     [0]="t010020"
@@ -105,13 +114,14 @@ Usage: $(basename "$0") [OPTIONS] [MAX_L] [INIT_SCALE] [STEP] [TBIN] [MODE]
 Options:
   --monitor-only, --monitor, -m   Monitor progress only without launching fits or waiting.
   --collect-only, collect         Run diagnostics collection & retry generation only.
-  --cancel, --stop, -c            Cancel running fit jobs (for specified t-bin or all).
+  --cancel, --stop                Cancel running fit jobs (for specified t-bin or all).
   --force, -f                     Force terminate immediately using SIGKILL (with --cancel).
   --dry-run                       Preview which processes would be canceled without killing.
   --no-wait, --detach, -b         Launch fit jobs in background and return immediately.
   --watch, -w                     Continuously refresh progress table (Ctrl+C to exit).
   --interval <sec>                Refresh interval for --watch (default: 10s).
   --run-dir, -d <path>            Specify run directory directly.
+  --config, -c <yaml>             Route execution through a MomentFit YAML configuration file.
   --cov-dir <path>                Specify linear algebra covariance directory.
   --data-dir <path>               Specify input data directory.
   --data-pattern <pattern>        Specify data file path or pattern (e.g. {data_dir}/data_merged_{tbin}.root).
@@ -164,6 +174,9 @@ Options:
   --max-retry-iters <int>         Retry MCMC iteration cap (default: 200000).
   --burnin-fraction <float>       Retry burn-in fraction of iterations (default: 0.10).
   --recondition-covariance / --no-recondition-covariance  Opt-in empirical covariance reconditioning (default: false).
+  --acceptance-macro <path>       Acceptance macro forwarded to MonitorMomentFit.py.
+  --skip-acceptance               Skip running acceptance calculation in MonitorMomentFit.py.
+  --force-acceptance              Force running acceptance calculation even if not all bins converged.
   --progress-only, --status-only  Print status table without full plot generation.
   --help, -h                      Show this help message.
 
@@ -186,7 +199,7 @@ EOF
 POSITIONAL_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --cancel|--stop|-c|cancel|stop|--kill|kill)
+        --cancel|--stop|cancel|stop|--kill|kill)
             MODE="cancel"
             shift
             ;;
@@ -291,14 +304,17 @@ while [[ $# -gt 0 ]]; do
             ;;
         --ess-threshold)
             ESS_THRESHOLD="$2"
+            EXPLICIT_ESS_THRESHOLD=true
             shift 2
             ;;
         --ess-metric)
             ESS_METRIC="$2"
+            EXPLICIT_ESS_METRIC=true
             shift 2
             ;;
         --min-ess-threshold)
             MIN_ESS_THRESHOLD="$2"
+            EXPLICIT_MIN_ESS_THRESHOLD=true
             shift 2
             ;;
         --mc-variance)
@@ -463,10 +479,12 @@ while [[ $# -gt 0 ]]; do
             ;;
         --max-retries)
             MAX_RETRIES="$2"
+            EXPLICIT_MAX_RETRIES=true
             shift 2
             ;;
         --max-parallel|-j)
             MAX_PARALLEL="$2"
+            EXPLICIT_MAX_PARALLEL=true
             shift 2
             ;;
         --overwrite|--force-overwrite|-y|--yes)
@@ -502,6 +520,28 @@ while [[ $# -gt 0 ]]; do
             ;;
         --progress-only|--status-only)
             EXTRA_MONITOR_ARGS+=("--progress-only")
+            shift
+            ;;
+        --config|-c)
+            CONFIG_FILE="$2"
+            shift 2
+            ;;
+        --acceptance-macro)
+            ACCEPTANCE_MACRO="$2"
+            shift 2
+            ;;
+        --skip-acceptance)
+            SKIP_ACCEPTANCE=true
+            EXTRA_MONITOR_ARGS+=("--skip-acceptance")
+            shift
+            ;;
+        --force-acceptance)
+            FORCE_ACCEPTANCE=true
+            EXTRA_MONITOR_ARGS+=("--force-acceptance")
+            shift
+            ;;
+        --retry|retry)
+            MODE="retry_only"
             shift
             ;;
         --help|-h)
@@ -579,6 +619,39 @@ fi
 
 # 1. Setup BruFit & Analysis Environment (skip if already set up)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# If --config <yaml> was supplied, route execution cleanly through the YAML-driven Python runner
+if [ -n "$CONFIG_FILE" ]; then
+    PYTHON_BIN="${SCRIPT_DIR}/../.pixi/envs/default/bin/python"
+    [ ! -x "$PYTHON_BIN" ] && PYTHON_BIN="$(command -v python3 || command -v python)"
+    RUNNER_ARGS=(--config "$CONFIG_FILE")
+    case "$MODE" in
+        monitor_only) RUNNER_ARGS+=(--monitor) ;;
+        collect_only) RUNNER_ARGS+=(--collect) ;;
+        retry_only) RUNNER_ARGS+=(--retry) ;;
+        plot_only) RUNNER_ARGS+=(--plot) ;;
+        cancel) RUNNER_ARGS+=(--cancel) ;;
+        *) RUNNER_ARGS+=(--stage moment_fit) ;;
+    esac
+    [ "$EXPLICIT_MAX_L" = true ] && RUNNER_ARGS+=(--max-l "$MAX_L")
+    [ "$TBIN_ARG" != "all" ] && RUNNER_ARGS+=(--tbin "$TBIN_ARG")
+    [ -n "$CUSTOM_RUN_DIR" ] && RUNNER_ARGS+=(--run-dir "$CUSTOM_RUN_DIR")
+    [ "$DRY_RUN" = true ] && RUNNER_ARGS+=(--dry-run)
+    [ "$OVERWRITE" = true ] && RUNNER_ARGS+=(--overwrite)
+    [ "$AUTO_RETRY" = true ] && RUNNER_ARGS+=(--auto-retry)
+    [ "$EXPLICIT_ESS_THRESHOLD" = true ] && RUNNER_ARGS+=(--ess-threshold "$ESS_THRESHOLD")
+    [ "$EXPLICIT_ESS_METRIC" = true ] && RUNNER_ARGS+=(--ess-metric "$ESS_METRIC")
+    [ "$EXPLICIT_MIN_ESS_THRESHOLD" = true ] && RUNNER_ARGS+=(--min-ess-threshold "$MIN_ESS_THRESHOLD")
+    [ "$EXPLICIT_MAX_RETRIES" = true ] && RUNNER_ARGS+=(--max-retries "$MAX_RETRIES")
+    [ "$EXPLICIT_MAX_PARALLEL" = true ] && RUNNER_ARGS+=(--max-parallel "$MAX_PARALLEL")
+    [ -n "$ACCEPTANCE_MACRO" ] && RUNNER_ARGS+=(--acceptance-macro "$ACCEPTANCE_MACRO")
+    [ "$SKIP_ACCEPTANCE" = true ] && RUNNER_ARGS+=(--skip-acceptance)
+    [ "$FORCE_ACCEPTANCE" = true ] && RUNNER_ARGS+=(--force-acceptance)
+    [ "$WATCH" = true ] && RUNNER_ARGS+=(--watch --interval "$INTERVAL")
+    [ "$FORCE" = true ] && RUNNER_ARGS+=(--force)
+    exec env PYTHONPATH="${SCRIPT_DIR}/../python:${PYTHONPATH}" "$PYTHON_BIN" -m moments2amplitudes.cli momentfit "${RUNNER_ARGS[@]}"
+fi
+
 if [ -z "$BRUFIT" ]; then
     CURRENT_DIR="$(pwd)"
     if [ -f "$SCRIPT_DIR/../set_env.sh" ]; then
@@ -627,13 +700,11 @@ export PYTHONPATH="${ROOTSYS}/lib:${SCRIPT_DIR}/../python:${CLEAN_PYTHONPATH}"
 
 # 4. Resolve Macro & Script paths (using local macros in Moments2Amplitudes)
 MACRO_PATH="$SCRIPT_DIR/MomentFit.C"
-[ ! -f "$MACRO_PATH" ] && MACRO_PATH="/d/home/septian/EtaPi0Analysis/macros/MomentFit.C"
-
 MONITOR_SCRIPT="$SCRIPT_DIR/MonitorMomentFit.py"
-[ ! -f "$MONITOR_SCRIPT" ] && MONITOR_SCRIPT="/d/home/septian/EtaPi0Analysis/macros/MonitorMomentFit.py"
-
 COLLECTOR_SCRIPT="$SCRIPT_DIR/MomentFitCollector.py"
-[ ! -f "$COLLECTOR_SCRIPT" ] && COLLECTOR_SCRIPT="/d/home/septian/EtaPi0Analysis/macros/MomentFitCollector.py"
+if [ -z "$ACCEPTANCE_MACRO" ]; then
+    ACCEPTANCE_MACRO="$SCRIPT_DIR/CalculateAcceptance_m080200.C"
+fi
 
 # 5. Resolve Output Directory & Mass Binning Auto-Detection
 DIR_FOR_DETECTION="${CUSTOM_RUN_DIR:-}"
@@ -669,7 +740,7 @@ else
     REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
     DEFAULT_RUN_DIR="${REPO_DIR}/run/MomentFit_${MASS_TAG}_FixedCov_Lmax${MAX_L}_InitValueScale${INIT_SCALE}_step${STEP}/"
     if [ "$MODE" != "all" ] && [ ! -d "$DEFAULT_RUN_DIR" ]; then
-        LATEST_CANDIDATE=$(ls -td "${REPO_DIR}/run/MomentFit_${MASS_TAG}_FixedCov_*" "${REPO_DIR}/run/MomentFit_m080200_FixedCov_*" /d/grid17/septian/EtaPi0Analysis/run/MomentFit_*_FixedCov_* 2>/dev/null | grep -v "_stepall" | head -n 1 || true)
+        LATEST_CANDIDATE=$(ls -td "${REPO_DIR}/run/MomentFit_${MASS_TAG}_FixedCov_*" "${REPO_DIR}/run/MomentFit_"*"_FixedCov_*" 2>/dev/null | grep -v "_stepall" | head -n 1 || true)
         if [ -n "$LATEST_CANDIDATE" ] && [ -d "$LATEST_CANDIDATE" ]; then
             RUN_DIR="$LATEST_CANDIDATE"
             echo "Auto-detected newest run directory: $RUN_DIR"
@@ -696,7 +767,11 @@ kill_tbin_fit() {
     local tbin_idx="$1"
     local pid_file="${LOGS_DIR}tbin_${tbin_idx}.pid"
     local log_file="${LOGS_DIR}MomentFit_${MASS_TAG}_tbin_${tbin_idx}.log"
-    [ ! -f "$log_file" ] && [ -f "${LOGS_DIR}MomentFit_m080200_tbin_${tbin_idx}.log" ] && log_file="${LOGS_DIR}MomentFit_m080200_tbin_${tbin_idx}.log"
+    if [ ! -f "$log_file" ]; then
+        local alt_log
+        alt_log=$(ls -1 "${LOGS_DIR}"MomentFit*_tbin_"${tbin_idx}".log 2>/dev/null | head -n 1 || true)
+        [ -n "$alt_log" ] && log_file="$alt_log"
+    fi
     local tbin_name="${TBIN_INDEX_MAP[$tbin_idx]:-tbin_${tbin_idx}}"
     local target_pids=()
 
@@ -719,8 +794,8 @@ kill_tbin_fit() {
         fi
     fi
 
-    # 2. Search processes matching pattern (matches both MomentFit.C and MomentFit_m080200.C)
-    local pattern="MomentFit.*\.C\(${tbin_idx},"
+    # 2. Search processes matching MomentFit macro invocation
+    local pattern="MomentFit\.C\(${tbin_idx},"
     local matched
     matched=$(pgrep -u "$USER" -f "$pattern" 2>/dev/null || true)
     for p in $matched; do
@@ -816,7 +891,7 @@ kill_tbin_fit() {
 # ==============================================================================
 if [ "$MODE" == "cancel" ]; then
     echo "=========================================================="
-    echo " Cancelling MomentFit_m080200 Jobs"
+    echo " Cancelling MomentFit (${MASS_TAG}) Jobs"
     echo " Target t-bin(s):  $TBIN_ARG"
     echo " Run Directory:    $RUN_DIR"
     echo " Logs Directory:   $LOGS_DIR"
@@ -835,13 +910,13 @@ fi
 
 echo "=========================================================="
 if [ "$MODE" == "monitor_only" ]; then
-    echo " MomentFit_m080200 Monitoring Pipeline"
+    echo " MomentFit (${MASS_TAG}) Monitoring Pipeline"
 elif [ "$MODE" == "collect_only" ]; then
-    echo " MomentFit_m080200 Diagnostic Collection & Retry Generation"
+    echo " MomentFit (${MASS_TAG}) Diagnostic Collection & Retry Generation"
 elif [ "$MODE" == "plot_only" ]; then
-    echo " MomentFit_m080200 Diagnostic Plot Generation (No Fits)"
+    echo " MomentFit (${MASS_TAG}) Diagnostic Plot Generation (No Fits)"
 else
-    echo " Starting MomentFit_m080200 Pipeline (All-in-One Generalized)"
+    echo " Starting MomentFit (${MASS_TAG}) Pipeline"
 fi
 echo " Max L:            $MAX_L"
 echo " Init Scale:       $INIT_SCALE"
@@ -876,7 +951,10 @@ if [ "$MODE" != "monitor_only" ] && [ "$MODE" != "no_fit" ] && [ "$MODE" != "col
     EXISTING_LOGS=()
     for i in "${TBIN_LIST[@]}"; do
         LOG_FILE="${LOGS_DIR}MomentFit_${MASS_TAG}_tbin_${i}.log"
-        [ ! -f "$LOG_FILE" ] && [ -f "${LOGS_DIR}MomentFit_m080200_tbin_${i}.log" ] && LOG_FILE="${LOGS_DIR}MomentFit_m080200_tbin_${i}.log"
+        if [ ! -f "$LOG_FILE" ]; then
+            ALT_LOG=$(ls -1 "${LOGS_DIR}"MomentFit*_tbin_"${i}".log 2>/dev/null | head -n 1 || true)
+            [ -n "$ALT_LOG" ] && LOG_FILE="$ALT_LOG"
+        fi
         tbin_name="${TBIN_INDEX_MAP[$i]:-tbin_${i}}"
         if [ -s "$LOG_FILE" ]; then
             EXISTING_LOGS+=("$LOG_FILE")
@@ -996,13 +1074,8 @@ if [ "$MODE" != "monitor_only" ] && [ "$MODE" != "no_fit" ] && [ "$MODE" != "col
         fi
 
         export_mom2amp_env
-        if [[ "$MACRO_PATH" =~ MomentFit_m080200\.C$ ]]; then
-            root -l -b -q "${BRUFIT}/macros/LoadBru.C" \
-                "${MACRO_PATH}($i, $MAX_L, $INIT_SCALE, $STEP, $APPLY_MC_VAR, $ALLOW_NEG_PDF, $USE_TUNING, $GIBBS_BLOCK_SIZE, $COLD_WARMUP_ACC)" > "$log_file" 2>&1
-        else
-            root -l -b -q "${BRUFIT}/macros/LoadBru.C" \
-                "${MACRO_PATH}($i, $MAX_L, $INIT_SCALE, $STEP, -1, $MCMC_ITERS, $MCMC_BURNIN, $M_MIN, $M_MAX, $N_BINS, \"$RUN_DIR\", \"$CUSTOM_COV_DIR\", \"$CUSTOM_DATA_DIR\", $APPLY_MC_VAR, $ALLOW_NEG_PDF, $USE_TUNING, $GIBBS_BLOCK_SIZE, $COLD_WARMUP_ACC, \"$data_f\", \"$mcrecon_f\", \"$mcgen_f\", \"$weight_f\")" > "$log_file" 2>&1
-        fi
+        root -l -b -q "${BRUFIT}/macros/LoadBru.C" \
+            "${MACRO_PATH}($i, $MAX_L, $INIT_SCALE, $STEP, -1, $MCMC_ITERS, $MCMC_BURNIN, $M_MIN, $M_MAX, $N_BINS, \"$RUN_DIR\", \"$CUSTOM_COV_DIR\", \"$CUSTOM_DATA_DIR\", $APPLY_MC_VAR, $ALLOW_NEG_PDF, $USE_TUNING, $GIBBS_BLOCK_SIZE, $COLD_WARMUP_ACC, \"$data_f\", \"$mcrecon_f\", \"$mcgen_f\", \"$weight_f\")" > "$log_file" 2>&1
         local fit_status=$?
         rm -f "$pid_file"
 
@@ -1013,14 +1086,20 @@ if [ "$MODE" != "monitor_only" ] && [ "$MODE" != "no_fit" ] && [ "$MODE" != "col
         fi
 
         # Immediately monitor and generate diagnostic plots for this tbin as soon as its fit finishes
-        "$PYTHON_BIN" "$MONITOR_SCRIPT" \
-            --run-dir "$RUN_DIR" \
-            --tbin "$i" \
-            --max-l "$MAX_L" \
-            --ess-threshold "$ESS_THRESHOLD" \
-            --ess-metric "$ESS_METRIC" \
-            --burn-in "$MCMC_BURNIN" \
-            "${EXTRA_MONITOR_ARGS[@]}" > /dev/null 2>&1 || true
+        local WORKER_MON_ARGS=(
+            --run-dir "$RUN_DIR"
+            --tbin "$i"
+            --max-l "$MAX_L"
+            --m-min "$M_MIN"
+            --m-max "$M_MAX"
+            --n-bins "$N_BINS"
+            --ess-threshold "$ESS_THRESHOLD"
+            --ess-metric "$ESS_METRIC"
+            --burn-in "$MCMC_BURNIN"
+        )
+        [ -n "$CUSTOM_DATA_DIR" ] && WORKER_MON_ARGS+=(--data-dir "$CUSTOM_DATA_DIR")
+        [ -n "$ACCEPTANCE_MACRO" ] && WORKER_MON_ARGS+=(--acceptance-macro "$ACCEPTANCE_MACRO")
+        "$PYTHON_BIN" "$MONITOR_SCRIPT" "${WORKER_MON_ARGS[@]}" "${EXTRA_MONITOR_ARGS[@]}" > /dev/null 2>&1 || true
 
         echo "  [$tbin_name] 🏁 Finished pipeline for $tbin_name."
         return $fit_status
@@ -1094,10 +1173,15 @@ run_monitoring() {
         --run-dir "$RUN_DIR"
         --tbin "$TBIN_ARG"
         --max-l "$MAX_L"
+        --m-min "$M_MIN"
+        --m-max "$M_MAX"
+        --n-bins "$N_BINS"
         --ess-threshold "$ESS_THRESHOLD"
         --ess-metric "$ESS_METRIC"
         --burn-in "$MCMC_BURNIN"
     )
+    [ -n "$CUSTOM_DATA_DIR" ] && MON_ARGS+=(--data-dir "$CUSTOM_DATA_DIR")
+    [ -n "$ACCEPTANCE_MACRO" ] && MON_ARGS+=(--acceptance-macro "$ACCEPTANCE_MACRO")
 
     if [ "$WATCH" = true ]; then
         MON_ARGS+=(--watch --interval "$INTERVAL")
@@ -1173,7 +1257,7 @@ run_collection_and_retry() {
     if [ "$EXPLICIT_STEP" = true ]; then COLLECTOR_CMD+=(--step "$STEP"); fi
     COLLECTOR_CMD+=(--iters "$MCMC_ITERS")
 
-    # Pass --no-exec so RunMomentFit_m080200.sh orchestrates the retry execution loop
+    # Pass --no-exec so RunMomentFit.sh orchestrates the retry execution loop
     COLLECTOR_CMD+=(--no-exec)
 
     if [ "$AUTO_RETRY" = true ]; then

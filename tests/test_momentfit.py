@@ -772,5 +772,190 @@ class TestMomentFit(unittest.TestCase):
             self.assertEqual(mock_run_mf.call_args.kwargs["max_parallel"], 3)
 
 
+class TestGeneralScriptAndAcceptanceRouting(unittest.TestCase):
+    """Verify legacy _m080200.sh cleanup, RunMomentFit.sh --config routing, and acceptance CLI options."""
+
+    @staticmethod
+    def _repo_root() -> Path:
+        return Path(__file__).resolve().parents[1]
+
+    def _write_sandbox_safe_config(self, tmpdir: str, acceptance_macro: str | None = None) -> tuple[Path, Path]:
+        import yaml
+
+        root = self._repo_root()
+        tmp = Path(tmpdir)
+        mm_cpp = tmp / "moments_main" / "cpp"
+        mm_cpp.mkdir(parents=True, exist_ok=True)
+        (mm_cpp / "basisFunctions.C").write_text("// stub\n", encoding="utf-8")
+
+        data_dir = tmp / "input_data" / "t010020"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / "data_flat_All.root").write_text("", encoding="utf-8")
+
+        mfit_data_dir = tmp / "mfit_data"
+        mfit_data_dir.mkdir(parents=True, exist_ok=True)
+
+        run_dir = tmp / "run_out"
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        cfg_data = yaml.safe_load((root / "configs" / "momentfit_test.yaml").read_text(encoding="utf-8"))
+        cfg_data["environment"]["moments_main_dir"] = str(tmp / "moments_main")
+        cfg_data["analysis"]["tbins"] = ["t010020"]
+        cfg_data["analysis"]["max_l"] = [4]
+        cfg_data["input_data"]["base_dir"] = str(tmp / "input_data")
+        cfg_data["linear_algebra"]["output_base_dir"] = str(tmp / "moments_out")
+        cfg_data["moment_fit"]["data"]["base_dir"] = str(mfit_data_dir)
+        cfg_data["moment_fit"]["output_dir_template"] = str(
+            tmp / "run_m{tag_min:03d}{tag_max:03d}_L{maxL}_s{init_scale:.1f}_st{step:.1f}/"
+        )
+        if acceptance_macro is not None:
+            cfg_data["moment_fit"]["acceptance_macro"] = acceptance_macro
+
+        cfg_path = tmp / "momentfit_sandbox.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg_data), encoding="utf-8")
+        return cfg_path, run_dir
+
+    def test_legacy_m080200_shell_script_removed(self):
+        root = self._repo_root()
+        self.assertFalse((root / "macros" / "legacy" / "RunMomentFit_m080200.sh").exists())
+
+        for rel_path in [
+            "macros/RunMomentFit.sh",
+            "macros/MonitorMomentFit.py",
+            "macros/MomentFit.C",
+            "python/moments2amplitudes/momentfit/stage3_moment_fit.py",
+            "python/moments2amplitudes/momentfit/runner.py",
+            "docs/MOMENTFIT.md",
+        ]:
+            content = (root / rel_path).read_text(encoding="utf-8")
+            self.assertNotIn("RunMomentFit_m080200", content, f"Unexpected RunMomentFit_m080200 in {rel_path}")
+            self.assertNotIn("MomentFit_m080200(", content, f"Unexpected MomentFit_m080200( in {rel_path}")
+
+    def test_acceptance_options_validate_stage3_and_monitor(self):
+        import contextlib
+        import io
+        import tempfile
+        from moments2amplitudes.momentfit.config import load_momentfit_config, validate_momentfit_config
+        from moments2amplitudes.momentfit.stage3_moment_fit import build_moment_fit_command
+        from moments2amplitudes.momentfit.runner import run_monitor, run_momentfit
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path, rdir = self._write_sandbox_safe_config(tmpdir)
+            cfg = load_momentfit_config(str(cfg_path))
+            self.assertTrue(cfg.moment_fit.acceptance_macro.endswith("CalculateAcceptance_m080200.C"))
+            self.assertFalse(cfg.moment_fit.skip_acceptance)
+            self.assertFalse(cfg.moment_fit.force_acceptance)
+            self.assertEqual(validate_momentfit_config(cfg), [])
+
+            # Stage 3 command forwarding
+            cfg.moment_fit.skip_acceptance = True
+            cfg.moment_fit.force_acceptance = True
+            cmd, _ = build_moment_fit_command(cfg, max_l=4, tbin_arg="0")
+            self.assertIn("--acceptance-macro", cmd)
+            self.assertIn(cfg.moment_fit.acceptance_macro, cmd)
+            self.assertIn("--skip-acceptance", cmd)
+            self.assertIn("--force-acceptance", cmd)
+
+            # Invalid acceptance macro path caught by validator
+            cfg.moment_fit.acceptance_macro = str(Path(tmpdir) / "nonexistent_acc.C")
+            errors = validate_momentfit_config(cfg)
+            self.assertTrue(any("Acceptance macro not found" in err for err in errors), errors)
+
+            # run_monitor & run_momentfit forwarding (including min_ess_threshold fix)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                ok = run_monitor(
+                    cfg=load_momentfit_config(str(cfg_path)),
+                    run_dir=str(rdir),
+                    acceptance_macro="/tmp/custom_acceptance.C",
+                    skip_acceptance=True,
+                    force_acceptance=True,
+                    dry_run=True,
+                )
+            self.assertTrue(ok)
+            out = buf.getvalue()
+            self.assertIn("--acceptance-macro /tmp/custom_acceptance.C", out)
+            self.assertIn("--skip-acceptance", out)
+            self.assertIn("--force-acceptance", out)
+            self.assertIn(f"--data-dir {cfg.moment_fit.data.base_dir}", out)
+
+            buf2 = io.StringIO()
+            with contextlib.redirect_stdout(buf2):
+                rc = run_momentfit(
+                    config_path=str(cfg_path),
+                    stages=["monitor"],
+                    run_dir=str(rdir),
+                    min_ess_threshold=5.0,
+                    skip_acceptance=True,
+                    dry_run=True,
+                )
+            self.assertEqual(rc, 0)
+            self.assertIn("--skip-acceptance", buf2.getvalue())
+
+    def test_run_momentfit_sh_config_routing_and_cli_flags(self):
+        import os
+        import subprocess
+        import sys
+        import tempfile
+        from unittest.mock import patch
+        from moments2amplitudes import cli as mom_cli
+
+        root = self._repo_root()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path, _ = self._write_sandbox_safe_config(tmpdir)
+            env = os.environ.copy()
+            env["PYTHONPATH"] = f"{root / 'python'}:{env.get('PYTHONPATH', '')}".rstrip(":")
+
+            for flag in ("--config", "-c"):
+                res = subprocess.run(
+                    [
+                        "bash",
+                        str(root / "macros" / "RunMomentFit.sh"),
+                        flag,
+                        str(cfg_path),
+                        "--max-l",
+                        "4",
+                        "--tbin",
+                        "0",
+                        "--skip-acceptance",
+                        "--force-acceptance",
+                        "--dry-run",
+                    ],
+                    cwd=str(root),
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(res.returncode, 0, f"{flag} failed:\n{res.stdout}\n{res.stderr}")
+                self.assertIn("--skip-acceptance", res.stdout)
+                self.assertIn("--force-acceptance", res.stdout)
+                self.assertIn("[DRY-RUN]", res.stdout)
+                self.assertNotIn("RuntimeWarning", res.stderr)
+
+        with patch("moments2amplitudes.momentfit.runner.run_momentfit", return_value=0) as mock_run_mf, \
+             patch.object(
+                 sys,
+                 "argv",
+                 [
+                     "mom2amp",
+                     "momentfit",
+                     "configs/momentfit_test.yaml",
+                     "--monitor",
+                     "--acceptance-macro",
+                     "/tmp/acc_override.C",
+                     "--skip-acceptance",
+                     "--force-acceptance",
+                     "--dry-run",
+                 ],
+             ):
+            with self.assertRaises(SystemExit) as cm:
+                mom_cli.main()
+            self.assertEqual(cm.exception.code, 0)
+            self.assertEqual(mock_run_mf.call_args.kwargs["acceptance_macro"], "/tmp/acc_override.C")
+            self.assertTrue(mock_run_mf.call_args.kwargs["skip_acceptance"])
+            self.assertTrue(mock_run_mf.call_args.kwargs["force_acceptance"])
+
+
 if __name__ == "__main__":
     unittest.main()

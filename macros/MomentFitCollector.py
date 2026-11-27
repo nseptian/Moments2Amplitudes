@@ -2826,7 +2826,7 @@ def main():
     )
     parser.add_argument(
         "--run-dir", "-d", type=str, default=None,
-        help="Path to MomentFit run directory (e.g. /d/grid17/septian/EtaPi0Analysis/run/MomentFit_m080200_...)."
+        help="Path to MomentFit run directory (e.g. run/MomentFit_m<min><max>_...)."
     )
     parser.add_argument(
         "--tbin", "-t", type=str, default="all",

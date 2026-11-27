@@ -106,6 +106,9 @@ moment_fit:
   run_script: "/d/home/septian/Moments2Amplitudes/macros/RunMomentFit.sh"
   monitor_script: "/d/home/septian/Moments2Amplitudes/macros/MonitorMomentFit.py"
   collector_script: "/d/home/septian/Moments2Amplitudes/macros/MomentFitCollector.py"
+  acceptance_macro: "/d/home/septian/Moments2Amplitudes/macros/CalculateAcceptance_m080200.C"
+  skip_acceptance: false
+  force_acceptance: false
   output_dir_template: "/d/home/septian/Moments2Amplitudes/run/MomentFit_m{tag_min:03d}{tag_max:03d}_FixedCov_Lmax{maxL}_InitValueScale{init_scale:.1f}_step{step:.1f}/"
   data:
     base_dir: "/d/home/septian/Moments2Amplitudes/data/data/nominal_tbins"

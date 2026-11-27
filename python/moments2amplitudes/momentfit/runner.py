@@ -58,6 +58,10 @@ def run_monitor(
     ess_threshold: Optional[float] = None,
     ess_metric: Optional[str] = None,
     root_filename: Optional[str] = None,
+    data_dir: Optional[str] = None,
+    acceptance_macro: Optional[str] = None,
+    skip_acceptance: bool = False,
+    force_acceptance: bool = False,
     dry_run: bool = False,
 ) -> bool:
     """
@@ -138,6 +142,18 @@ def run_monitor(
             cmd.extend(["--ess-metric", str(cfg.moment_fit.diagnostics.ess_metric)])
         if root_filename:
             cmd.extend(["--root-filename", root_filename])
+        effective_data_dir = data_dir or (cfg.moment_fit.data.base_dir if cfg is not None else None)
+        if effective_data_dir:
+            cmd.extend(["--data-dir", str(effective_data_dir)])
+        effective_acc_macro = acceptance_macro or (
+            getattr(cfg.moment_fit, "acceptance_macro", None) if cfg is not None else None
+        )
+        if effective_acc_macro:
+            cmd.extend(["--acceptance-macro", str(effective_acc_macro)])
+        if skip_acceptance or (cfg is not None and getattr(cfg.moment_fit, "skip_acceptance", False)):
+            cmd.append("--skip-acceptance")
+        if force_acceptance or (cfg is not None and getattr(cfg.moment_fit, "force_acceptance", False)):
+            cmd.append("--force-acceptance")
 
         print(f"\n[MONITOR] Launching MonitorMomentFit for run directory:\n  {rdir}")
         if dry_run:
@@ -650,6 +666,22 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Force recalculation of acceptance integral matrices in Stage 1.",
     )
+    parser.add_argument(
+        "--acceptance-macro",
+        type=str,
+        default=None,
+        help="Override path to CalculateAcceptance macro used during monitoring.",
+    )
+    parser.add_argument(
+        "--skip-acceptance",
+        action="store_true",
+        help="Skip acceptance calculation after monitoring/fitting.",
+    )
+    parser.add_argument(
+        "--force-acceptance",
+        action="store_true",
+        help="Force acceptance calculation even when not all bins meet convergence.",
+    )
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv:
         if raw_argv[0].lower() in ("retry", "refit"):
@@ -805,6 +837,9 @@ def run_momentfit(
     replot_from_root: bool = False,
     plot_cov: bool = False,
     plot_cov_bins: Optional[List[str]] = None,
+    acceptance_macro: Optional[str] = None,
+    skip_acceptance: bool = False,
+    force_acceptance: bool = False,
 ) -> int:
     """
     Main MomentFit orchestration routine.
@@ -831,6 +866,12 @@ def run_momentfit(
             cfg.moment_fit.overwrite = True
         if force_integral:
             cfg.linear_algebra.force_integral_matrix = True
+        if acceptance_macro is not None:
+            cfg.moment_fit.acceptance_macro = acceptance_macro
+        if skip_acceptance:
+            cfg.moment_fit.skip_acceptance = True
+        if force_acceptance:
+            cfg.moment_fit.force_acceptance = True
     elif not run_dir:
         print("❌ Error: Either a configuration file or --run-dir is required.")
         return 1
@@ -968,7 +1009,9 @@ def run_momentfit(
             replot_from_root=replot_from_root,
             ess_threshold=ess_threshold,
             ess_metric=ess_metric,
-            min_ess_threshold=min_ess_threshold,
+            acceptance_macro=acceptance_macro,
+            skip_acceptance=skip_acceptance,
+            force_acceptance=force_acceptance,
             dry_run=dry_run,
         )
         stage_timings["monitor"] = time.time() - t0
@@ -1152,6 +1195,9 @@ def main():
         replot_from_root=args.replot_from_root,
         plot_cov=args.plot_cov,
         plot_cov_bins=args.plot_cov_bins,
+        acceptance_macro=args.acceptance_macro,
+        skip_acceptance=args.skip_acceptance,
+        force_acceptance=args.force_acceptance,
     )
     sys.exit(ret)
 

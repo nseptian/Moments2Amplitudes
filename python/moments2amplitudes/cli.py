@@ -713,6 +713,9 @@ def cmd_momentfit(args: argparse.Namespace) -> int:
         replot_from_root=getattr(args, "replot_from_root", False),
         plot_cov=getattr(args, "plot_cov", False) or getattr(args, "plot_covariance", False),
         plot_cov_bins=getattr(args, "plot_cov_bins", None),
+        acceptance_macro=getattr(args, "acceptance_macro", None),
+        skip_acceptance=getattr(args, "skip_acceptance", False),
+        force_acceptance=getattr(args, "force_acceptance", False),
     )
 
 
@@ -898,6 +901,9 @@ def main():
     p_mfit.add_argument("--validate", action="store_true", help="Validate configuration file and prerequisite paths, then exit")
     p_mfit.add_argument("--overwrite", action="store_true", help="Overwrite existing output directories without prompting")
     p_mfit.add_argument("--force-integral", action="store_true", help="Force recalculation of acceptance integral matrices in Stage 1")
+    p_mfit.add_argument("--acceptance-macro", type=str, default=None, help="Override path to CalculateAcceptance macro used during monitoring")
+    p_mfit.add_argument("--skip-acceptance", action="store_true", help="Skip acceptance calculation after monitoring/fitting")
+    p_mfit.add_argument("--force-acceptance", action="store_true", help="Force acceptance calculation even when not all bins meet convergence")
 
     raw_argv = sys.argv[1:]
     if len(raw_argv) >= 2 and raw_argv[0] in ("momentfit", "pipeline"):
